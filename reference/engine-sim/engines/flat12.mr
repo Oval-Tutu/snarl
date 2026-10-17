@@ -16,7 +16,10 @@
 // - Redline 6800 rpm (source 18000). Rev limit 7000 rpm, because the F113
 //   limiter is unverified (source 18500).
 // - Simulation frequency 10000 Hz (source 5000) for road-car pulse resolution.
-// Heads, cams, intake, exhaust, vehicle and transmission are the source values.
+// - Both bank exhaust lengths 38 in, the mean of the source 20 and 56 in. The
+//   source lengths are 412 values; the F113 runs two bank pipes into one
+//   silencer, close to symmetric, and its pipe lengths are unknown.
+// Heads, cams, intake, other exhaust values, vehicle and transmission are the source values.
 // Idle is not a script parameter: the scenario holds it.
 
 import "engine_sim.mr"
@@ -284,13 +287,13 @@ public node ferrari_f113 {
     exhaust_system exhaust0(
         es_params,
         audio_volume: 1.0 * 0.004,
-        length: 20 * units.inch,
+        length: 38 * units.inch,
         impulse_response: ir_lib.minimal_muffling_01
     )
     exhaust_system exhaust1(
         es_params,
         audio_volume: 1.0 * 0.004,
-        length: 56 * units.inch,
+        length: 38 * units.inch,
         impulse_response: ir_lib.minimal_muffling_01
     )
 
