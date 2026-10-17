@@ -174,13 +174,9 @@ func (y *Synth) initCylinders(s *Spec, fs float64) {
 	offsets := make([]float32, n)
 	setup := dsp.NewNoise(uint32(s.Seed&math.MaxUint16) + 0x7a11)
 	for i, c := range s.Cylinders {
-		deg := c.CrankDeg
-		y.cylGain[i] = 1
-		if y.tier1 {
-			deg += s.Pulse.TimingVariationDeg * float64(setup.Bipolar())
-			deg = math.Mod(deg+720, 720)
-			y.cylGain[i] = 1 + float32(s.Pulse.GainVariation)*setup.Bipolar()
-		}
+		deg := c.CrankDeg + s.Pulse.TimingVariationDeg*float64(setup.Bipolar())
+		deg = math.Mod(deg+720, 720)
+		y.cylGain[i] = 1 + float32(s.Pulse.GainVariation)*setup.Bipolar()
 		offsets[i] = float32(deg / 720)
 		y.voices[i].bank = c.Bank
 		y.delay[i] = float32(c.PrimaryM / s.Exhaust.SpeedOfSound * fs)

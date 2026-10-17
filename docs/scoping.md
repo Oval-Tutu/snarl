@@ -30,8 +30,8 @@ All costs are estimates until the phase 5 benchmarks run. No published source gi
 
 | Tier | Target | Content | Cost estimate |
 | --- | --- | --- | --- |
-| 0 | Nintendo Switch, OnePlus 3T | Firing schedule, table pulse per cylinder, per-bank delay lines, crossover mix, one outlet biquad per path, one gated noise source, pops, soft clipper | A few multiply-adds per sample plus one delay read per cylinder, well under the 1060 cycles per frame in section 4 (estimate) |
-| 1 | Mid-range PC and phones | Tier 0 plus live pulse shaping with per-cylinder gain and timing offsets, wall-loss shelf, mode cutoff, expansion chamber, jet noise, steepening, intake resonator, mechanical layer | A few biquads and delay lines per path (estimate) |
+| 0 | Nintendo Switch, OnePlus 3T | Firing schedule, table pulse per cylinder, per-cylinder gain and timing imbalance, per-bank delay lines, crossover mix, one first-order low shelf and one outlet biquad per path, one gated noise source, pops, peak limiter with 0.5 ms look-ahead, soft clipper | A few multiply-adds per sample plus one delay read per cylinder, well under the 1060 cycles per frame in section 4 (estimate) |
+| 1 | Mid-range PC and phones | Tier 0 plus live pulse shaping, wall-loss shelf, mode cutoff, expansion chamber, jet noise, steepening, intake resonator, mechanical layer | A few biquads and delay lines per path (estimate) |
 | 2 | Modern PC | Tier 1 plus a resonator bank or 512 to 1024 tap IR per path, two-outlet stereo observer, optional structural modes | 45 to 90 million multiply-adds per second per channel for the IR form (engine-sim.md Implications 2) |
 
 ## 4. Budgets

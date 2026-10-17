@@ -56,10 +56,10 @@ type PulseSpec struct {
 	CycleVariation float64 `toml:"cycle_variation"`
 	// Jitter is the slow random RPM and gain wander, as a fraction.
 	Jitter float64 `toml:"jitter"`
-	// GainVariation is the fixed per-cylinder gain spread (tier 1).
+	// GainVariation is the fixed per-cylinder gain spread.
 	GainVariation float64 `toml:"gain_variation"`
 	// TimingVariationDeg is the fixed per-cylinder timing spread in
-	// crank degrees (tier 1).
+	// crank degrees.
 	TimingVariationDeg float64 `toml:"timing_variation_deg"`
 }
 
@@ -82,7 +82,7 @@ type ExhaustSpec struct {
 	// a pressure peak, which keeps the per-bank firing pattern audible.
 	Overlap float64 `toml:"overlap"`
 	// LowShelfDB is the low-frequency gain of the exhaust body in
-	// decibels, below LowShelfHz (tier 1). A boost gives the sound
+	// decibels, below LowShelfHz. A boost gives the sound
 	// weight.
 	LowShelfDB float64 `toml:"low_shelf_db"`
 	LowShelfHz float64 `toml:"low_shelf_hz"`
