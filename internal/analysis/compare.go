@@ -18,6 +18,9 @@ type Options struct {
 	Settle float64
 	// FFTSizes are the multi-resolution STFT sizes.
 	FFTSizes []int
+	// BandLo and BandHi are the edges in hertz of the low band. The low-band
+	// metrics are skipped when BandHi is not above BandLo.
+	BandLo, BandHi float64
 }
 
 // Window is one analysed part of the timeline.
@@ -104,11 +107,12 @@ type OrderMetrics struct {
 // WindowMetrics is the result for one window.
 type WindowMetrics struct {
 	Window
-	Order          *OrderMetrics `json:"order,omitempty"`
-	ThirdOctaveLSD float64       `json:"third_octave_lsd_db"`
-	MRSTFT         MRSTFTResult  `json:"mrstft"`
-	CrestFactorDB  Pair          `json:"crest_factor_db"`
-	SpectralFlux   Pair          `json:"spectral_flux"`
+	Order          *OrderMetrics   `json:"order,omitempty"`
+	ThirdOctaveLSD float64         `json:"third_octave_lsd_db"`
+	MRSTFT         MRSTFTResult    `json:"mrstft"`
+	CrestFactorDB  Pair            `json:"crest_factor_db"`
+	SpectralFlux   Pair            `json:"spectral_flux"`
+	LowBand        *LowBandMetrics `json:"low_band,omitempty"`
 }
 
 // Compare computes the metrics for each window. The inputs are mono at the
@@ -130,11 +134,15 @@ func Compare(a, b []float64, rate int, windows []Window, opts Options) []WindowM
 		_, la := ThirdOctaveLevels(xa, rate)
 		_, lb := ThirdOctaveLevels(xb, rate)
 		m.ThirdOctaveLSD = RMSDifferenceDB(la, lb)
+		var oa, ob []float64
 		if w.rpmAt != nil {
 			rpm := func(t float64) float64 { return w.rpmAt(w.Start + t) }
-			oa, okA := OrderSpectrum(xa, rate, rpm, opts.Orders)
-			ob, okB := OrderSpectrum(xb, rate, rpm, opts.Orders)
-			if okA && okB {
+			var okA, okB bool
+			oa, okA = OrderSpectrum(xa, rate, rpm, opts.Orders)
+			ob, okB = OrderSpectrum(xb, rate, rpm, opts.Orders)
+			if !okA || !okB {
+				oa, ob = nil, nil
+			} else {
 				m.Order = &OrderMetrics{
 					A:         oa,
 					B:         ob,
@@ -143,6 +151,9 @@ func Compare(a, b []float64, rate int, windows []Window, opts Options) []WindowM
 					DominantB: DominantOrder(opts.Orders, ob),
 				}
 			}
+		}
+		if opts.BandHi > opts.BandLo {
+			m.LowBand = lowBand(a, b, i0, i1, rate, &w, oa, ob, &opts)
 		}
 		out = append(out, m)
 	}
@@ -164,6 +175,8 @@ var MetricNames = []string{
 	"mrstft_total",
 	"crest_factor_diff_db",
 	"spectral_flux_diff",
+	"low_band_order_distance_db",
+	"low_band_lsd_db",
 }
 
 // MetricValue returns the named metric of m, and false when m lacks it.
@@ -182,6 +195,16 @@ func MetricValue(m *WindowMetrics, name string) (float64, bool) {
 		return m.CrestFactorDB.Diff, true
 	case "spectral_flux_diff":
 		return m.SpectralFlux.Diff, true
+	case "low_band_order_distance_db":
+		if m.LowBand == nil || m.LowBand.Order == nil {
+			return 0, false
+		}
+		return m.LowBand.Order.Distance, true
+	case "low_band_lsd_db":
+		if m.LowBand == nil {
+			return 0, false
+		}
+		return m.LowBand.ThirdOctaveLSD, true
 	}
 	return 0, false
 }

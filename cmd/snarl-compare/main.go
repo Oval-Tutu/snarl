@@ -40,6 +40,8 @@ type Result struct {
 	SampleRate int                      `json:"analysis_sample_rate"`
 	Orders     []float64                `json:"orders"`
 	FFTSizes   []int                    `json:"fft_sizes"`
+	LowBandHz  [2]float64               `json:"low_band_hz"`
+	LowBand    analysis.LowBandSummary  `json:"low_band_median"`
 	Windows    []analysis.WindowMetrics `json:"windows"`
 	Worst      []analysis.Worst         `json:"worst"`
 	Notes      []string                 `json:"notes,omitempty"`
@@ -54,6 +56,7 @@ type config struct {
 	fftSizes     string
 	target       float64
 	spectrograms bool
+	band         string
 }
 
 func main() {
@@ -77,6 +80,7 @@ func run(args []string) error {
 	fs.Float64Var(&cfg.settle, "settle", 0.25, "seconds to skip at the start of each segment")
 	fs.StringVar(&cfg.fftSizes, "fft-sizes", "4096,2048,1024,512,256,128,64", "comma-separated multi-resolution STFT sizes, each a power of two")
 	fs.Float64Var(&cfg.target, "target", -23, "integrated loudness in LUFS that both inputs are normalised to")
+	fs.StringVar(&cfg.band, "band", fmt.Sprintf("%d:%d", analysis.DefaultBandLo, analysis.DefaultBandHi), "low band LO:HI in hertz for the low-band metrics")
 	fs.BoolVar(&cfg.spectrograms, "spectrograms", true, "write spectrogram PNGs with ffmpeg when it is on PATH")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -86,6 +90,10 @@ func run(args []string) error {
 		return errors.New("need two WAV files")
 	}
 	sizes, err := parseSizes(cfg.fftSizes)
+	if err != nil {
+		return err
+	}
+	lo, hi, err := parseBand(cfg.band)
 	if err != nil {
 		return err
 	}
@@ -101,6 +109,8 @@ func run(args []string) error {
 		Window:   cfg.window,
 		Settle:   cfg.settle,
 		FFTSizes: sizes,
+		BandLo:   lo,
+		BandHi:   hi,
 	}
 	res, err := compare(pathA, pathB, &cfg, opts)
 	if err != nil {
@@ -115,6 +125,7 @@ func compare(pathA, pathB string, cfg *config, opts analysis.Options) (*Result, 
 		TargetLUFS: cfg.target,
 		Orders:     opts.Orders,
 		FFTSizes:   opts.FFTSizes,
+		LowBandHz:  [2]float64{opts.BandLo, opts.BandHi},
 	}
 	audioA, err := wav.ReadFile(pathA)
 	if err != nil {
@@ -161,6 +172,7 @@ func compare(pathA, pathB string, cfg *config, opts analysis.Options) (*Result, 
 	}
 	res.Windows = analysis.Compare(a, b, rate, windows, opts)
 	res.Worst = analysis.WorstWindows(res.Windows)
+	res.LowBand = analysis.SummariseLowBand(res.Windows)
 	return res, nil
 }
 
@@ -238,6 +250,20 @@ func parseSizes(s string) ([]int, error) {
 		sizes = append(sizes, n)
 	}
 	return sizes, nil
+}
+
+func parseBand(s string) (lo, hi float64, err error) {
+	l, h, found := strings.Cut(s, ":")
+	if found {
+		lo, err = strconv.ParseFloat(strings.TrimSpace(l), 64)
+		if err == nil {
+			hi, err = strconv.ParseFloat(strings.TrimSpace(h), 64)
+		}
+	}
+	if !found || err != nil || lo <= 0 || hi <= lo {
+		return 0, 0, fmt.Errorf("--band: %q is not LO:HI in hertz with 0 < LO < HI", s)
+	}
+	return lo, hi, nil
 }
 
 func stem(path string) string {

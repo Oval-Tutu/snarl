@@ -32,15 +32,7 @@ func OrderSpectrum(x []float64, rate int, rpmAt func(t float64) float64, orders 
 		return nil, false
 	}
 	fs := float64(rate)
-	phase := make([]float64, len(x))
-	minRPM := math.Inf(1)
-	prev := rpmAt(0)
-	for i := 1; i < len(x); i++ {
-		r := rpmAt(float64(i) / fs)
-		phase[i] = phase[i-1] + (prev+r)/2/60/fs
-		minRPM = min(minRPM, r, prev)
-		prev = r
-	}
+	phase, minRPM := crankPhase(len(x), rate, rpmAt)
 	revs := phase[len(x)-1]
 	nrev := maxRevsPerFrame
 	for nrev > 2 && float64(nrev) > revs {
@@ -87,6 +79,22 @@ func OrderSpectrum(x []float64, rate int, rpmAt func(t float64) float64, orders 
 		levels[i] = powerDB(sum / norm)
 	}
 	return levels, true
+}
+
+// crankPhase returns the crank position in revolutions at each of n samples,
+// and the lowest RPM, from the RPM at t seconds after the first sample.
+func crankPhase(n, rate int, rpmAt func(t float64) float64) (phase []float64, minRPM float64) {
+	fs := float64(rate)
+	phase = make([]float64, n)
+	minRPM = math.Inf(1)
+	prev := rpmAt(0)
+	for i := 1; i < n; i++ {
+		r := rpmAt(float64(i) / fs)
+		phase[i] = phase[i-1] + (prev+r)/2/60/fs
+		minRPM = min(minRPM, r, prev)
+		prev = r
+	}
+	return phase, minRPM
 }
 
 // resampleByPhase interpolates x at spr equal steps per revolution of the
