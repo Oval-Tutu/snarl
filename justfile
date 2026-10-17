@@ -78,6 +78,58 @@ ref-set profile="":
         done
     done
 
+# Build listening files in out/listen from existing snarl and engine-sim
+# renders: each snarl render followed by its engine-sim reference, and blind
+# sets of the snarl sweep-wot and overrun renders in a new random order with
+# the answer in key.txt. All parts are loudness-normalised with loudnorm.
+listen:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    profiles=(flat12 inline4 flat6 v8)
+    scenarios=(sweep-wot overrun holds-t100)
+    if ! command -v ffmpeg >/dev/null; then
+        echo "Error: ffmpeg is not on PATH. Run this recipe in nix develop." >&2
+        exit 1
+    fi
+    missing=()
+    for p in "${profiles[@]}"; do
+        for s in "${scenarios[@]}"; do
+            for f in "out/snarl/${p}/${s}.wav" "out/reference/engine-sim/${p}/${s}.wav"; do
+                [[ -f "${f}" ]] || missing+=("${f}")
+            done
+        done
+    done
+    if (( ${#missing[@]} > 0 )); then
+        echo "Error: missing renders, so out/listen is unchanged:" >&2
+        printf '  %s\n' "${missing[@]}" >&2
+        echo "Render them with just render and just ref-set." >&2
+        exit 1
+    fi
+    norm="loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000"
+    ff=(ffmpeg -nostdin -hide_banner -loglevel error -y)
+    rm -rf out/listen
+    mkdir -p out/listen/blind out/listen/blind-overrun
+    for p in "${profiles[@]}"; do
+        for s in "${scenarios[@]}"; do
+            out="out/listen/${p}-${s}-snarl-then-enginesim.wav"
+            "${ff[@]}" -i "out/snarl/${p}/${s}.wav" -i "out/reference/engine-sim/${p}/${s}.wav" \
+                -filter_complex "[0:a]${norm}[a];[1:a]${norm}[b];[a][b]concat=n=2:v=0:a=1" \
+                -c:a pcm_s16le "${out}"
+            echo "Wrote ${out}"
+        done
+    done
+    for set in blind:sweep-wot blind-overrun:overrun; do
+        dir="out/listen/${set%%:*}"
+        s="${set#*:}"
+        n=0
+        for p in $(printf '%s\n' "${profiles[@]}" | shuf); do
+            n=$((n + 1))
+            "${ff[@]}" -i "out/snarl/${p}/${s}.wav" -af "${norm}" -c:a pcm_s16le "${dir}/blind-${n}.wav"
+            echo "blind-${n} = ${p}" >> "${dir}/key.txt"
+        done
+        echo "Wrote ${n} blind files and key.txt to ${dir}"
+    done
+
 # Stop with an error when the command in cmd/<name> does not exist yet.
 _command name:
     #!/usr/bin/env bash
