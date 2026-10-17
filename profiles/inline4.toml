@@ -17,19 +17,20 @@ decay = 7.5
 cam_attack = 40
 cam_gain = 0.25
 idle_floor = 0.2
-cycle_variation = 0.06
+cycle_variation = 0.03
 jitter = 0.003
-gain_variation = 0.05
-timing_variation_deg = 1
+gain_variation = 0.25
+timing_variation_deg = 5
 
 [exhaust]
 crossover = "none"
 outlet_direct = 0.35
 steepening = 0.3
 overlap = 1.0
+low_shelf_db = 6
 
 [noise]
-am = 0.3
+am = 0.2
 air = 0.03
 jet = 0.02
 jet_hz = 1800
@@ -48,7 +49,7 @@ body_hz = 220
 body_ms = 30
 
 [voice]
-level = 0.3
+level = 0.55
 
 [[cylinder]] # 1
 crank_deg = 0

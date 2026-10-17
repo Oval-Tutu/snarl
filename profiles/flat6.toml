@@ -16,19 +16,20 @@ width_deg = 150
 attack = 24
 decay = 7
 idle_floor = 0.2
-cycle_variation = 0.08
+cycle_variation = 0.03
 jitter = 0.003
-gain_variation = 0.06
-timing_variation_deg = 1.5
+gain_variation = 0.02
+timing_variation_deg = 0.5
 
 [exhaust]
 crossover = "full"
 outlet_direct = 0.35
 steepening = 0.3
 overlap = 1.0
+low_shelf_db = 1
 
 [noise]
-am = 0.3
+am = 0.2
 air = 0.03
 jet = 0.02
 jet_hz = 1500
@@ -43,13 +44,17 @@ tick_gain = 0.05
 tick_hz = 2500
 
 [pops]
-density = 0.1
+density = 0.3
 min_rpm = 3000
 body_hz = 190
 body_ms = 35
 
+[overrun]
+level_db = 0
+idle_level_db = -3
+
 [voice]
-level = 0.3
+level = 0.38
 
 [[cylinder]] # 1
 crank_deg = 0

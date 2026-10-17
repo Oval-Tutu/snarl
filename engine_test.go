@@ -4,8 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"path/filepath"
 	"sync"
 	"testing"
+
+	"github.com/oval-tutu/snarl/internal/analysis"
+	"github.com/oval-tutu/snarl/internal/scenario"
 )
 
 const testRate = 48000
@@ -155,6 +159,102 @@ func TestSweepBounded(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// renderScenario renders scenarios/<profile>/<name>.scn with the
+// snapshots that snarl-render sets: load equals throttle, and the overrun
+// flag is set below a throttle of 0.05.
+func renderScenario(t *testing.T, p Profile, name string) ([]float64, *scenario.Scenario) {
+	t.Helper()
+	scn, err := scenario.ParseFile(filepath.Join("scenarios", p.Name, name+".scn"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := New(p, testRate, Tier1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	x := render(e, scn.Duration(), func(t float64) Snapshot {
+		rpm, thr := scn.At(t)
+		s := Snapshot{RPM: float32(rpm), Throttle: float32(thr), Load: float32(thr), Flags: FlagRunning}
+		if thr < 0.05 {
+			s.Flags |= FlagOverrun
+		}
+		return s
+	})
+	y := make([]float64, len(x))
+	for i, v := range x {
+		y[i] = float64(v)
+	}
+	return y, scn
+}
+
+// segmentLoudness returns the integrated loudness of x from t0 to t1
+// seconds.
+func segmentLoudness(x []float64, t0, t1 float64) float64 {
+	return analysis.IntegratedLoudness([][]float64{x[int(t0*testRate):int(t1*testRate)]}, testRate)
+}
+
+// TestOverrunLevel checks the overrun scenario: the closed-throttle hold
+// at the top RPM stays within 3 dB of full throttle, and the end of the
+// closed-throttle sweep to idle within 6 dB.
+func TestOverrunLevel(t *testing.T) {
+	for _, name := range Profiles() {
+		t.Run(name, func(t *testing.T) {
+			p, err := LoadProfile(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			x, _ := renderScenario(t, p, "overrun")
+			full := segmentLoudness(x, 0.5, 2)
+			hold := segmentLoudness(x, 2.3, 3.8)
+			end := segmentLoudness(x, 8, 10)
+			t.Logf("full %.1f, hold %.1f, end %.1f LUFS", full, hold, end)
+			if math.Abs(hold-full) > 3 {
+				t.Errorf("closed-throttle hold %.1f LU from full throttle, want 3 at most", hold-full)
+			}
+			if math.Abs(end-full) > 6 {
+				t.Errorf("end of the overrun sweep %.1f LU from full throttle, want 6 at most", end-full)
+			}
+		})
+	}
+}
+
+// TestOverrunOrders checks that on overrun the exhaust, not a mechanical,
+// fan or intake layer, gives the strongest engine order. It renders the
+// closed-throttle hold with and without those layers. At the strongest
+// order, the layers must add less than 1 dB.
+func TestOverrunOrders(t *testing.T) {
+	for _, name := range Profiles() {
+		t.Run(name, func(t *testing.T) {
+			p, err := LoadProfile(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			q := p
+			s := *p.spec
+			s.Mechanical.FanGain, s.Mechanical.TickGain, s.Noise.Intake = 0, 0, 0
+			q.spec = &s
+			orders := analysis.Orders(20)
+			spectrum := func(p Profile) []float64 {
+				x, scn := renderScenario(t, p, "overrun")
+				rpm, _ := scn.At(3)
+				lv, ok := analysis.OrderSpectrum(x[int(2.3*testRate):int(3.8*testRate)], testRate,
+					func(float64) float64 { return rpm }, orders)
+				if !ok {
+					t.Fatal("no order spectrum")
+				}
+				return lv
+			}
+			on, off := spectrum(p), spectrum(q)
+			top := analysis.DominantOrder(orders, on)
+			for i, o := range orders {
+				if o == top && on[i]-off[i] > 1 {
+					t.Errorf("strongest order %.1f is %.1f dB above the exhaust alone", o, on[i]-off[i])
+				}
+			}
+		})
 	}
 }
 

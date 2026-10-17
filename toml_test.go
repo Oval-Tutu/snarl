@@ -98,6 +98,8 @@ gain = 1
 		"bad redline":  strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 700", 1),
 		"bad limiter":  good + "\nlimiter_kind = \"spark\"",
 		"bad crossing": strings.Replace(good, "[[cylinder]]", "[exhaust]\ncrossover = \"some\"\n[[cylinder]]", 1),
+		"bad shelf":    strings.Replace(good, "[[cylinder]]", "[exhaust]\nlow_shelf_db = 30\n[[cylinder]]", 1),
+		"bad overrun":  strings.Replace(good, "[[cylinder]]", "[overrun]\nlevel_db = 10\n[[cylinder]]", 1),
 	}
 	for name, src := range bad {
 		if _, err := parseProfile(src); err == nil {

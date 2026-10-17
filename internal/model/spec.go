@@ -32,6 +32,7 @@ type Spec struct {
 	Noise      NoiseSpec      `toml:"noise"`
 	Mechanical MechanicalSpec `toml:"mechanical"`
 	Pops       PopSpec        `toml:"pops"`
+	Overrun    OverrunSpec    `toml:"overrun"`
 	Voice      VoiceSpec      `toml:"voice"`
 	Cylinders  []CylinderSpec `toml:"cylinder"`
 	Paths      []PathSpec     `toml:"path"`
@@ -80,6 +81,11 @@ type ExhaustSpec struct {
 	// collector, before the crossover. Overlapping pulses of one bank add
 	// a pressure peak, which keeps the per-bank firing pattern audible.
 	Overlap float64 `toml:"overlap"`
+	// LowShelfDB is the low-frequency gain of the exhaust body in
+	// decibels, below LowShelfHz (tier 1). A boost gives the sound
+	// weight.
+	LowShelfDB float64 `toml:"low_shelf_db"`
+	LowShelfHz float64 `toml:"low_shelf_hz"`
 }
 
 // CylinderSpec is one cylinder.
@@ -143,6 +149,17 @@ type PopSpec struct {
 	IntervalM float64 `toml:"interval_ms"`
 }
 
+// OverrunSpec is the output level on closed throttle.
+type OverrunSpec struct {
+	// LevelDB is the output level on closed throttle at the redline, in
+	// decibels relative to full throttle.
+	LevelDB float64 `toml:"level_db"`
+	// IdleLevelDB is the output level on closed throttle at idle, in
+	// decibels relative to full throttle. The level changes linearly
+	// with RPM from idle to the redline.
+	IdleLevelDB float64 `toml:"idle_level_db"`
+}
+
 // VoiceSpec is the output voicing.
 type VoiceSpec struct {
 	Gain  float64 `toml:"gain"`
@@ -162,7 +179,7 @@ func DefaultSpec() Spec {
 		},
 		Exhaust: ExhaustSpec{
 			SpeedOfSound: 565, Crossover: "none", OutletDirect: 0.4,
-			Steepening: 0.3,
+			Steepening: 0.3, LowShelfHz: 250,
 		},
 		Noise: NoiseSpec{AM: 0.35, Air: 0.03, Jet: 0.02, JetHz: 1500},
 		Mechanical: MechanicalSpec{
@@ -172,7 +189,8 @@ func DefaultSpec() Spec {
 			MinRPM: 2500, Gain: 1, BodyHz: 200, BodyMS: 35, JumpMS: 3,
 			Crack: 2.5, CrackMS: 16, IntervalM: 174,
 		},
-		Voice: VoiceSpec{Gain: 1, Level: 0.3},
+		Overrun: OverrunSpec{LevelDB: -1.5, IdleLevelDB: -4},
+		Voice:   VoiceSpec{Gain: 1, Level: 0.3},
 	}
 }
 
@@ -216,6 +234,10 @@ func (s *Spec) validateEngine() error {
 		return errors.New("pops body_hz, body_ms, jump_ms, crack_ms and interval_ms must be positive")
 	case s.Voice.Level <= 0 || s.Voice.Gain <= 0:
 		return errors.New("voice level and gain must be positive")
+	case math.Abs(s.Exhaust.LowShelfDB) > 20 || s.Exhaust.LowShelfHz <= 0:
+		return errors.New("exhaust low_shelf_db must be from -20 to 20 and low_shelf_hz positive")
+	case s.Overrun.LevelDB > 6 || s.Overrun.IdleLevelDB > 6 || s.Overrun.LevelDB < -40 || s.Overrun.IdleLevelDB < -40:
+		return errors.New("overrun level_db and idle_level_db must be from -40 to 6")
 	}
 	return nil
 }

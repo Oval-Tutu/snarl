@@ -14,7 +14,7 @@ type path struct {
 	colLP dsp.OnePole
 
 	// Tier 1 parts.
-	wall         dsp.Shelf
+	wall, low    dsp.Shelf
 	ch           *dsp.Delay
 	chD          int
 	chR2, chT    float32
@@ -27,14 +27,15 @@ type path struct {
 	airD         int
 }
 
-func newPath(p PathSpec, c, direct, rate float64) path {
+func newPath(p PathSpec, e ExhaustSpec, rate float64) path {
+	c := e.SpeedOfSound
 	colD := max(1, int(math.Round(2*p.CollectorM/c*rate)))
 	q := path{
 		col:    dsp.NewDelay(colD),
 		colD:   colD,
 		colG:   float32(p.Reflection),
 		colLP:  dsp.OnePole{A: dsp.OnePoleCoef(p.DampingHz, rate)},
-		direct: float32(direct),
+		direct: float32(e.OutletDirect),
 		gain:   float32(p.Gain),
 	}
 	if p.DampingHz <= 0 {
@@ -51,6 +52,7 @@ func newPath(p PathSpec, c, direct, rate float64) path {
 		wallHz = 1500
 	}
 	q.wall = dsp.NewHighShelf(wallHz, math.Pow(10, -p.WallLossDB/20), rate)
+	q.low = dsp.NewLowShelf(e.LowShelfHz, math.Pow(10, e.LowShelfDB/20), rate)
 	if p.ChamberM > 0 && p.ChamberArea > 1 {
 		q.chD = max(1, int(math.Round(p.ChamberM/c*rate)))
 		q.ch = dsp.NewDelay(2 * q.chD)
@@ -82,12 +84,12 @@ func (p *path) radiate(y float32) float32 {
 	return p.air.Read(p.airD)
 }
 
-// process1 runs the tier 1 path. It adds the wall-loss shelf, the
-// expansion chamber, the mode cutoff and the wave steepening.
+// process1 runs the tier 1 path. It adds the wall-loss shelf, the low
+// shelf, the expansion chamber, the mode cutoff and the wave steepening.
 func (p *path) process1(x float32) float32 {
 	y := x + p.colG*p.colLP.Process(p.col.Read(p.colD-1))
 	p.col.Write(y)
-	y = p.wall.Process(y)
+	y = p.low.Process(p.wall.Process(y))
 	if p.ch != nil {
 		w := y + p.chR2*p.ch.Read(2*p.chD-1)
 		p.ch.Write(w)

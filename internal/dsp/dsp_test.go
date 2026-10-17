@@ -60,6 +60,14 @@ func TestFilters(t *testing.T) {
 	if g := gain(sh.Process, 15000); !near(g, 0.5, 0.05) {
 		t.Errorf("shelf at 15 kHz: %v", g)
 	}
+	sh = NewLowShelf(200, 2, rate)
+	if g := gain(sh.Process, 10); !near(g, 2, 0.05) {
+		t.Errorf("low shelf at 10 Hz: %v", g)
+	}
+	sh = NewLowShelf(200, 2, rate)
+	if g := gain(sh.Process, 10000); !near(g, 1, 0.02) {
+		t.Errorf("low shelf at 10 kHz: %v", g)
+	}
 	dc := NewDCBlock(10, rate)
 	if g := gain(dc.Process, 1000); !near(g, 1, 0.01) {
 		t.Errorf("DC block at 1 kHz: %v", g)

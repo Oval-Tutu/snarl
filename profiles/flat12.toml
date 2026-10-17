@@ -19,14 +19,15 @@ decay = 7.5
 idle_floor = 0.18
 cycle_variation = 0.07
 jitter = 0.003
-gain_variation = 0.05
-timing_variation_deg = 1
+gain_variation = 0.3
+timing_variation_deg = 6
 
 [exhaust]
 crossover = "none"
 outlet_direct = 0.3
 steepening = 0.3
 overlap = 1.0
+low_shelf_db = 10
 
 [noise]
 am = 0.3
@@ -47,7 +48,7 @@ body_hz = 200
 body_ms = 35
 
 [voice]
-level = 0.3
+level = 0.56
 
 [[cylinder]] # 1
 crank_deg = 0

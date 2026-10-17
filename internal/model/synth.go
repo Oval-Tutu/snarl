@@ -74,6 +74,8 @@ type Synth struct {
 	kRPM, kCtl, kMaster, kCam    float32
 	jit                          dsp.OnePole
 	amLP                         dsp.OnePole
+	idleRPM, ovLevel, ovIdle     float32
+	shape                        float32
 	intakeBP, jetBP, tickHP      dsp.Biquad
 	intakeSetMix                 float32
 	tickDec                      float32
@@ -134,6 +136,9 @@ func New(s *Spec, rate int, tier1 bool) (*Synth, error) {
 		kCam:       dsp.TimeCoef(0.015, chunkHz),
 		jit:        dsp.OnePole{A: dsp.OnePoleCoef(2, chunkHz)},
 		amLP:       dsp.OnePole{A: dsp.OnePoleCoef(2000, fs)},
+		idleRPM:    float32(s.IdleRPM),
+		ovLevel:    float32(math.Pow(10, s.Overrun.LevelDB/20)),
+		ovIdle:     float32(math.Pow(10, s.Overrun.IdleLevelDB/20)),
 		tickDec:    dsp.DecayCoef(40, 0.004, fs),
 		pops:       newPops(s, fs, chunk/fs, tier1),
 		out:        newOutput(s.Voice.Level, fs),
@@ -220,7 +225,7 @@ func (y *Synth) initPaths(s *Spec, fs float64) {
 	}
 	y.paths = make([]path, nb)
 	for i, ps := range s.Paths {
-		y.paths[i] = newPath(ps, s.Exhaust.SpeedOfSound, s.Exhaust.OutletDirect, fs)
+		y.paths[i] = newPath(ps, s.Exhaust, fs)
 	}
 }
 
@@ -306,8 +311,8 @@ func (y *Synth) control(c *Control, n int) {
 
 	ld := float64(y.load)
 	rr := min(y.rpm/y.redline, 1.2)
-	shape := y.idleFloor + (1-y.idleFloor)*float32(math.Pow(ld, 0.8))
-	y.amp = y.master * y.voiceGain * shape * (0.5 + 0.5*rr) *
+	y.shape = y.idleFloor + (1-y.idleFloor)*float32(math.Pow(ld, 0.8))
+	y.amp = y.master * y.voiceGain * y.shape * (0.5 + 0.5*rr) *
 		(1 + y.camGain*y.camMix) * (1 + 2*y.jitter*j)
 	gate := float32(math.Pow(math.Max(ld, 0.02), 0.7))
 	y.amDepth = y.amCfg * gate
@@ -322,7 +327,9 @@ func (y *Synth) control(c *Control, n int) {
 	if y.tier1 {
 		y.controlTier1(gate, rr)
 	}
-	y.out.control(n)
+	pos := min(1, max(0, (y.rpm-y.idleRPM)/(y.redline-y.idleRPM)))
+	lvl := y.ovIdle + (y.ovLevel-y.ovIdle)*pos
+	y.out.control(n, 1+(lvl-1)*y.overrun, maxGain+(overrunMaxGain-maxGain)*y.overrun)
 }
 
 func (y *Synth) controlTier1(gate, rr float32) {
@@ -346,8 +353,10 @@ func (y *Synth) controlTier1(gate, rr float32) {
 			y.intakeBP.SetBandPass(float64(f), 1.5, y.rate)
 		}
 	}
-	y.fanGain = y.master * y.fanCfg * (0.3 + 0.7*rr)
-	y.tickGain = y.master * y.tickCfg * (0.4 + 0.6*rr)
+	// The fan and the valve tick follow the pulse level, so that the
+	// exhaust stays on top on overrun.
+	y.fanGain = y.master * y.fanCfg * (0.3 + 0.7*rr) * y.shape
+	y.tickGain = y.master * y.tickCfg * (0.4 + 0.6*rr) * y.shape
 }
 
 // fire starts the pulse of one cylinder.
@@ -455,7 +464,7 @@ func (y *Synth) process(dst []float32) {
 		if y.tier1 {
 			sum += y.layers(&bank, np)
 		}
-		dst[i] = y.out.process(sum)
+		dst[i] = y.out.process(sum, y.pops.busy > 0)
 	}
 }
 

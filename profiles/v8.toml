@@ -16,9 +16,9 @@ width_deg = 170
 attack = 22
 decay = 6.5
 idle_floor = 0.22
-cycle_variation = 0.1
+cycle_variation = 0.04
 jitter = 0.004
-gain_variation = 0.08
+gain_variation = 0.12
 timing_variation_deg = 2
 
 [exhaust]
@@ -27,9 +27,10 @@ coupling = 0.3
 outlet_direct = 0.5
 steepening = 0.35
 overlap = 1.0
+low_shelf_db = -3
 
 [noise]
-am = 0.35
+am = 0.2
 air = 0.03
 jet = 0.025
 jet_hz = 1200
@@ -46,7 +47,7 @@ body_hz = 160
 body_ms = 40
 
 [voice]
-level = 0.3
+level = 0.43
 
 [[cylinder]] # 1
 crank_deg = 0

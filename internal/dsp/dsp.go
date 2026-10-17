@@ -88,6 +88,19 @@ func NewHighShelf(corner, gain, rate float64) Shelf {
 	return Shelf{b0: float32(n0 / d0), b1: float32(n1 / d0), a1: float32(d1 / d0)}
 }
 
+// NewLowShelf returns a first-order shelf with the given linear gain at DC
+// and unity gain at high frequencies. The corner is in hertz.
+func NewLowShelf(corner, gain, rate float64) Shelf {
+	if gain <= 0 {
+		gain = 1
+	}
+	s := NewHighShelf(corner, 1/gain, rate)
+	g := float32(gain)
+	s.b0 *= g
+	s.b1 *= g
+	return s
+}
+
 // Process filters one sample.
 func (s *Shelf) Process(x float32) float32 {
 	y := s.b0*x + s.b1*s.x1 - s.a1*s.y1
