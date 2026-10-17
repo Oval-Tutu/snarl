@@ -162,16 +162,16 @@ func TestSweepBounded(t *testing.T) {
 	}
 }
 
-// renderScenario renders scenarios/<profile>/<name>.scn with the
-// snapshots that snarl-render sets: load equals throttle, and the overrun
-// flag is set below a throttle of 0.05.
-func renderScenario(t *testing.T, p Profile, name string) ([]float64, *scenario.Scenario) {
+// renderScenario renders scenarios/<profile>/<name>.scn at the tier with
+// the snapshots that snarl-render sets: load equals throttle, and the
+// overrun flag is set below a throttle of 0.05.
+func renderScenario(t *testing.T, p Profile, name string, tier Tier) ([]float64, *scenario.Scenario) {
 	t.Helper()
 	scn, err := scenario.ParseFile(filepath.Join("scenarios", p.Name, name+".scn"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, err := New(p, testRate, Tier1)
+	e, err := New(p, testRate, tier)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +206,7 @@ func TestOverrunLevel(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			x, _ := renderScenario(t, p, "overrun")
+			x, _ := renderScenario(t, p, "overrun", Tier1)
 			full := segmentLoudness(x, 0.5, 2)
 			hold := segmentLoudness(x, 2.3, 3.8)
 			end := segmentLoudness(x, 8, 10)
@@ -218,6 +218,27 @@ func TestOverrunLevel(t *testing.T) {
 				t.Errorf("end of the overrun sweep %.1f LU from full throttle, want 6 at most", end-full)
 			}
 		})
+	}
+}
+
+// TestOverrunPeak checks that the output limiter keeps the pops of the
+// overrun scenario below full scale.
+func TestOverrunPeak(t *testing.T) {
+	for _, name := range Profiles() {
+		for _, tier := range tiers {
+			t.Run(fmt.Sprintf("%s/tier%d", name, tier), func(t *testing.T) {
+				p, err := LoadProfile(name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				x, _ := renderScenario(t, p, "overrun", tier)
+				for i, v := range x {
+					if math.Abs(v) >= 0.99 {
+						t.Fatalf("sample %d is %.4f, want below 0.99", i, v)
+					}
+				}
+			})
+		}
 	}
 }
 
@@ -238,7 +259,7 @@ func TestOverrunOrders(t *testing.T) {
 			q.spec = &s
 			orders := analysis.Orders(20)
 			spectrum := func(p Profile) []float64 {
-				x, scn := renderScenario(t, p, "overrun")
+				x, scn := renderScenario(t, p, "overrun", Tier1)
 				rpm, _ := scn.At(3)
 				lv, ok := analysis.OrderSpectrum(x[int(2.3*testRate):int(3.8*testRate)], testRate,
 					func(float64) float64 { return rpm }, orders)
