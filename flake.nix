@@ -17,6 +17,8 @@
         system:
         let
           pkgs = import nixpkgs { inherit system; };
+          # The toolchain line of go.mod must name this version.
+          go = pkgs.go_1_27;
           nativeLibraries = with pkgs; [
             alsa-lib
             libGL
@@ -35,17 +37,27 @@
             packages =
               with pkgs;
               [
-                go_1_27
+                # ffmpeg measures loudness and spectra of the renders.
+                ffmpeg-headless
                 gopls
                 just
                 pkg-config
                 python3
               ]
-              ++ lib.optionals stdenv.hostPlatform.isLinux [ xvfb-run ];
+              ++ lib.optionals stdenv.hostPlatform.isLinux [ xvfb-run ]
+              # Tailor picks the default go, so give its package list the Go of the shell in its place.
+              ++ import ./nix/loader.nix {
+                pkgs = pkgs // {
+                  inherit go;
+                };
+              };
             buildInputs = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux nativeLibraries;
-            shellHook = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
-              export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath nativeLibraries}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-            '';
+            shellHook =
+              import ./nix/hooks.nix { inherit pkgs; }
+              + pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
+
+                tailor_prepend_path LD_LIBRARY_PATH ${pkgs.lib.makeLibraryPath nativeLibraries}
+              '';
           };
         }
       );
