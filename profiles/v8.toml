@@ -1,0 +1,107 @@
+# Cross-plane 90-degree V8, pushrod, late 1980s. Firing order
+# 1-3-7-2-6-5-4-8. Bank 0 is cylinders 1 to 4, bank 1 is cylinders 5 to 8.
+# Per-bank intervals 90-180-270-180 give the 0.5 and 1.5 order burble.
+name = "v8"
+description = "Cross-plane V8, shorty headers, H-pipe, two silencers"
+seed = 8
+idle_rpm = 675
+redline_rpm = 6000
+limiter_rpm = 6250
+# Fuel cut one injector at a time.
+limiter_kind = "injector"
+limiter_ms = 90
+
+[pulse]
+width_deg = 170
+attack = 22
+decay = 6.5
+idle_floor = 0.22
+cycle_variation = 0.1
+jitter = 0.004
+gain_variation = 0.08
+timing_variation_deg = 2
+
+[exhaust]
+crossover = "partial"
+coupling = 0.3
+outlet_direct = 0.5
+steepening = 0.35
+overlap = 1.0
+
+[noise]
+am = 0.35
+air = 0.03
+jet = 0.025
+jet_hz = 1200
+intake = 0.04
+intake_hz = 260
+
+[mechanical]
+tick_gain = 0.01
+
+[pops]
+density = 0.25
+min_rpm = 2500
+body_hz = 160
+body_ms = 40
+
+[voice]
+level = 0.3
+
+[[cylinder]] # 1
+crank_deg = 0
+bank = 0
+primary_m = 0.36
+[[cylinder]] # 2
+crank_deg = 270
+bank = 0
+primary_m = 0.42
+[[cylinder]] # 3
+crank_deg = 90
+bank = 0
+primary_m = 0.40
+[[cylinder]] # 4
+crank_deg = 540
+bank = 0
+primary_m = 0.46
+[[cylinder]] # 5
+crank_deg = 450
+bank = 1
+primary_m = 0.37
+[[cylinder]] # 6
+crank_deg = 360
+bank = 1
+primary_m = 0.41
+[[cylinder]] # 7
+crank_deg = 180
+bank = 1
+primary_m = 0.43
+[[cylinder]] # 8
+crank_deg = 630
+bank = 1
+primary_m = 0.45
+
+[[path]]
+collector_m = 1.10
+reflection = -0.45
+damping_hz = 2200
+pipe_radius_m = 0.0286
+outlet_radius_m = 0.0286
+wall_loss_db = 3
+wall_loss_hz = 1800
+chamber_m = 0.35
+chamber_area_ratio = 8
+gain = 1.0
+
+[[path]]
+collector_m = 1.28
+reflection = -0.45
+damping_hz = 2200
+pipe_radius_m = 0.0286
+outlet_radius_m = 0.0286
+wall_loss_db = 3
+wall_loss_hz = 1800
+chamber_m = 0.35
+chamber_area_ratio = 8
+gain = 0.7
+listener_m = 0.3

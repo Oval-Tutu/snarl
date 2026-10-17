@@ -1,0 +1,80 @@
+# Inline-4, DOHC with a cam profile switch, late 1990s. Firing order
+# 1-3-4-2, one bank, 4-2-1 header into one silencer.
+name = "inline4"
+description = "Inline-4, cam profile switch at 5700 rpm, 4-2-1 header"
+seed = 4
+idle_rpm = 800
+redline_rpm = 8400
+limiter_rpm = 8500
+limiter_kind = "fuel"
+limiter_ms = 60
+cam_switch_rpm = 5700
+
+[pulse]
+width_deg = 150
+attack = 26
+decay = 7.5
+cam_attack = 40
+cam_gain = 0.25
+idle_floor = 0.2
+cycle_variation = 0.06
+jitter = 0.003
+gain_variation = 0.05
+timing_variation_deg = 1
+
+[exhaust]
+crossover = "none"
+outlet_direct = 0.35
+steepening = 0.3
+overlap = 1.0
+
+[noise]
+am = 0.3
+air = 0.03
+jet = 0.02
+jet_hz = 1800
+intake = 0.22
+intake_hz = 420
+intake_cam_gain = 1.2
+intake_cam_hz = 560
+
+[mechanical]
+tick_gain = 0.015
+
+[pops]
+density = 0.05
+min_rpm = 3500
+body_hz = 220
+body_ms = 30
+
+[voice]
+level = 0.3
+
+[[cylinder]] # 1
+crank_deg = 0
+bank = 0
+primary_m = 0.40
+[[cylinder]] # 2
+crank_deg = 540
+bank = 0
+primary_m = 0.42
+[[cylinder]] # 3
+crank_deg = 180
+bank = 0
+primary_m = 0.42
+[[cylinder]] # 4
+crank_deg = 360
+bank = 0
+primary_m = 0.40
+
+[[path]]
+collector_m = 0.95
+reflection = -0.4
+damping_hz = 3000
+pipe_radius_m = 0.026
+outlet_radius_m = 0.030
+wall_loss_db = 2.5
+wall_loss_hz = 2200
+chamber_m = 0.30
+chamber_area_ratio = 7
+gain = 1.0

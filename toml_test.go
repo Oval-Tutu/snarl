@@ -1,0 +1,107 @@
+package snarl
+
+import (
+	"strings"
+	"testing"
+)
+
+type tomlTestDoc struct {
+	Name  string  `toml:"name"`
+	Count int     `toml:"count"`
+	Ratio float64 `toml:"ratio"`
+	On    bool    `toml:"on"`
+	Sub   struct {
+		X float64 `toml:"x"`
+	} `toml:"sub"`
+	Items []struct {
+		Y float64 `toml:"y"`
+	} `toml:"item"`
+}
+
+func TestTOMLDecode(t *testing.T) {
+	src := `# comment
+name = "a # b" # trailing comment
+count = 3
+ratio = -0.25
+on = true
+
+[sub]
+x = 1e3
+
+[[item]]
+y = 1
+[[item]] # second
+y = 2
+`
+	tb, err := parseTOML(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := tomlTestDoc{Ratio: 9}
+	if err := decodeTOML(tb, &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Name != "a # b" || d.Count != 3 || d.Ratio != -0.25 || !d.On || d.Sub.X != 1000 ||
+		len(d.Items) != 2 || d.Items[1].Y != 2 {
+		t.Errorf("decoded %+v", d)
+	}
+}
+
+func TestTOMLErrors(t *testing.T) {
+	cases := map[string]string{
+		"unknown key":   "nope = 1",
+		"unknown table": "[nope]\nx = 1",
+		"duplicate key": "count = 1\ncount = 2",
+		"bad value":     "count = one",
+		"wrong type":    `count = "1"`,
+		"not integer":   "count = 1.5",
+		"bad string":    `name = "a\"b"`,
+		"table twice":   "[sub]\n[sub]",
+		"bad header":    "[sub",
+		"no equals":     "count",
+		"array table":   "[[sub]]\nx = 1\n[sub]",
+	}
+	for name, src := range cases {
+		tb, err := parseTOML(src)
+		if err == nil {
+			var d tomlTestDoc
+			err = decodeTOML(tb, &d)
+		}
+		if err == nil {
+			t.Errorf("%s: no error for %q", name, src)
+		}
+	}
+}
+
+func TestProfileErrors(t *testing.T) {
+	good := `name = "x"
+idle_rpm = 800
+redline_rpm = 6000
+[[cylinder]]
+crank_deg = 0
+bank = 0
+primary_m = 0.4
+[[path]]
+collector_m = 1
+reflection = -0.4
+pipe_radius_m = 0.03
+outlet_radius_m = 0.03
+gain = 1
+`
+	if _, err := parseProfile(good); err != nil {
+		t.Fatalf("good profile: %v", err)
+	}
+	bad := map[string]string{
+		"no path":      strings.Replace(good, "[[path]]", "[[nopath]]", 1),
+		"bad bank":     strings.Replace(good, "bank = 0", "bank = 1", 1),
+		"bad crank":    strings.Replace(good, "crank_deg = 0", "crank_deg = 720", 1),
+		"bad redline":  strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 700", 1),
+		"bad limiter":  good + "\nlimiter_kind = \"spark\"",
+		"bad crossing": strings.Replace(good, "[[cylinder]]", "[exhaust]\ncrossover = \"some\"\n[[cylinder]]", 1),
+	}
+	for name, src := range bad {
+		if _, err := parseProfile(src); err == nil {
+			t.Errorf("%s: no error", name)
+		}
+	}
+}

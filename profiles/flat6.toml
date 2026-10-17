@@ -1,0 +1,102 @@
+# Air-cooled boxer flat-6, mid 1990s. Firing order 1-6-2-4-3-5. Bank 0 is
+# cylinders 1 to 3, bank 1 is cylinders 4 to 6. Each bank fires every 240
+# degrees. The heat exchangers feed a centre mixing chamber, a full merge.
+name = "flat6"
+description = "Air-cooled flat-6, heat exchangers into a mixing chamber, fan"
+seed = 6
+idle_rpm = 800
+redline_rpm = 6800
+limiter_rpm = 6700
+# Governed speed, a soft cut.
+limiter_kind = "injector"
+limiter_ms = 70
+
+[pulse]
+width_deg = 150
+attack = 24
+decay = 7
+idle_floor = 0.2
+cycle_variation = 0.08
+jitter = 0.003
+gain_variation = 0.06
+timing_variation_deg = 1.5
+
+[exhaust]
+crossover = "full"
+outlet_direct = 0.35
+steepening = 0.3
+overlap = 1.0
+
+[noise]
+am = 0.3
+air = 0.03
+jet = 0.02
+jet_hz = 1500
+intake = 0.06
+intake_hz = 330
+
+[mechanical]
+fan_ratio = 1.8
+fan_blades = 5
+fan_gain = 0.02
+tick_gain = 0.05
+tick_hz = 2500
+
+[pops]
+density = 0.1
+min_rpm = 3000
+body_hz = 190
+body_ms = 35
+
+[voice]
+level = 0.3
+
+[[cylinder]] # 1
+crank_deg = 0
+bank = 0
+primary_m = 0.40
+[[cylinder]] # 2
+crank_deg = 240
+bank = 0
+primary_m = 0.55
+[[cylinder]] # 3
+crank_deg = 480
+bank = 0
+primary_m = 0.70
+[[cylinder]] # 4
+crank_deg = 360
+bank = 1
+primary_m = 0.46
+[[cylinder]] # 5
+crank_deg = 600
+bank = 1
+primary_m = 0.61
+[[cylinder]] # 6
+crank_deg = 120
+bank = 1
+primary_m = 0.76
+
+[[path]]
+collector_m = 0.85
+reflection = -0.4
+damping_hz = 2500
+pipe_radius_m = 0.027
+outlet_radius_m = 0.027
+wall_loss_db = 3
+wall_loss_hz = 1600
+chamber_m = 0.32
+chamber_area_ratio = 9
+gain = 1.0
+
+[[path]]
+collector_m = 0.92
+reflection = -0.4
+damping_hz = 2500
+pipe_radius_m = 0.027
+outlet_radius_m = 0.027
+wall_loss_db = 3
+wall_loss_hz = 1600
+chamber_m = 0.32
+chamber_area_ratio = 9
+gain = 0.85
+listener_m = 0.25

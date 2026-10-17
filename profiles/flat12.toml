@@ -1,0 +1,124 @@
+# 180-degree V12 with shared crankpins (a flat-12), mid 1980s. Firing order
+# 1-9-5-12-3-8-6-10-2-7-4-11 (unverified for this engine). Bank 0 is
+# cylinders 1 to 6, bank 1 is cylinders 7 to 12. Each bank fires every 120
+# degrees, like an inline-6, on its own pipe.
+name = "flat12"
+description = "Flat-12 with shared crankpins, one pipe per bank into one silencer"
+seed = 12
+idle_rpm = 1000
+redline_rpm = 6800
+limiter_rpm = 7000
+# Unverified. Modelled as a soft ignition cut.
+limiter_kind = "ignition"
+limiter_ms = 70
+
+[pulse]
+width_deg = 120
+attack = 28
+decay = 7.5
+idle_floor = 0.18
+cycle_variation = 0.07
+jitter = 0.003
+gain_variation = 0.05
+timing_variation_deg = 1
+
+[exhaust]
+crossover = "none"
+outlet_direct = 0.3
+steepening = 0.3
+overlap = 1.0
+
+[noise]
+am = 0.3
+air = 0.03
+jet = 0.025
+jet_hz = 2000
+intake = 0.05
+intake_hz = 520
+
+[mechanical]
+tick_gain = 0.02
+tick_hz = 3500
+
+[pops]
+density = 0.4
+min_rpm = 3000
+body_hz = 200
+body_ms = 35
+
+[voice]
+level = 0.3
+
+[[cylinder]] # 1
+crank_deg = 0
+bank = 0
+primary_m = 0.38
+[[cylinder]] # 2
+crank_deg = 480
+bank = 0
+primary_m = 0.44
+[[cylinder]] # 3
+crank_deg = 240
+bank = 0
+primary_m = 0.50
+[[cylinder]] # 4
+crank_deg = 600
+bank = 0
+primary_m = 0.38
+[[cylinder]] # 5
+crank_deg = 120
+bank = 0
+primary_m = 0.44
+[[cylinder]] # 6
+crank_deg = 360
+bank = 0
+primary_m = 0.50
+[[cylinder]] # 7
+crank_deg = 540
+bank = 1
+primary_m = 0.38
+[[cylinder]] # 8
+crank_deg = 300
+bank = 1
+primary_m = 0.44
+[[cylinder]] # 9
+crank_deg = 60
+bank = 1
+primary_m = 0.50
+[[cylinder]] # 10
+crank_deg = 420
+bank = 1
+primary_m = 0.38
+[[cylinder]] # 11
+crank_deg = 660
+bank = 1
+primary_m = 0.44
+[[cylinder]] # 12
+crank_deg = 180
+bank = 1
+primary_m = 0.50
+
+[[path]]
+collector_m = 1.30
+reflection = -0.4
+damping_hz = 3000
+pipe_radius_m = 0.025
+outlet_radius_m = 0.025
+wall_loss_db = 2
+wall_loss_hz = 2500
+chamber_m = 0.40
+chamber_area_ratio = 8
+gain = 1.0
+
+[[path]]
+collector_m = 1.38
+reflection = -0.4
+damping_hz = 3000
+pipe_radius_m = 0.025
+outlet_radius_m = 0.025
+wall_loss_db = 2
+wall_loss_hz = 2500
+chamber_m = 0.40
+chamber_area_ratio = 8
+gain = 0.8
+listener_m = 0.15
