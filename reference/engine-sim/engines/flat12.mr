@@ -17,7 +17,7 @@
 //   limiter is unverified (source 18500).
 // - Simulation frequency 10000 Hz (source 5000) for road-car pulse resolution.
 // - Both bank exhaust lengths 38 in, the mean of the source 20 and 56 in. The
-//   source lengths are 412 values; the F113 runs two bank pipes into one
+//   source lengths come from the Ferrari 412 script; the F113 runs two bank pipes into one
 //   silencer, close to symmetric, and its pipe lengths are unknown.
 // Heads, cams, intake, other exhaust values, vehicle and transmission are the source values.
 // Idle is not a script parameter: the scenario holds it.
