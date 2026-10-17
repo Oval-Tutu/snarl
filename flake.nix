@@ -62,6 +62,13 @@
         }
       );
 
+      # Headless engine-sim renderer for reference audio (reference/engine-sim/README.md).
+      packages = forAllSystems (system: {
+        engine-sim-render =
+          nixpkgs.legacyPackages.${system}.callPackage ./reference/engine-sim/package.nix
+            { };
+      });
+
       formatter = forAllSystems (system: nixpkgs.legacyPackages.${system}.nixfmt);
     };
 }

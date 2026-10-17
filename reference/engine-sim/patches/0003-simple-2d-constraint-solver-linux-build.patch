@@ -1,0 +1,25 @@
+diff --git a/dependencies/submodules/simple-2d-constraint-solver/include/sparse_matrix.h b/dependencies/submodules/simple-2d-constraint-solver/include/sparse_matrix.h
+index c8875c6..aba7538 100644
+--- a/dependencies/submodules/simple-2d-constraint-solver/include/sparse_matrix.h
++++ b/dependencies/submodules/simple-2d-constraint-solver/include/sparse_matrix.h
+@@ -1,6 +1,8 @@
+ #ifndef ATG_SIMPLE_2D_CONSTRAINT_SOLVER_SPARSE_MATRIX_H
+ #define ATG_SIMPLE_2D_CONSTRAINT_SOLVER_SPARSE_MATRIX_H
+ 
++#include "matrix.h"
++
+ #include <assert.h>
+ #include <stdint.h>
+ #include <string.h>
+diff --git a/dependencies/submodules/simple-2d-constraint-solver/src/matrix.cpp b/dependencies/submodules/simple-2d-constraint-solver/src/matrix.cpp
+index 27de101..986da2d 100644
+--- a/dependencies/submodules/simple-2d-constraint-solver/src/matrix.cpp
++++ b/dependencies/submodules/simple-2d-constraint-solver/src/matrix.cpp
+@@ -1,5 +1,7 @@
+ #include "../include/matrix.h"
+ 
++#include <cstring>
++
+ #include <algorithm>
+ #include <assert.h>
+ 
