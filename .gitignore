@@ -1,0 +1,41 @@
+.direnv/
+result/
+
+# Game build outputs, logs, and generated editor backups
+/bin/
+dist/
+/logs/
+/fivehorizons
+*.blend1
+*.blend2
+__pycache__/
+*.log
+
+# Asset copies that `just assets` makes for the build to embed
+/internal/assets/embedded/*
+!/internal/assets/embedded/README.md
+
+# Agent worktrees
+.claude/worktrees/
+
+# FBX copies of the poly.pizza references, which are committed as glTF
+reference_assets/poly.pizza/*.zip
+
+# Local task files of the pi agent
+/.pi/tasks/
+
+# Bought asset packs, kept out of Git (decision 0007).
+/assets/sources/
+# Preview renders, which the asset scripts write again on each build.
+/assets/previews/
+
+# Reports that cmd/reports downloads from the relay
+/reports/
+
+# Standalone engine build and render outputs
+/engine
+/out/
+
+# Local upstream impulse responses and source notices
+/assets/impulse-responses/*
+!/assets/impulse-responses/README.md
