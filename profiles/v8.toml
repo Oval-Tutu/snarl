@@ -47,7 +47,8 @@ body_hz = 160
 body_ms = 40
 
 [voice]
-level = 0.43
+output_db = -0.9
+tier1_db = 7.4
 
 [[cylinder]] # 1
 crank_deg = 0

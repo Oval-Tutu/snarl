@@ -149,21 +149,27 @@ type PopSpec struct {
 	IntervalM float64 `toml:"interval_ms"`
 }
 
-// OverrunSpec is the output level on closed throttle.
+// OverrunSpec is the output level on closed throttle. The engine model
+// sets the pulse amplitude on overrun to this level.
 type OverrunSpec struct {
 	// LevelDB is the output level on closed throttle at the redline, in
-	// decibels relative to full throttle.
+	// decibels relative to full throttle at the same RPM.
 	LevelDB float64 `toml:"level_db"`
 	// IdleLevelDB is the output level on closed throttle at idle, in
-	// decibels relative to full throttle. The level changes linearly
-	// with RPM from idle to the redline.
+	// decibels relative to full throttle at the same RPM. The level
+	// changes linearly with RPM from idle to the redline.
 	IdleLevelDB float64 `toml:"idle_level_db"`
 }
 
 // VoiceSpec is the output voicing.
 type VoiceSpec struct {
-	Gain  float64 `toml:"gain"`
-	Level float64 `toml:"level"`
+	Gain float64 `toml:"gain"`
+	// OutputDB is the fixed output gain in decibels. It calibrates the
+	// tier 0 full-throttle sweep-wot scenario to -16 LUFS.
+	OutputDB float64 `toml:"output_db"`
+	// Tier1DB is the extra output gain of tier 1 in decibels. It
+	// calibrates the tier 1 full-throttle sweep-wot scenario to -16 LUFS.
+	Tier1DB float64 `toml:"tier1_db"`
 }
 
 // DefaultSpec returns the defaults that a profile file overrides.
@@ -190,7 +196,7 @@ func DefaultSpec() Spec {
 			Crack: 2.5, CrackMS: 16, IntervalM: 174,
 		},
 		Overrun: OverrunSpec{LevelDB: -1.5, IdleLevelDB: -4},
-		Voice:   VoiceSpec{Gain: 1, Level: 0.3},
+		Voice:   VoiceSpec{Gain: 1},
 	}
 }
 
@@ -232,8 +238,8 @@ func (s *Spec) validateEngine() error {
 		return errors.New("speed_of_sound must be positive and coupling from 0 to 0.5")
 	case s.Pops.BodyHz <= 0 || s.Pops.BodyMS <= 0 || s.Pops.CrackMS <= 0 || s.Pops.IntervalM <= 0 || s.Pops.JumpMS <= 0:
 		return errors.New("pops body_hz, body_ms, jump_ms, crack_ms and interval_ms must be positive")
-	case s.Voice.Level <= 0 || s.Voice.Gain <= 0:
-		return errors.New("voice level and gain must be positive")
+	case s.Voice.Gain <= 0 || math.Abs(s.Voice.OutputDB) > 40 || math.Abs(s.Voice.Tier1DB) > 20:
+		return errors.New("voice gain must be positive, output_db from -40 to 40 and tier1_db from -20 to 20")
 	case math.Abs(s.Exhaust.LowShelfDB) > 20 || s.Exhaust.LowShelfHz <= 0:
 		return errors.New("exhaust low_shelf_db must be from -20 to 20 and low_shelf_hz positive")
 	case s.Overrun.LevelDB > 6 || s.Overrun.IdleLevelDB > 6 || s.Overrun.LevelDB < -40 || s.Overrun.IdleLevelDB < -40:

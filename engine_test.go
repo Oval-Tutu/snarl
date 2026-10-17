@@ -167,6 +167,21 @@ func TestSweepBounded(t *testing.T) {
 // overrun flag is set below a throttle of 0.05.
 func renderScenario(t *testing.T, p Profile, name string, tier Tier) ([]float64, *scenario.Scenario) {
 	t.Helper()
+	return renderScenarioWith(t, p, name, tier, func(rpm, thr float64) Snapshot {
+		s := Snapshot{RPM: float32(rpm), Throttle: float32(thr), Load: float32(thr), Flags: FlagRunning}
+		if thr < 0.05 {
+			s.Flags |= FlagOverrun
+		}
+		return s
+	})
+}
+
+// renderScenarioWith renders scenarios/<profile>/<name>.scn at the tier
+// with the snapshots that snap returns for the scenario RPM and throttle.
+func renderScenarioWith(t *testing.T, p Profile, name string, tier Tier,
+	snap func(rpm, thr float64) Snapshot,
+) ([]float64, *scenario.Scenario) {
+	t.Helper()
 	scn, err := scenario.ParseFile(filepath.Join("scenarios", p.Name, name+".scn"))
 	if err != nil {
 		t.Fatal(err)
@@ -176,12 +191,7 @@ func renderScenario(t *testing.T, p Profile, name string, tier Tier) ([]float64,
 		t.Fatal(err)
 	}
 	x := render(e, scn.Duration(), func(t float64) Snapshot {
-		rpm, thr := scn.At(t)
-		s := Snapshot{RPM: float32(rpm), Throttle: float32(thr), Load: float32(thr), Flags: FlagRunning}
-		if thr < 0.05 {
-			s.Flags |= FlagOverrun
-		}
-		return s
+		return snap(scn.At(t))
 	})
 	y := make([]float64, len(x))
 	for i, v := range x {
@@ -196,28 +206,91 @@ func segmentLoudness(x []float64, t0, t1 float64) float64 {
 	return analysis.IntegratedLoudness([][]float64{x[int(t0*testRate):int(t1*testRate)]}, testRate)
 }
 
-// TestOverrunLevel checks the overrun scenario: the closed-throttle hold
-// at the top RPM stays within 3 dB of full throttle, and the end of the
-// closed-throttle sweep to idle within 6 dB.
+// windowDB returns the RMS level in decibels of the 200 ms window of x
+// from t seconds, relative to the RMS level ref.
+func windowDB(x []float64, t, ref float64) float64 {
+	w := x[int(t*testRate) : int(t*testRate)+testRate/5]
+	var e float64
+	for _, v := range w {
+		e += v * v
+	}
+	return 10*math.Log10(e/float64(len(w))) - 20*math.Log10(ref)
+}
+
+func rms(x []float64) float64 {
+	var e float64
+	for _, v := range x {
+		e += v * v
+	}
+	return math.Sqrt(e / float64(len(x)))
+}
+
+// TestOverrunLevel checks the overrun scenario in 200 ms windows against
+// the overrun level of the profile at the window RPM. The closed-throttle
+// hold from 2 to 4 seconds stays within 3 dB of the overrun level relative
+// to full throttle from 1 to 2 seconds. The closed-throttle sweep to idle
+// stays within 4 dB of the overrun level relative to full throttle at the
+// same RPM, from a full-throttle render of the same RPM course. The lower
+// bound holds with pops. The upper bound holds without pops, because a
+// pop adds to the level.
 func TestOverrunLevel(t *testing.T) {
 	for _, name := range Profiles() {
-		t.Run(name, func(t *testing.T) {
-			p, err := LoadProfile(name)
-			if err != nil {
-				t.Fatal(err)
-			}
-			x, _ := renderScenario(t, p, "overrun", Tier1)
-			full := segmentLoudness(x, 0.5, 2)
-			hold := segmentLoudness(x, 2.3, 3.8)
-			end := segmentLoudness(x, 8, 10)
-			t.Logf("full %.1f, hold %.1f, end %.1f LUFS", full, hold, end)
-			if math.Abs(hold-full) > 3 {
-				t.Errorf("closed-throttle hold %.1f LU from full throttle, want 3 at most", hold-full)
-			}
-			if math.Abs(end-full) > 6 {
-				t.Errorf("end of the overrun sweep %.1f LU from full throttle, want 6 at most", end-full)
-			}
-		})
+		for _, tier := range tiers {
+			t.Run(fmt.Sprintf("%s/tier%d", name, tier), func(t *testing.T) {
+				p, err := LoadProfile(name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				q := p
+				s := *p.spec
+				s.Pops.Density = 0
+				q.spec = &s
+				x, scn := renderScenario(t, p, "overrun", tier)
+				quiet, _ := renderScenario(t, q, "overrun", tier)
+				wot, _ := renderScenarioWith(t, p, "overrun", tier, func(rpm, _ float64) Snapshot {
+					return Snapshot{RPM: float32(rpm), Throttle: 1, Load: 1, Flags: FlagRunning}
+				})
+				ref := rms(x[testRate : 2*testRate])
+				ov := p.spec.Overrun
+				for w := 10; w < 50; w++ {
+					t0 := float64(w) / 5
+					rpm, _ := scn.At(t0 + 0.1)
+					pos := math.Min(1, math.Max(0, (rpm-p.spec.IdleRPM)/(p.spec.RedlineRPM-p.spec.IdleRPM)))
+					lin := math.Pow(10, ov.IdleLevelDB/20) +
+						(math.Pow(10, ov.LevelDB/20)-math.Pow(10, ov.IdleLevelDB/20))*pos
+					want, tol := 20*math.Log10(lin), 3.0
+					if t0 >= 4 {
+						want += windowDB(wot, t0, ref)
+						tol = 4
+					}
+					lo, hi := windowDB(x, t0, ref), windowDB(quiet, t0, ref)
+					if lo < want-tol || hi > want+tol {
+						t.Errorf("window at %.1f s, %.0f RPM: %.1f dB, %.1f dB without pops, want %.1f dB within %.0f dB",
+							t0, rpm, lo, hi, want, tol)
+					}
+				}
+			})
+		}
+	}
+}
+
+// TestOutputCalibration checks that the full-throttle sweep-wot scenario
+// is within 1 LU of the calibration target of -16 LUFS.
+func TestOutputCalibration(t *testing.T) {
+	for _, name := range Profiles() {
+		for _, tier := range tiers {
+			t.Run(fmt.Sprintf("%s/tier%d", name, tier), func(t *testing.T) {
+				p, err := LoadProfile(name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				x, scn := renderScenario(t, p, "sweep-wot", tier)
+				l := segmentLoudness(x, 0, scn.Duration())
+				if math.Abs(l+16) > 1 {
+					t.Errorf("sweep-wot at %.2f LUFS, want -16 within 1 LU", l)
+				}
+			})
+		}
 	}
 }
 

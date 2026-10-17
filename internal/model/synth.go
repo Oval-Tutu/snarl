@@ -75,7 +75,7 @@ type Synth struct {
 	jit                          dsp.OnePole
 	amLP                         dsp.OnePole
 	idleRPM, ovLevel, ovIdle     float32
-	shape                        float32
+	shape, lift                  float32
 	intakeBP, jetBP, tickHP      dsp.Biquad
 	intakeSetMix                 float32
 	tickDec                      float32
@@ -141,8 +141,12 @@ func New(s *Spec, rate int, tier1 bool) (*Synth, error) {
 		ovIdle:     float32(math.Pow(10, s.Overrun.IdleLevelDB/20)),
 		tickDec:    dsp.DecayCoef(40, 0.004, fs),
 		pops:       newPops(s, fs, chunk/fs, tier1),
-		out:        newOutput(s.Voice.Level, fs),
 	}
+	outDB := s.Voice.OutputDB
+	if tier1 {
+		outDB += s.Voice.Tier1DB
+	}
+	y.out = newOutput(outDB, fs)
 	if y.camAttack <= 0 {
 		y.camAttack = y.attack
 	}
@@ -307,12 +311,20 @@ func (y *Synth) control(c *Control, n int) {
 
 	ld := float64(y.load)
 	rr := min(y.rpm/y.redline, 1.2)
-	y.shape = y.idleFloor + (1-y.idleFloor)*float32(math.Pow(ld, 0.8))
+	// On overrun, the pulse gain moves from the load shape to the overrun
+	// level, relative to full load. lift is the overrun gain over the
+	// zero-load pulses. The air noise and the pops follow it, so that they
+	// keep their balance with the pulses.
+	pos := min(1, max(0, (y.rpm-y.idleRPM)/(y.redline-y.idleRPM)))
+	lvl := y.ovIdle + (y.ovLevel-y.ovIdle)*pos
+	shape := y.idleFloor + (1-y.idleFloor)*float32(math.Pow(ld, 0.8))
+	y.shape = shape + (lvl-shape)*y.overrun
+	y.lift = 1 + (lvl/max(y.idleFloor, 0.05)-1)*y.overrun
 	y.amp = y.master * y.voiceGain * y.shape * (0.5 + 0.5*rr) *
 		(1 + y.camGain*y.camMix) * (1 + 2*y.jitter*j)
 	gate := float32(math.Pow(math.Max(ld, 0.02), 0.7))
 	y.amDepth = y.amCfg * gate
-	y.air = y.airCfg * y.overrun * y.master * (0.3 + rr)
+	y.air = y.airCfg * y.overrun * y.master * (0.3 + rr) * y.lift
 
 	if y.cut > 0 {
 		y.cut -= n
@@ -321,14 +333,13 @@ func (y *Synth) control(c *Control, n int) {
 	y.pops.control(y.rpm, y.throttle, over && y.master > 0.5, y.cut > 0, heat, &y.noise)
 
 	if y.tier1 {
-		y.controlTier1(gate, rr)
+		// The exhaust flow layers follow the pulses to the overrun level.
+		flow := y.load + (lvl-y.load)*y.overrun
+		y.controlTier1(flow, rr)
 	}
-	pos := min(1, max(0, (y.rpm-y.idleRPM)/(y.redline-y.idleRPM)))
-	lvl := y.ovIdle + (y.ovLevel-y.ovIdle)*pos
-	y.out.control(n, 1+(lvl-1)*y.overrun, maxGain+(overrunMaxGain-maxGain)*y.overrun)
 }
 
-func (y *Synth) controlTier1(gate, rr float32) {
+func (y *Synth) controlTier1(flow, rr float32) {
 	a := float64(y.attack + (y.camAttack-y.attack)*y.camMix)
 	b := float64(y.decay)
 	dx := float64(y.step) / tableSize
@@ -336,10 +347,10 @@ func (y *Synth) controlTier1(gate, rr float32) {
 	y.kb = float32(math.Exp(-b * dx))
 	y.liveNorm = float32(1 / envelopePeak(a, b))
 	for i := range y.paths {
-		y.paths[i].steep = y.steepCfg * y.load
+		y.paths[i].steep = y.steepCfg * flow
 	}
-	flow := gate * rr
-	y.jetGain = y.master * y.jetCfg * flow * flow
+	jet := float32(math.Pow(math.Max(float64(flow), 0.02), 0.7)) * rr
+	y.jetGain = y.master * y.jetCfg * jet * jet
 	y.intakeGain = y.master * y.intakeCfg * (0.2 + 0.8*y.throttle) *
 		(1 + y.intakeCamGain*y.camMix)
 	if y.intakeHz > 0 && y.intakeCamHz != y.intakeHz {
@@ -448,7 +459,7 @@ func (y *Synth) process(dst []float32) {
 			}
 			x = x*am + airN
 			if p == y.pops.target {
-				x += jump
+				x += jump * y.lift
 			}
 			if y.tier1 {
 				sum += y.paths[p].process1(x)
@@ -456,11 +467,11 @@ func (y *Synth) process(dst []float32) {
 				sum += y.paths[p].process0(x)
 			}
 		}
-		sum += crack
+		sum += crack * y.lift
 		if y.tier1 {
 			sum += y.layers(&bank, np)
 		}
-		dst[i] = y.out.process(sum, y.pops.busy > 0)
+		dst[i] = y.out.process(sum)
 	}
 }
 

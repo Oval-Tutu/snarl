@@ -54,7 +54,8 @@ level_db = 0
 idle_level_db = -3
 
 [voice]
-level = 0.38
+output_db = 0.9
+tier1_db = 8.0
 
 [[cylinder]] # 1
 crank_deg = 0
