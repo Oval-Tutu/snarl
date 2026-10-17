@@ -1,0 +1,5 @@
+# flat12: full throttle at the top rpm, then closed throttle held, then a
+# closed-throttle sweep down to idle.
+hold 6800 1 2
+hold 6800 0 2
+sweep 6800 1000 0 6

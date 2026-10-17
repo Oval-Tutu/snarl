@@ -40,6 +40,44 @@ ref-engine-sim script out *args:
     mkdir -p "$(dirname "{{ out }}")"
     "${r}/bin/engine-sim-render" --script "${script}" --out "{{ out }}" {{ args }}
 
+# Render every scenario in scenarios/<profile> with engine-sim, for one
+# profile or for all profiles when none is given. Writes
+# out/reference/engine-sim/<profile>/<scenario>.wav with a CSV beside it.
+ref-set profile="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    r="$(nix build .#engine-sim-render --print-out-paths --no-link)"
+    declare -A scripts=(
+        [flat12]="${PWD}/reference/engine-sim/engines/flat12.mr"
+        [inline4]="${r}/share/engine-sim/engines/atg-video-1/05_honda_vtec.mr"
+        [flat6]="${PWD}/reference/engine-sim/engines/flat6.mr"
+        [v8]="${PWD}/reference/engine-sim/engines/v8.mr"
+    )
+    profiles=({{ if profile == "" { "flat12 inline4 flat6 v8" } else { profile } }})
+    for p in "${profiles[@]}"; do
+        if [[ -z "${scripts[${p}]:-}" ]]; then
+            echo "Error: unknown profile '${p}'. Use flat12, inline4, flat6 or v8." >&2
+            exit 1
+        fi
+        out="out/reference/engine-sim/${p}"
+        mkdir -p "${out}"
+        for scn in scenarios/"${p}"/*.scn; do
+            name="$(basename "${scn}" .scn)"
+            segments=()
+            while read -r kind a b c d extra; do
+                case "${kind}" in
+                    "") continue ;;
+                    hold) [[ -n "${c}" && -z "${d}" ]] && segments+=(--hold "${a}:${b}:${c}") && continue ;;
+                    sweep) [[ -n "${d}" && -z "${extra}" ]] && segments+=(--sweep "${a}:${b}:${c}:${d}") && continue ;;
+                esac
+                echo "Error: ${scn}: bad segment '${kind} ${a} ${b} ${c} ${d} ${extra}'" >&2
+                exit 1
+            done < <(sed -e 's/#.*//' "${scn}")
+            "${r}/bin/engine-sim-render" --script "${scripts[${p}]}" "${segments[@]}" \
+                --volume 0.5 --out "${out}/${name}.wav" --csv "${out}/${name}.csv" --csv-every 100
+        done
+    done
+
 # Stop with an error when the command in cmd/<name> does not exist yet.
 _command name:
     #!/usr/bin/env bash

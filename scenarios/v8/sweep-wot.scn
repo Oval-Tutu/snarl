@@ -1,0 +1,2 @@
+# v8: full-throttle sweep from idle to the top rpm.
+sweep 675 6000 1 8

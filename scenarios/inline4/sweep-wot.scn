@@ -1,0 +1,2 @@
+# inline4: full-throttle sweep from idle to the top rpm.
+sweep 800 8400 1 8
