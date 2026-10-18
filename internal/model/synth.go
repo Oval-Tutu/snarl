@@ -19,12 +19,11 @@ const (
 	noiseScale = 3
 	// gateStep is the change of the limiter jet noise gate per sample.
 	gateStep = 1.0 / 16
-	// injectorFire is the firing interval in an injector cut: one firing
-	// in injectorFire fires.
-	injectorFire = 8
-	// airHz is the cutoff of each of the two one-pole low passes on the
-	// overrun air noise, so that its energy sits below about 1.5 kHz.
-	airHz = 900
+	// notchLen is the length in seconds of the limiter notch at the start
+	// of a cut.
+	notchLen = 0.07
+	// barkDecay is the time constant in seconds of the re-fire bark.
+	barkDecay = 0.01
 	// airSwell is the decay time constant in seconds of the air noise
 	// swell at a lift-off, and airSteady is the steady air level after it,
 	// relative to the swell peak.
@@ -89,11 +88,14 @@ type Synth struct {
 	intakeCfg, intakeCamGain     float32
 	intakeHz, intakeCamHz        float32
 	fanOrder, fanCfg, tickCfg    float32
+	fanInc                       float32
 	steepCfg, voiceGain          float32
 	overlap                      float32
 	limKind                      string
 	limRPM, limFall, limRise     float32
 	limCut                       int
+	pumpLvl, notchLvl, barkLvl   float32
+	notchStep, kBark             float32
 	kRPM, kCtl, kMaster, kCam    float32
 	kLim, kHand                  float32
 	jit                          dsp.OnePole
@@ -123,13 +125,16 @@ type Synth struct {
 	// bounce. dip is the pitch offset below the smoothed RPM. limRot
 	// counts the cuts. bangAt is the time into an ignition cut in samples
 	// at which the unburnt fuel bangs, or -1. gate is the jet noise gain of
-	// the cut, and gateTo is its target. gear is the last gear.
-	cut, cutCount, limRot   int
+	// the cut, and gateTo is its target. gear is the last gear. pump is
+	// the gain of a pumping pulse in a cut, notch is the phase of the notch
+	// in cycles, and bark is the extra firing gain after a cut.
+	cut, limRot             int
 	bangAt                  int
 	cutting, limEvent       bool
 	bounce, climb           bool
 	gear                    uint8
 	lrpm, dip, gate, gateTo float32
+	pump, notch, bark       float32
 }
 
 // New returns a synth for the spec at the sample rate. tier1 selects the
@@ -176,6 +181,11 @@ func New(s *Spec, rate int, tier1 bool) (*Synth, error) {
 		limFall:    float32(s.LimiterFallRPMS * s.LimiterLoadScale / fs),
 		limRise:    float32(s.LimiterRiseRPMS * s.LimiterLoadScale / fs),
 		limCut:     int(s.LimiterMS * 1e-3 * fs),
+		pumpLvl:    float32(math.Pow(10, s.LimiterPumpDB/20)),
+		notchLvl:   float32(math.Pow(10, s.LimiterNotchDB/20)),
+		barkLvl:    float32(math.Pow(10, s.LimiterBarkDB/20) - 1),
+		notchStep:  float32(1 / (notchLen * fs)),
+		kBark:      1 - dsp.TimeCoef(barkDecay, chunkHz),
 		gate:       1,
 		gateTo:     1,
 		kRPM:       dsp.TimeCoef(0.012, chunkHz),
@@ -186,8 +196,8 @@ func New(s *Spec, rate int, tier1 bool) (*Synth, error) {
 		kHand:      1 - dsp.TimeCoef(handover, chunkHz),
 		jit:        dsp.OnePole{A: dsp.OnePoleCoef(2, chunkHz)},
 		amLP:       dsp.OnePole{A: dsp.OnePoleCoef(2000, fs)},
-		airLP1:     dsp.OnePole{A: dsp.OnePoleCoef(airHz, fs)},
-		airLP2:     dsp.OnePole{A: dsp.OnePoleCoef(airHz, fs)},
+		airLP1:     dsp.OnePole{A: dsp.OnePoleCoef(s.Noise.AirCutoffHz, fs)},
+		airLP2:     dsp.OnePole{A: dsp.OnePoleCoef(s.Noise.AirCutoffHz, fs)},
 		swellDecay: 1 - dsp.TimeCoef(airSwell, chunkHz),
 		idleRPM:    float32(s.IdleRPM),
 		ovLevel:    float32(math.Pow(10, s.Overrun.LevelDB/20)),
@@ -400,8 +410,11 @@ func (y *Synth) control(c *Control, n int) {
 
 	j := y.jit.Process(y.noise.Bipolar() * 1.7)
 	y.idle.control(rpm, y.load)
-	inc := y.PitchRPM() * y.invRate120 * (1 + y.jitter*j) * y.idle.speed
-	y.inc = min(inc, y.maxInc)
+	speed := y.invRate120 * (1 + y.jitter*j) * y.idle.speed
+	y.inc = min(y.PitchRPM()*speed, y.maxInc)
+	// The fan follows the smoothed RPM, not the pitch, so that it holds its
+	// pitch in a limiter bounce.
+	y.fanInc = y.rpm * speed * y.fanOrder
 	y.step = y.inc * y.stepPerCycle
 
 	ld := float64(y.load)
@@ -445,14 +458,22 @@ func (y *Synth) control(c *Control, n int) {
 
 // limit runs the rev limiter for a chunk of n samples, from the input RPM,
 // throttle and gear. It follows the engine-sim limiter: a cut stops the
-// firing for the cut length while the internal RPM falls at the fall rate.
-// After the cut, the engine fires and the internal RPM climbs at the rise
-// rate to the limiter RPM, where the next cut starts. The bounce runs
-// while the snapshot RPM is at the limiter with the throttle open. A
-// limiter event starts one cut when no cut or climb runs. When the bounce
-// or an event cut ends, the pitch returns to the smoothed RPM. It reports
-// whether a cut or a climb runs, so that no overrun effect plays.
+// firing of every cylinder for the cut length while the internal RPM falls
+// at the fall rate. After the cut, the engine fires and the internal RPM
+// climbs at the rise rate to the limiter RPM, where the next cut starts.
+// The bounce runs while the snapshot RPM is at the limiter with the
+// throttle open. A limiter event starts one cut when no cut or climb runs.
+// When the bounce or an event cut ends, the pitch returns to the smoothed
+// RPM. It reports whether a cut or a climb runs, so that no overrun effect
+// plays.
+//
+// In a cut, each cylinder pumps a pulse at the pump level. The level dips
+// to the notch level shortly after the cut starts, and the first firings
+// after the cut bark. The engine-sim output has this level shape, from its
+// leveller.
 func (y *Synth) limit(rpm, thr float32, gear uint8, n int) bool {
+	was := y.cutting
+	y.bark *= y.kBark
 	// The smoothed RPM must be near the limiter too, so that a bounce
 	// starts from the limiter RPM.
 	at := y.limRPM > 0 && rpm >= y.limRPM*0.998 && y.rpm >= y.limRPM*0.99 && thr > 0.1 && gear == y.gear
@@ -464,7 +485,7 @@ func (y *Synth) limit(rpm, thr float32, gear uint8, n int) bool {
 		y.cut = y.limCut
 		y.bounce = at
 		y.lrpm = y.rpm - y.dip
-		y.cutCount = 0
+		y.notch = 0
 		y.limRot++
 		y.bangAt = -1
 		// An ignition cut bangs with a chance of the pop density, at a
@@ -475,17 +496,22 @@ func (y *Synth) limit(rpm, thr float32, gear uint8, n int) bool {
 	}
 	y.limEvent = false
 	y.cutting = y.cut > 0
+	if was && !y.cutting {
+		y.bark = y.barkLvl
+	}
 	y.gateTo = 1
 	switch {
 	case y.cutting:
 		y.cut -= n
 		y.lrpm -= y.limFall * float32(n)
 		y.climb = y.cut <= 0 && y.bounce
-		if y.limKind == "injector" {
-			y.gateTo = 1.0 / injectorFire
-		} else {
-			y.gateTo = 0
+		// The notch is a raised cosine over notchLen.
+		y.pump = y.pumpLvl
+		if y.notch < 1 {
+			y.pump += (y.notchLvl - y.pumpLvl) * (0.5 - 0.5*dsp.Sine(y.notch+0.25))
+			y.notch += y.notchStep * float32(n)
 		}
+		y.gateTo = y.pump
 	case y.climb:
 		y.lrpm += y.limRise * float32(n)
 		if y.lrpm >= y.limRPM {
@@ -532,31 +558,22 @@ func (y *Synth) controlTier1(flow, rr float32) {
 	y.tickGain = y.master * y.tickCfg * (0.4 + 0.6*rr) * y.shape
 }
 
-// fire starts the pulse of one cylinder.
+// fire starts the pulse of one cylinder. In a limiter cut, the pulse is a
+// pumping pulse, with no combustion variation in gain or delay.
 func (y *Synth) fire(cyl int) {
+	var g, late float32
 	if y.cutting {
-		y.cutCount++
-		switch y.limKind {
-		case "injector":
-			// One firing in injectorFire fires. The firing that fires moves on
-			// with each cut.
-			if (y.cutCount+y.limRot)%injectorFire != 0 {
-				return
-			}
-		case "ignition":
-			if y.bangAt >= 0 && y.limCut-y.cut >= y.bangAt {
-				y.pops.bang(&y.noise, len(y.paths))
-				y.bangAt = -1
-			}
-			return
-		default:
-			return
+		g = y.pump
+		if y.bangAt >= 0 && y.limCut-y.cut >= y.bangAt {
+			y.pops.bang(&y.noise, len(y.paths))
+			y.bangAt = -1
 		}
+	} else {
+		g, late = y.idle.firing()
+		g *= (1 + y.bark) * (1 + y.cycleVar*y.noise.Bipolar())
 	}
 	v := &y.voices[cyl]
-	g, late := y.idle.firing()
-	v.gain = y.amp * (y.cylGain[cyl] + y.idle.imbalance*y.cylDev[cyl]) *
-		(1 + y.cycleVar*y.noise.Bipolar()) * g
+	v.gain = y.amp * (y.cylGain[cyl] + y.idle.imbalance*y.cylDev[cyl]) * g
 	v.pos = (y.crank.past-late)*y.stepPerCycle - y.delay[cyl]*y.step
 	v.active = true
 	v.started = false
@@ -668,7 +685,7 @@ func (y *Synth) layers(bank *[MaxBanks]float32, np int) float32 {
 		out += y.intakeBP.Process(n2) * pulse * y.intakeGain
 	}
 	if y.fanGain > 0 {
-		y.fanPhase += y.inc * y.fanOrder
+		y.fanPhase += y.fanInc
 		if y.fanPhase >= 1 {
 			y.fanPhase--
 		}

@@ -16,6 +16,11 @@ limiter_ms = 103
 limiter_fall_rpm_s = 19500
 limiter_rise_rpm_s = 59400
 limiter_load_scale = 1.0
+# Level of the pumping pulses in a cut, their notch after the cut starts,
+# and the re-fire bark, measured from the same reference.
+limiter_pump_db = 0
+limiter_notch_db = -2
+limiter_bark_db = 2
 
 [pulse]
 width_deg = 120

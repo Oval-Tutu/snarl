@@ -145,6 +145,7 @@ func limiterSpec(kind string) Spec {
 	s.Cylinders = []CylinderSpec{{CrankDeg: 0, PrimaryM: 0.4}, {CrankDeg: 180, PrimaryM: 0.4}, {CrankDeg: 360, PrimaryM: 0.4}, {CrankDeg: 540, PrimaryM: 0.4}}
 	s.Paths = []PathSpec{{CollectorM: 1.3, Reflection: -0.4, DampingHz: 3000, PipeRadiusM: 0.025, OutletM: 0.025, Gain: 1}}
 	s.Pops.Density = 0.5
+	s.Mechanical.FanRatio, s.Mechanical.FanBlades = 1, 5
 	return s
 }
 
@@ -158,7 +159,7 @@ func limiterSpec(kind string) Spec {
 // steps. A limiter event starts one cut on overrun, which stops the
 // overrun effects within a few milliseconds.
 func TestLimiterCuts(t *testing.T) {
-	for _, kind := range []string{"fuel", "injector", "ignition"} {
+	for _, kind := range []string{"fuel", "ignition"} {
 		for _, tier1 := range []bool{false, true} {
 			for _, scale := range []float64{1, 2} {
 				s := limiterSpec(kind)
@@ -177,12 +178,14 @@ func TestLimiterCuts(t *testing.T) {
 }
 
 // checkBounce holds the limiter RPM with the throttle open for 2 s and
-// checks the cut rate and the dip against the profile values.
+// checks the cut rate and the dip against the profile values. The fan
+// tone holds its pitch: it moves by less than a quarter of the pitch dip.
 func checkBounce(t *testing.T, name string, s *Spec, y *Synth) {
 	t.Helper()
 	buf := make([]float32, chunk)
 	c := Control{RPM: float32(s.LimiterRPM), Throttle: 1, Load: 1, Running: true, Overrun: true, Gear: 1}
 	var dip float32
+	fanLo, fanHi := float32(math.Inf(1)), float32(0)
 	n := 0
 	for i := range 2 * rate / chunk {
 		if i == rate/5/chunk {
@@ -194,7 +197,11 @@ func checkBounce(t *testing.T, name string, s *Spec, y *Synth) {
 		}
 		if i >= rate/5/chunk {
 			dip = max(dip, c.RPM-y.PitchRPM())
+			fanLo, fanHi = min(fanLo, y.fanInc), max(fanHi, y.fanInc)
 		}
+	}
+	if fanHi-fanLo > 0.25*fanHi*dip/c.RPM {
+		t.Errorf("%s: fan increment from %v to %v with a pitch dip of %.0f RPM", name, fanLo, fanHi, dip)
 	}
 	ms := s.LimiterMS
 	wantDip := s.LimiterFallRPMS * s.LimiterLoadScale * ms / 1000

@@ -7,14 +7,19 @@ seed = 8
 idle_rpm = 675
 redline_rpm = 6000
 limiter_rpm = 6250
-# Fuel cut one injector at a time.
-limiter_kind = "injector"
+# A full cut of every cylinder, as engine-sim cuts.
+limiter_kind = "fuel"
 # Cut length, slow-down and climb rates measured from the engine-sim
 # limiter reference with the engine running free.
 limiter_ms = 208
 limiter_fall_rpm_s = 2900
 limiter_rise_rpm_s = 9500
 limiter_load_scale = 1.0
+# Level of the pumping pulses in a cut, their notch after the cut starts,
+# and the re-fire bark, measured from the same reference.
+limiter_pump_db = -0.3
+limiter_notch_db = -18
+limiter_bark_db = 2
 
 [pulse]
 width_deg = 170

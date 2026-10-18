@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/cmplx"
 	"path/filepath"
 	"slices"
 	"sync"
@@ -673,77 +674,104 @@ func BenchmarkRender(b *testing.B) {
 	}
 }
 
-// limiterDips measures the bounce of x from a short-window envelope: 15 ms
-// RMS windows every 1 ms, in decibels. A dip starts when the envelope
-// falls below 35 percent of its 10 to 90 percentile range and ends when it
-// stays above 65 percent for 25 ms. It returns the dip rate per second from
-// the mean interval between dip starts, the median depth of a dip from the
-// peak before it in decibels, and the coefficient of variation of the dip
-// intervals.
-func limiterDips(x []float32) (rate, depth, cv float64) {
-	const win, hop = 15 * testRate / 1000, testRate / 1000
-	var env []float64
-	for i := 0; i+win <= len(x); i += hop {
-		var e float64
-		for _, v := range x[i : i+win] {
-			e += float64(v) * float64(v)
-		}
-		env = append(env, 10*math.Log10(e/win+1e-20))
-	}
-	s := slices.Clone(env)
-	slices.Sort(s)
-	lo, hi := s[len(s)/10], s[len(s)*9/10]
-	down, up := lo+0.35*(hi-lo), lo+0.65*(hi-lo)
-	var starts []int
-	var depths []float64
-	// A dip in progress at the start does not count.
-	in := env[0] < up
-	above := 0
-	peak, low := math.Inf(-1), math.Inf(1)
-	for i, v := range env {
-		switch {
-		case !in && v < down:
-			in = true
-			starts = append(starts, i)
-			low = v
-		case in && v > up:
-			// A single firing inside an injector cut does not end the dip.
-			if above++; above >= 25 {
-				in = false
-				above = 0
-				if len(starts) > 0 {
-					depths = append(depths, peak-low)
-				}
-				peak = v
-			}
-		case in:
-			above = 0
-			low = min(low, v)
-		default:
-			peak = max(peak, v)
+// limiterHop is the step in samples at which limiterHold reads the pitch.
+const limiterHop = 32
+
+// limiterHold renders seconds of p at the snapshot RPM rpm with full
+// throttle in third gear, with the overrun flag set as a careless game can
+// set it. It returns the output and the pitch RPM every limiterHop
+// samples.
+func limiterHold(t testing.TB, p Profile, tier Tier, rpm float32, seconds float64) (x, pitch []float32) {
+	t.Helper()
+	e := newEngine(t, p, tier)
+	s := Snapshot{RPM: rpm, Throttle: 1, Load: 1, Gear: 3, Flags: FlagRunning | FlagOverrun | FlagRedZone}
+	x = make([]float32, int(seconds*testRate)/256*256)
+	for i := 0; i < len(x); i += 256 {
+		e.Set(s)
+		for j := i; j < i+256; j += limiterHop {
+			e.Render(x[j : j+limiterHop])
+			pitch = append(pitch, e.(*engine).synth.PitchRPM())
 		}
 	}
-	if len(starts) < 3 || len(depths) == 0 {
-		return 0, 0, 0
-	}
-	var gaps []float64
-	for i := 1; i < len(starts); i++ {
-		gaps = append(gaps, float64(starts[i]-starts[i-1]))
-	}
-	mean, sd := meanSD(gaps)
-	slices.Sort(depths)
-	return 1000 / mean, depths[len(depths)/2], sd / mean
+	return x, pitch
 }
 
-func meanSD(x []float64) (mean, sd float64) {
-	for _, v := range x {
-		mean += v
+// bounce is one limiter bounce in pitch steps: the cut starts at cut, the
+// firing starts again at fire, and the next cut starts at next.
+type bounce struct{ cut, fire, next int }
+
+// bounces finds the bounces in a pitch track: a cut starts where the pitch
+// stops rising, and the firing starts where it stops falling.
+func bounces(pitch []float32) []bounce {
+	var out []bounce
+	cut, fire, dir := -1, -1, 0
+	for i := 1; i < len(pitch); i++ {
+		d := 0
+		switch {
+		case pitch[i] < pitch[i-1]:
+			d = -1
+		case pitch[i] > pitch[i-1]:
+			d = 1
+		}
+		switch {
+		case d < 0 && dir > 0:
+			if cut >= 0 && fire > cut {
+				out = append(out, bounce{cut, fire, i - 1})
+			}
+			cut = i - 1
+		case d > 0 && dir < 0:
+			fire = i - 1
+		}
+		if d != 0 {
+			dir = d
+		}
 	}
-	mean /= float64(len(x))
-	for _, v := range x {
-		sd += (v - mean) * (v - mean)
+	return out
+}
+
+// limiterShape measures the level shape of the bounces of x, from 15 ms
+// RMS windows every 1 ms in decibels, 4 ms after the pitch, as the
+// engine-sim references were measured. Relative to the median level of the
+// second half of the firing, it returns the median level of a cut, the
+// 5th percentile level of a cut (the notch), and the highest level in the
+// first half of the firing (the bark). Each is the median over the
+// bounces.
+func limiterShape(x []float32, pitch []float32) (cut, notch, bark float64) {
+	const win, hop, lag = 15 * testRate / 1000, testRate / 1000, 4
+	sum := make([]float64, len(x)+1)
+	for i, v := range x {
+		sum[i+1] = sum[i] + float64(v)*float64(v)
 	}
-	return mean, math.Sqrt(sd / float64(len(x)))
+	env := make([]float64, (len(x)-win)/hop)
+	for i := range env {
+		env[i] = 10 * math.Log10((sum[i*hop+win]-sum[i*hop])/win+1e-20)
+	}
+	// ms returns the envelope index of pitch step i: the window centre
+	// sits at the pitch time plus the lag.
+	ms := func(i int) int {
+		return min(len(env), max(0, ((i+1)*limiterHop-win/2)/hop+lag))
+	}
+	pct := func(v []float64, q float64) float64 {
+		s := slices.Clone(v)
+		slices.Sort(s)
+		return s[int(q*float64(len(s)-1))]
+	}
+	var cuts, notches, barks []float64
+	for _, b := range bounces(pitch) {
+		c, f, n := ms(b.cut), ms(b.fire), ms(b.next)
+		h := f + (n-f)/2
+		if n >= len(env) || h <= f || n <= h || f <= c {
+			continue
+		}
+		ref := pct(env[h:n], 0.5)
+		cuts = append(cuts, pct(env[c:f], 0.5)-ref)
+		notches = append(notches, pct(env[c:f], 0.05)-ref)
+		barks = append(barks, slices.Max(env[f:h])-ref)
+	}
+	if len(cuts) == 0 {
+		return math.NaN(), math.NaN(), math.NaN()
+	}
+	return pct(cuts, 0.5), pct(notches, 0.5), pct(barks, 0.5)
 }
 
 // bandPower returns the mean square of x above 3 kHz.
@@ -759,25 +787,27 @@ func bandPower(x []float32) float64 {
 	return e / float64(len(y))
 }
 
-// limiterTargets are the free-running engine-sim limiter references:
-// cuts per second and the mean RPM dip.
-var limiterTargets = map[string]struct{ rate, dip float64 }{
-	"flat12":  {7.3, 1979},
-	"inline4": {11.1, 367},
-	"flat6":   {4.3, 781},
-	"v8":      {3.7, 604},
+// limiterTargets are the free-running engine-sim limiter references: cuts
+// per second, the mean RPM dip, and the level shape that limiterShape
+// measures from the reference output, in decibels.
+var limiterTargets = map[string]struct{ rate, dip, cut, notch, bark float64 }{
+	"flat12":  {7.3, 1979, -1.9, -4.7, 1.0},
+	"inline4": {11.1, 367, -0.6, -3.2, 3.6},
+	"flat6":   {4.3, 781, -0.1, -2.2, 1.0},
+	"v8":      {3.7, 604, -1.5, -12.6, 1.6},
 }
 
 // TestLimiterBounce holds the snapshot RPM at the limiter with full
 // throttle for 3 s, with the overrun flag set as a careless game can set
-// it. The engine bounces off the limiter by itself. From 0.5 s, the dips
-// of the output envelope with no pops are regular and at least 10 dB
-// deep. Their rate
-// and the dip of the internal RPM are within 20 percent of the values that
-// the profile limiter settings give, and within 25 percent of the
-// engine-sim references at a load scale of 1. No overrun air noise plays:
-// the band above 3 kHz is not louder than full throttle 150 RPM below the
-// limiter. The output stays finite and below full scale.
+// it. The engine bounces off the limiter by itself. From 0.5 s, the rate
+// of the cuts and the dip of the internal RPM are within 20 percent of the
+// values that the profile limiter settings give, and within 25 percent of
+// the engine-sim references at a load scale of 1. The level shape of the
+// bounces with no pops is within 1.5 dB of the engine-sim reference for
+// the level in a cut and the re-fire bark, and within 3 dB for the notch.
+// No overrun air noise plays: the band above 3 kHz is not louder than full
+// throttle 150 RPM below the limiter. The output stays finite and below
+// full scale.
 func TestLimiterBounce(t *testing.T) {
 	for _, name := range Profiles() {
 		for _, tier := range tiers {
@@ -786,42 +816,37 @@ func TestLimiterBounce(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				pitch := float32(math.Inf(1))
-				hold := func(p Profile, rpm float32) []float32 {
-					e := newEngine(t, p, tier)
-					s := Snapshot{RPM: rpm, Throttle: 1, Load: 1, Gear: 3, Flags: FlagRunning | FlagOverrun | FlagRedZone}
-					x := make([]float32, 3*testRate/256*256)
-					for i := 0; i < len(x); i += 256 {
-						e.Set(s)
-						e.Render(x[i : i+256])
-						if i >= testRate/2 && rpm == p.LimiterRPM {
-							pitch = min(pitch, e.(*engine).synth.PitchRPM())
-						}
-					}
-					return x[testRate/2:]
-				}
-				// The envelope dips come from a render with no pops, because
-				// an ignition cut bang at a random time in a cut can split a
-				// dip in two.
+				// The level shape comes from a render with no pops, because an
+				// ignition cut bang at a random time in a cut changes the level
+				// of the cut.
 				q := p
 				noPops := *p.spec
 				noPops.Pops.Density = 0
 				q.spec = &noPops
-				x, ref, clean := hold(p, p.LimiterRPM), hold(p, p.LimiterRPM-150), hold(q, p.LimiterRPM)
+				skip := testRate / 2
+				x, pitch := limiterHold(t, p, tier, p.LimiterRPM, 3)
+				ref, _ := limiterHold(t, p, tier, p.LimiterRPM-150, 3)
+				clean, _ := limiterHold(t, q, tier, p.LimiterRPM, 3)
+				x, ref, clean, pitch = x[skip:], ref[skip:], clean[skip:], pitch[skip/limiterHop:]
 				for i, v := range x {
 					if v != v || v > 0.99 || v < -0.99 {
 						t.Fatalf("sample %d is %v", i, v)
 					}
 				}
-				rate, depth, cv := limiterDips(clean)
-				dip := float64(p.LimiterRPM - pitch)
+				bs := bounces(pitch)
+				if len(bs) < 3 {
+					t.Fatalf("%d bounces in 2.5 s", len(bs))
+				}
+				rate := float64(len(bs)-1) * testRate / limiterHop / float64(bs[len(bs)-1].cut-bs[0].cut)
+				dip := float64(p.LimiterRPM - slices.Min(pitch))
+				cut, notch, bark := limiterShape(clean, pitch)
 				hf := 10 * math.Log10(bandPower(x)/bandPower(ref))
 				sp := p.spec
 				wantRate := 1000 / (sp.LimiterMS * (1 + sp.LimiterFallRPMS/sp.LimiterRiseRPMS))
 				wantDip := sp.LimiterFallRPMS * sp.LimiterLoadScale * sp.LimiterMS / 1000
 				ref0 := limiterTargets[name]
-				t.Logf("%.2f cuts per second, RPM dip %.0f, envelope dips %.1f dB, interval CV %.2f, band above 3 kHz %+.1f dB",
-					rate, dip, depth, cv, hf)
+				t.Logf("%.2f cuts per second, RPM dip %.0f, cut %+.1f dB, notch %+.1f dB, bark %+.1f dB, band above 3 kHz %+.1f dB",
+					rate, dip, cut, notch, bark, hf)
 				if math.Abs(rate-wantRate) > 0.2*wantRate || math.Abs(dip-wantDip) > 0.2*wantDip {
 					t.Errorf("%.1f cuts per second with an RPM dip of %.0f, want %.1f and %.0f from the profile",
 						rate, dip, wantRate, wantDip)
@@ -830,11 +855,72 @@ func TestLimiterBounce(t *testing.T) {
 					t.Errorf("%.1f cuts per second with an RPM dip of %.0f, want %.1f and %.0f from engine-sim",
 						rate, dip, ref0.rate, ref0.dip)
 				}
-				if depth < 10 || cv > 0.15 {
-					t.Errorf("envelope dips of %.1f dB with interval CV %.2f, want at least 10 dB with CV up to 0.15", depth, cv)
+				if !(math.Abs(cut-ref0.cut) <= 1.5 && math.Abs(notch-ref0.notch) <= 3 && math.Abs(bark-ref0.bark) <= 1.5) {
+					t.Errorf("cut %+.1f dB, notch %+.1f dB and bark %+.1f dB, want %+.1f, %+.1f and %+.1f from engine-sim",
+						cut, notch, bark, ref0.cut, ref0.notch, ref0.bark)
 				}
 				if hf > 1 {
 					t.Errorf("band above 3 kHz %.1f dB above full throttle below the limiter", hf)
+				}
+			})
+		}
+	}
+}
+
+// TestLimiterToneHolds checks that no tonal layer slides with the limiter
+// dip. engine-sim has no such layer: only the exhaust harmonics follow the
+// internal RPM. The difference between a limiter hold with and without the
+// fan is the fan tone. Its frequency, from the strongest bin from 100 Hz to
+// 2 kHz in 85 ms windows with parabolic interpolation, moves by at most
+// 5 Hz from the 10th to the 90th percentile, while the RPM dip would move
+// it by about 12 percent.
+func TestLimiterToneHolds(t *testing.T) {
+	const n, hop = 4096, 480
+	for _, name := range Profiles() {
+		for _, tier := range tiers {
+			t.Run(fmt.Sprintf("%s/tier%d", name, tier), func(t *testing.T) {
+				p, err := LoadProfile(name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				q, err := LoadProfileWith(name, "mechanical.fan_gain=0")
+				if err != nil {
+					t.Fatal(err)
+				}
+				x, _ := limiterHold(t, p, tier, p.LimiterRPM, 2)
+				y, _ := limiterHold(t, q, tier, p.LimiterRPM, 2)
+				d := make([]float64, len(x))
+				var e float64
+				for i := range x {
+					d[i] = float64(x[i] - y[i])
+					e += d[i] * d[i]
+				}
+				if e == 0 {
+					return
+				}
+				win := analysis.Hann(n)
+				buf := make([]complex128, n)
+				var track []float64
+				for i := testRate / 2; i+n <= len(d); i += hop {
+					for k := range buf {
+						buf[k] = complex(d[i+k]*win[k], 0)
+					}
+					analysis.FFT(buf)
+					lo, hi := 100*n/testRate, 2000*n/testRate
+					k := lo
+					for j := lo; j <= hi; j++ {
+						if cmplx.Abs(buf[j]) > cmplx.Abs(buf[k]) {
+							k = j
+						}
+					}
+					a, b, c := math.Log(cmplx.Abs(buf[k-1])), math.Log(cmplx.Abs(buf[k])), math.Log(cmplx.Abs(buf[k+1]))
+					track = append(track, (float64(k)+0.5*(a-c)/(a-2*b+c))*testRate/n)
+				}
+				slices.Sort(track)
+				swing := track[len(track)*9/10] - track[len(track)/10]
+				t.Logf("fan tone from %.0f to %.0f Hz", track[len(track)/10], track[len(track)*9/10])
+				if swing > 5 {
+					t.Errorf("fan tone moves by %.0f Hz in the limiter bounce, want at most 5 Hz", swing)
 				}
 			})
 		}

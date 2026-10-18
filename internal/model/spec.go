@@ -25,10 +25,8 @@ type Spec struct {
 	// LimiterRPM is the snapshot RPM at which the rev limiter cuts with
 	// the throttle open. Zero turns the limiter off.
 	LimiterRPM float64 `toml:"limiter_rpm"`
-	// LimiterKind is the cut: "fuel" stops every cylinder, "injector"
-	// stops seven firings in eight with a subset that moves on with each
-	// cut, and "ignition" stops every cylinder with bangs from the unburnt
-	// fuel.
+	// LimiterKind is the cut: "fuel" stops the firing of every cylinder,
+	// and "ignition" stops it with bangs from the unburnt fuel.
 	LimiterKind string `toml:"limiter_kind"`
 	// LimiterMS is the length of one cut in milliseconds.
 	LimiterMS float64 `toml:"limiter_ms"`
@@ -44,7 +42,19 @@ type Spec struct {
 	// LimiterLoadScale multiplies both rates, for an engine in gear. The
 	// dip grows with it, and the bounce rate stays the same.
 	LimiterLoadScale float64 `toml:"limiter_load_scale"`
-	CamSwitchRPM     float64 `toml:"cam_switch_rpm"`
+	// LimiterPumpDB is the level in decibels of the pulse of each cylinder
+	// in a cut, relative to a firing. A cylinder that does not fire still
+	// pumps its charge into the exhaust at its firing time.
+	LimiterPumpDB float64 `toml:"limiter_pump_db"`
+	// LimiterNotchDB is the lowest level in decibels of the pumping pulses,
+	// relative to a firing. The level falls to it along a raised cosine
+	// over 35 ms after the start of a cut and returns to LimiterPumpDB
+	// over the next 35 ms.
+	LimiterNotchDB float64 `toml:"limiter_notch_db"`
+	// LimiterBarkDB is the extra gain in decibels of the first firings
+	// after a cut. It decays with a time constant of 10 ms.
+	LimiterBarkDB float64 `toml:"limiter_bark_db"`
+	CamSwitchRPM  float64 `toml:"cam_switch_rpm"`
 
 	Pulse      PulseSpec      `toml:"pulse"`
 	Exhaust    ExhaustSpec    `toml:"exhaust"`
@@ -143,8 +153,11 @@ type PathSpec struct {
 
 // NoiseSpec holds the noise layer gains.
 type NoiseSpec struct {
-	AM            float64 `toml:"am"`
-	Air           float64 `toml:"air"`
+	AM  float64 `toml:"am"`
+	Air float64 `toml:"air"`
+	// AirCutoffHz is the cutoff of each of the two one-pole low passes on
+	// the overrun air noise.
+	AirCutoffHz   float64 `toml:"air_cutoff_hz"`
 	Jet           float64 `toml:"jet"`
 	JetHz         float64 `toml:"jet_hz"`
 	Intake        float64 `toml:"intake"`
@@ -242,6 +255,9 @@ func DefaultSpec() Spec {
 		LimiterFallRPMS:  6000,
 		LimiterRiseRPMS:  10000,
 		LimiterLoadScale: 1,
+		LimiterPumpDB:    -1,
+		LimiterNotchDB:   -3,
+		LimiterBarkDB:    1,
 		Pulse: PulseSpec{
 			WidthDeg: 160, Attack: 25, Decay: 7, IdleFloor: 0.2, PartLoadDB: -0.6,
 			CycleVariation: 0.08, Jitter: 0.003,
@@ -251,7 +267,7 @@ func DefaultSpec() Spec {
 			SpeedOfSound: 565, Crossover: "none", OutletDirect: 0.4,
 			Steepening: 0.3, LowShelfHz: 250,
 		},
-		Noise: NoiseSpec{AM: 0.35, Air: 0.03, Jet: 0.02, JetHz: 1500},
+		Noise: NoiseSpec{AM: 0.35, Air: 0.03, AirCutoffHz: 900, Jet: 0.02, JetHz: 1500},
 		Mechanical: MechanicalSpec{
 			TickHz: 3000,
 		},
@@ -312,14 +328,19 @@ func (s *Spec) validateEngine() error {
 		return errors.New("overrun level_db and idle_level_db must be from -40 to 6")
 	case s.Pulse.PartLoadDB >= 0 || s.Pulse.PartLoadDB < -20:
 		return errors.New("pulse part_load_db must be from -20 to below 0")
+	case s.Noise.AirCutoffHz < 20 || s.Noise.AirCutoffHz > 20000:
+		return errors.New("noise air_cutoff_hz must be from 20 to 20000")
 	}
 	return nil
 }
 
 func (s *Spec) validateLimiter() error {
 	switch {
-	case s.LimiterKind != "fuel" && s.LimiterKind != "injector" && s.LimiterKind != "ignition":
-		return fmt.Errorf("limiter_kind %q is not fuel, injector or ignition", s.LimiterKind)
+	case s.LimiterKind != "fuel" && s.LimiterKind != "ignition":
+		return fmt.Errorf("limiter_kind %q is not fuel or ignition", s.LimiterKind)
+	case s.LimiterPumpDB > 0 || s.LimiterPumpDB < -60 || s.LimiterNotchDB > s.LimiterPumpDB || s.LimiterNotchDB < -60 ||
+		s.LimiterBarkDB < 0 || s.LimiterBarkDB > 12:
+		return errors.New("limiter_pump_db must be from -60 to 0, limiter_notch_db from -60 to limiter_pump_db and limiter_bark_db from 0 to 12")
 	case s.LimiterRPM < 0 || s.LimiterMS > 500 || s.LimiterFallRPMS < 0 || s.LimiterFallRPMS > 100000 ||
 		s.LimiterRiseRPMS <= 0 || s.LimiterRiseRPMS > 100000 || s.LimiterLoadScale < 0.1 || s.LimiterLoadScale > 10:
 		return errors.New("limiter_rpm must not be negative, limiter_ms from 0 to 500, limiter_fall_rpm_s from 0 to 100000, limiter_rise_rpm_s from above 0 to 100000 and limiter_load_scale from 0.1 to 10")
