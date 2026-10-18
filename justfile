@@ -135,13 +135,14 @@ ref-limiter profile="":
 
 # Build listening files in out/listen from existing snarl and engine-sim
 # renders: each snarl render followed by its engine-sim reference, and blind
-# sets of the snarl sweep-wot and overrun renders in a new random order with
-# the answer in key.txt. All parts are loudness-normalised with loudnorm.
+# sets of the snarl sweep-wot, overrun and limiter renders in a new random
+# order with the answer in key.txt. All parts are loudness-normalised with
+# loudnorm.
 listen:
     #!/usr/bin/env bash
     set -euo pipefail
     profiles=(flat12 inline4 flat6 v8)
-    scenarios=(sweep-wot overrun holds-t100)
+    scenarios=(sweep-wot overrun holds-t100 limiter)
     if ! command -v ffmpeg >/dev/null; then
         echo "Error: ffmpeg is not on PATH. Run this recipe in nix develop." >&2
         exit 1
@@ -157,13 +158,13 @@ listen:
     if (( ${#missing[@]} > 0 )); then
         echo "Error: missing renders, so out/listen is unchanged:" >&2
         printf '  %s\n' "${missing[@]}" >&2
-        echo "Render them with just render and just ref-set." >&2
+        echo "Render them with just render, just ref-set and just ref-limiter." >&2
         exit 1
     fi
     norm="loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000"
     ff=(ffmpeg -nostdin -hide_banner -loglevel error -y)
     rm -rf out/listen
-    mkdir -p out/listen/blind out/listen/blind-overrun
+    mkdir -p out/listen/blind out/listen/blind-overrun out/listen/blind-limiter
     for p in "${profiles[@]}"; do
         for s in "${scenarios[@]}"; do
             out="out/listen/${p}-${s}-snarl-then-enginesim.wav"
@@ -173,7 +174,7 @@ listen:
             echo "Wrote ${out}"
         done
     done
-    for set in blind:sweep-wot blind-overrun:overrun; do
+    for set in blind:sweep-wot blind-overrun:overrun blind-limiter:limiter; do
         dir="out/listen/${set%%:*}"
         s="${set#*:}"
         n=0
