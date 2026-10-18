@@ -59,9 +59,14 @@ density = 0.25
 min_rpm = 2500
 body_hz = 160
 body_ms = 40
+# Large bores and two silencers: deep booms and burbles.
+weight_pop = 0.3
+weight_boom = 0.35
+weight_crackle = 0.15
+weight_burble = 0.2
 
 [overrun]
-level_db = -1.2
+level_db = -0.9
 idle_level_db = -0.9
 
 [idle]
@@ -74,8 +79,8 @@ rock = 0.01
 [voice]
 output_db = -7.5
 tier1_db = 6.0
-idle_gain_db = 7.5
-idle_gain_rpm = 4935
+idle_gain_db = 7.3
+idle_gain_rpm = 4990
 tier1_idle_gain_db = 1.5
 
 [[cylinder]] # 1

@@ -59,10 +59,15 @@ density = 0.3
 min_rpm = 3000
 body_hz = 190
 body_ms = 35
+# Heat exchangers and a mixing chamber: mostly round pops, some crackle.
+weight_pop = 0.45
+weight_boom = 0.15
+weight_crackle = 0.3
+weight_burble = 0.1
 
 [overrun]
 level_db = -1.2
-idle_level_db = -0.9
+idle_level_db = -0.75
 
 [idle]
 variation = 0.12

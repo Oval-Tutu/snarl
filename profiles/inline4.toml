@@ -59,10 +59,15 @@ density = 0.05
 min_rpm = 3500
 body_hz = 220
 body_ms = 30
+# A small stock engine: soft pops and burbles, few deep booms.
+weight_pop = 0.5
+weight_boom = 0.05
+weight_crackle = 0.15
+weight_burble = 0.3
 
 [overrun]
-level_db = -1.4
-idle_level_db = -1.4
+level_db = -1.15
+idle_level_db = -1.3
 
 [voice]
 output_db = -8.2

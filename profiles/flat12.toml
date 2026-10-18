@@ -57,10 +57,15 @@ density = 0.4
 min_rpm = 3000
 body_hz = 200
 body_ms = 35
+# A free-flowing pair of pipes into one silencer: crackle trains lead.
+weight_pop = 0.3
+weight_boom = 0.2
+weight_crackle = 0.4
+weight_burble = 0.1
 
 [overrun]
 level_db = -1.0
-idle_level_db = -1.2
+idle_level_db = -1.5
 
 [idle]
 variation = 0.4

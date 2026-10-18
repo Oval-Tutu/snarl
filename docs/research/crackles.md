@@ -262,3 +262,61 @@ Procedural pop targets derived from this pack, to replace the EngineLab-only num
 - No engine bed: the clips have no running engine under them, so the pop-to-engine level ratio that EngineLab measured (-3 to +10 dB) has no counterpart here and must be set in the harness.
 - Licence boundary: the Nix dev shell must not copy the WAVs into a store path that reaches a public cache. If `snarl-compare` or the harness loads them, pass a path outside the repository through an environment variable or a flag.
 - Not done: no listening test, and no comparison against a snarl or EngineLab render, because neither exists yet. The next step is to feed `crackle_long_24.wav` and `crackle_long_1.wav` into `snarl-compare` once phase 3 delivers it, and to hold the first procedural pop against the table in section 8.
+
+## 10. Pop kinds
+
+Status: analysis complete. Date: 2026-10-18. This section gives the event kinds that the snarl pop kinds (`weight_pop`, `weight_boom`, `weight_crackle` and `weight_burble` in `[pops]`) come from.
+
+### Method
+
+The 60 exterior files (30 short, 30 long) were decoded to mono at 44.1 kHz. The full-band envelope is a 1 ms RMS at a 0.5 ms hop, smoothed over 3 ms. An event is an envelope peak with at least 8 dB of prominence and within 40 dB of the file peak. The spacing between events has two modes: under 30 ms (2,849 of 3,609 intervals) and 60 to 300 ms, with a minimum near 50 to 60 ms. Events less than 50 ms apart therefore form one chain, and the chain is the unit of a pop: 358 chains, 48 of them a single event.
+
+Each chain has these measures: event count, median spacing, duration above the chain peak minus 30 dB, attack (10 to 90 per cent of the running peak), decay from the chain peak to -20 dB, spectral centroid from 30 Hz to 8 kHz, energy shares of 30 to 120 Hz, 120 to 500 Hz, 500 Hz to 2 kHz and 2 to 8 kHz (Hann-windowed FFT over the chain), and sample peak. K-means on nine standardised features (log duration, log count, log centroid, the two low shares, log 2 to 8 kHz share, peak, log attack, log decay) gave silhouettes of 0.357, 0.369, 0.300, 0.258 and 0.265 for 2 to 6 clusters. Three clusters merge the deep burst and the crackle train. Four clusters is the smallest set that separates the kinds a listener names, so snarl uses four.
+
+### Clusters
+
+Values are p10 / p50 / p90 over the chains of each cluster. Relative peak is the chain peak against the loudest chain of the same file, because every file is peak-normalised.
+
+| Kind | Chains | Source | Events | Spacing ms | Duration ms | Decay ms | Centroid Hz | 30-120 Hz % | 120-500 Hz % | 0.5-2 kHz % | 2-8 kHz % | Relative peak dB | Spectral peak Hz |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Pop | 141 | Long 21 to 30 (133), long 1 to 20 (8) | 1 / 2 / 4 | 13 / 18 / 32 | 33 / 66 / 118 | 9 / 20 / 35 | 154 / 218 / 353 | 19 / 37 / 60 | 35 / 56 / 73 | 1.4 / 4.6 / 11 | 0.11 / 0.60 / 2.3 | -7.5 / -2.2 / 0 | 64 / 112 / 168 |
+| Boom | 68 | Long 1 to 20 (53), long 21 to 30 (3), short (12) | 4 / 9 / 17 | 10 / 14.5 / 21 | 104 / 183 / 291 | 16 / 50 / 91 | 62 / 120 / 175 | 78 / 91 / 97 | 1.8 / 6.5 / 19 | 0.4 / 1.2 / 3.5 | 0.10 / 0.48 / 1.5 | -3.6 / 0 / 0 | 42 / 52 / 70 |
+| Crackle | 128 | Long 1 to 20 (94), short (34) | 6 / 18 / 34 | 11 / 15 / 23 | 165 / 382 / 684 | 23 / 69 / 139 | 167 / 253 / 479 | 62 / 79 / 87 | 7 / 13 / 26 | 2.4 / 4.6 / 9 | 1.4 / 2.9 / 7.2 | 0 / 0 / 0 | 45 / 55 / 73 |
+| Burble | 21 | Long 21 to 30 (13), long 1 to 20 (4), short (4) | 1 / 4 / 7 | 9 / 11 / 21 | 38 / 71 / 361 | 11 / 34 / 74 | 41 / 150 / 209 | 15 / 37 / 99.8 | 0.2 / 63 / 83 | 0.001 / 0.6 / 1.8 | 0.001 / 0.009 / 0.05 | -35 / -23 / -18 | 27 / 152 / 172 |
+
+Descriptions:
+
+- Pop: the isolated pop of section 6. A resonant body near 110 Hz, little crack, and pops 97 to 269 ms apart (median 173 ms). This is the pop that snarl had before.
+- Boom: a short deep burst. Nine tenths of the energy is below 120 Hz, with a ring at 42 to 70 Hz. The first event is bright (median centroid 402 Hz against 116 Hz for the rest), so a boom starts with a crack.
+- Crackle: a long train of small cracks over the same deep ring. The high-frequency transients come every 8 to 23 ms (median 12.5 ms, 23 to 75 per second). The first event is bright (348 Hz against 119 Hz). The 2 to 8 kHz share is the highest of the four kinds.
+- Burble: a soft low pop 18 to 35 dB below the loudest event of its file, with no crack. Its 30 to 120 Hz share is bimodal: some burbles are a sub-bass thump, others a quiet body pop.
+
+No separate "sharp crack" cluster exists at the chain level. With per-event features, a bright cluster (42 chains, centroid 566 Hz, 8 per cent at 2 to 8 kHz) appears, but with features measured over the whole chain it merges into the crackle and boom clusters. The sharp crack is the onset of booms and crackles.
+
+### Sequence
+
+Transitions between consecutive chains in a file (count of the next kind after each kind):
+
+| After | Pop | Boom | Crackle | Burble |
+| --- | --- | --- | --- | --- |
+| Pop | 121 | 7 | 2 | 7 |
+| Boom | 5 | 15 | 29 | 1 |
+| Crackle | 2 | 33 | 56 | 7 |
+| Burble | 3 | 5 | 0 | 5 |
+
+Pops follow pops, because group B holds only isolated pops. Booms and crackles alternate inside the dense files: a boom is followed by a crackle 29 times in 50 and a crackle by a boom 33 times in 98. Burbles sit between runs. Runs (chains less than 300 ms apart) start with a crackle 79 times, a boom 32 times, a pop 18 times and a burble 6 times. The two production styles of the pack (section 3) set most of this order, so snarl picks each kind at random with the profile weights and does not model the order.
+
+### Snarl pop kinds against the clusters
+
+Each kind renders as a train of sub-events in one of four event slots: a rounded pressure jump into an exhaust path through a resonant body, plus a high-frequency crack at the outlet. Medians of 12 variations of one isolated pop through the one-path test engine in `internal/model/pop_test.go`, tier 0, measured as the pack was measured:
+
+| Kind | Duration ms | Decay ms | Centroid Hz | 30-120 Hz % | 120-500 Hz % | 0.5-2 kHz % | 2-8 kHz % | Peak dBFS |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Pop | 44 | 24 | 215 | 4.0 | 95.2 | 0.47 | 0.44 | -11.2 |
+| Boom | 112 | 31 | 114 | 93.3 | 5.4 | 0.62 | 0.62 | -8.1 |
+| Crackle | 221 | 29 | 217 | 76.7 | 18.3 | 3.99 | 1.79 | -15.8 |
+| Burble | 65 | 30 | 130 | 31.8 | 68.0 | 0.11 | 0.008 | -33.9 |
+
+Every value is inside the p10 to p90 range of its cluster, except the pop band shares. The pop keeps its tuned body: its 30 to 120 Hz share is 4 per cent against 19 to 60 per cent in the pack. The boom and the crackle now carry the deep energy. In tier 1, the expansion chamber moves the boom and crackle shares further below 120 Hz (98 and 94 per cent). `TestPopKinds` holds these values to the cluster ranges with stated tolerances.
+
+The pack levels are per file, so the level between kinds is a choice. The burble is 23 dB below the pop, as in the pack. The crackle peaks about 5 dB below the pop, because its length already makes it much louder than a pop (group A is 8.6 LU louder than group B at the same peak, section 3).

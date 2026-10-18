@@ -112,6 +112,8 @@ gain = 1
 		"bad idle":     strings.Replace(good, "[[cylinder]]", "[idle]\nfade_rpm = 500\n[[cylinder]]", 1),
 		"bad hunt":     strings.Replace(good, "[[cylinder]]", "[idle]\nhunt = 0.5\n[[cylinder]]", 1),
 		"bad knee":     strings.Replace(good, "[[cylinder]]", "[voice]\nidle_gain_rpm = 6000\n[[cylinder]]", 1),
+		"bad weight":   strings.Replace(good, "[[cylinder]]", "[pops]\nweight_boom = -0.1\n[[cylinder]]", 1),
+		"no weight":    strings.Replace(good, "[[cylinder]]", "[pops]\nweight_pop = 0\nweight_boom = 0\nweight_crackle = 0\nweight_burble = 0\n[[cylinder]]", 1),
 	}
 	for name, src := range bad {
 		if _, err := parseProfile(src); err == nil {

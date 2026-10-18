@@ -5,8 +5,6 @@ import (
 	"math"
 	"slices"
 	"testing"
-
-	"github.com/oval-tutu/snarl/internal/dsp"
 )
 
 const rate = 48000
@@ -47,17 +45,16 @@ func TestPopTiming(t *testing.T) {
 	s.RedlineRPM = 6800
 	s.Pops.Density = 0.8
 	p := newPops(&s, rate, chunk/float64(rate), false)
-	n := dsp.NewNoise(3)
 	p.heat = 1
-	p.control(4000, 1, false, false, 1, &n) // Arm at full throttle.
+	p.control(4000, 1, false, false, 1) // Arm at full throttle.
 	var fires []int
 	for i := range 30 * rate {
 		if i%chunk == 0 {
-			p.control(4000, 0, true, false, 1, &n)
+			p.control(4000, 0, true, false, 1)
 		}
-		before := p.busy
-		p.tick(&n, 2)
-		if p.busy > before {
+		before := p.fired()
+		p.tick(2)
+		if p.fired() > before {
 			fires = append(fires, i)
 		}
 	}
@@ -91,23 +88,22 @@ func TestPopNeedsHeatAndArming(t *testing.T) {
 	s.RedlineRPM = 6800
 	s.Pops.Density = 1
 	p := newPops(&s, rate, chunk/float64(rate), false)
-	n := dsp.NewNoise(3)
 	// Never armed: overrun alone does not pop.
 	for i := range 5 * rate {
 		if i%chunk == 0 {
-			p.control(4000, 0, true, false, 0, &n)
+			p.control(4000, 0, true, false, 0)
 		}
-		if p.tick(&n, 1); p.busy > 0 {
+		if p.tick(1); p.fired() > 0 {
 			t.Fatal("pop without arming")
 		}
 	}
 	// Armed but cold: no pop.
-	p.control(4000, 1, false, false, 0, &n)
+	p.control(4000, 1, false, false, 0)
 	for i := range 5 * rate {
 		if i%chunk == 0 {
-			p.control(4000, 0, true, false, 0, &n)
+			p.control(4000, 0, true, false, 0)
 		}
-		if p.tick(&n, 1); p.busy > 0 {
+		if p.tick(1); p.fired() > 0 {
 			t.Fatal("pop from a cold exhaust")
 		}
 	}

@@ -450,7 +450,7 @@ func (y *Synth) control(c *Control, n int) {
 	y.rpmStep = (g - y.rpmG) / float32(n)
 
 	heat := b2f(y.throttle > 0.2) * y.load * min(rr, 1)
-	y.pops.control(y.rpm, y.throttle, over && y.master > 0.5, limiting, heat, &y.noise)
+	y.pops.control(y.rpm, y.throttle, over && y.master > 0.5, limiting, heat)
 
 	if y.tier1 {
 		// The exhaust flow layers follow the pulse gain, so that the level
@@ -574,7 +574,7 @@ func (y *Synth) fire(cyl int) {
 	if y.cutting {
 		g = y.pump
 		if y.bangAt >= 0 && y.cutLen-y.cut >= y.bangAt {
-			y.pops.bang(&y.noise, len(y.paths))
+			y.pops.bang(len(y.paths))
 			y.bangAt = -1
 		}
 	} else {
@@ -651,7 +651,7 @@ func (y *Synth) process(dst []float32) {
 		if y.air != 0 {
 			airN = y.air * y.airLP2.Process(y.airLP1.Process(nz))
 		}
-		jump, crack := y.pops.tick(&y.noise, np)
+		crack := y.pops.tick(np)
 
 		var sum float32
 		for p := range np {
@@ -659,10 +659,7 @@ func (y *Synth) process(dst []float32) {
 			for b := range np {
 				x += y.mix[p][b] * bank[b]
 			}
-			x = x*am + airN
-			if p == y.pops.target {
-				x += jump * y.lift
-			}
+			x = x*am + airN + y.pops.jump[p]*y.lift
 			if y.tier1 {
 				sum += y.paths[p].process1(x)
 			} else {

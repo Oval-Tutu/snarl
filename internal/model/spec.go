@@ -190,6 +190,12 @@ type PopSpec struct {
 	Crack     float64 `toml:"crack"`
 	CrackMS   float64 `toml:"crack_ms"`
 	IntervalM float64 `toml:"interval_ms"`
+	// The weights of the pop kinds. Each pop picks a kind at random in
+	// proportion to its weight.
+	WeightPop     float64 `toml:"weight_pop"`
+	WeightBoom    float64 `toml:"weight_boom"`
+	WeightCrackle float64 `toml:"weight_crackle"`
+	WeightBurble  float64 `toml:"weight_burble"`
 }
 
 // OverrunSpec is the output level on closed throttle. The engine model
@@ -278,6 +284,8 @@ func DefaultSpec() Spec {
 		Pops: PopSpec{
 			MinRPM: 2500, Gain: 1, BodyHz: 200, BodyMS: 35, JumpMS: 3,
 			Crack: 2.5, CrackMS: 16, IntervalM: 174,
+			// The kind mix of the muffler crackle pack.
+			WeightPop: 0.4, WeightBoom: 0.2, WeightCrackle: 0.3, WeightBurble: 0.1,
 		},
 		Overrun: OverrunSpec{LevelDB: -1.2, IdleLevelDB: -1.2},
 		Idle:    IdleSpec{FadeRPM: 2200, HuntHz: 1.2},
@@ -321,6 +329,9 @@ func (s *Spec) validateEngine() error {
 		return errors.New("speed_of_sound must be positive and coupling from 0 to 0.5")
 	case s.Pops.BodyHz <= 0 || s.Pops.BodyMS <= 0 || s.Pops.CrackMS <= 0 || s.Pops.IntervalM <= 0 || s.Pops.JumpMS <= 0:
 		return errors.New("pops body_hz, body_ms, jump_ms, crack_ms and interval_ms must be positive")
+	case min(s.Pops.WeightPop, s.Pops.WeightBoom, s.Pops.WeightCrackle, s.Pops.WeightBurble) < 0 ||
+		s.Pops.WeightPop+s.Pops.WeightBoom+s.Pops.WeightCrackle+s.Pops.WeightBurble <= 0:
+		return errors.New("pops weights must not be negative, and at least one must be positive")
 	case s.Voice.Gain <= 0 || math.Abs(s.Voice.OutputDB) > 40 || math.Abs(s.Voice.Tier1DB) > 20:
 		return errors.New("voice gain must be positive, output_db from -40 to 40 and tier1_db from -20 to 20")
 	case math.Abs(s.Voice.IdleGainDB) > 20 || math.Abs(s.Voice.IdleGainDB+s.Voice.Tier1IdleGainDB) > 20 ||
