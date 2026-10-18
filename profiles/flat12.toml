@@ -41,7 +41,8 @@ low_shelf_db = 10
 
 [noise]
 am = 0.3
-air = 0.03
+air = 0.06
+air_cutoff_hz = 1800
 jet = 0.025
 jet_hz = 2000
 intake = 0.05
@@ -58,7 +59,7 @@ body_hz = 200
 body_ms = 35
 
 [overrun]
-level_db = -0.9
+level_db = -1.0
 idle_level_db = -1.2
 
 [idle]

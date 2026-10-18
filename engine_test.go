@@ -472,8 +472,11 @@ func liftOff(p Profile) func(float64) Snapshot {
 }
 
 // TestOverrunAirSubtle checks that the overrun air noise stays under the
-// exhaust. In the first second after a lift-off, the band from 3 to 8 kHz
-// is at most 1 dB above the same render with no air noise.
+// exhaust and stays audible. In the first second after a lift-off, the band
+// from 3 to 8 kHz is at most 1.6 dB above the same render with no air
+// noise, and the band from 300 Hz to 2 kHz is at least 0.08 dB above it.
+// Half the profile air level with a 900 Hz cutoff adds at most 0.03 dB in
+// that band, so the lower limit catches an air noise that fades out.
 func TestOverrunAirSubtle(t *testing.T) {
 	for _, name := range Profiles() {
 		for _, tier := range tiers {
@@ -486,22 +489,32 @@ func TestOverrunAirSubtle(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				band := func(p Profile) float64 {
+				after := func(p Profile) []float64 {
 					x := render(newEngine(t, p, tier), 3, liftOff(p))
 					y := make([]float64, len(x))
 					for i, v := range x {
 						y[i] = float64(v)
 					}
-					var e float64
-					for _, v := range analysis.BandPass(y, testRate, 3000, 8000)[2*testRate:] {
-						e += v * v
-					}
-					return e
+					return y
 				}
-				db := 10 * math.Log10(band(p)/band(q))
-				t.Logf("air adds %.2f dB from 3 to 8 kHz after the lift-off", db)
-				if db > 1 {
-					t.Errorf("air adds %.1f dB from 3 to 8 kHz after the lift-off, want at most 1 dB", db)
+				on, off := after(p), after(q)
+				gain := func(lo, hi float64) float64 {
+					band := func(y []float64) float64 {
+						var e float64
+						for _, v := range analysis.BandPass(y, testRate, lo, hi)[2*testRate:] {
+							e += v * v
+						}
+						return e
+					}
+					return 10 * math.Log10(band(on)/band(off))
+				}
+				high, body := gain(3000, 8000), gain(300, 2000)
+				t.Logf("air adds %.2f dB from 3 to 8 kHz and %.2f dB from 300 Hz to 2 kHz after the lift-off", high, body)
+				if high > 1.6 {
+					t.Errorf("air adds %.1f dB from 3 to 8 kHz after the lift-off, want at most 1.6 dB", high)
+				}
+				if body < 0.08 {
+					t.Errorf("air adds %.2f dB from 300 Hz to 2 kHz after the lift-off, want at least 0.08 dB", body)
 				}
 			})
 		}

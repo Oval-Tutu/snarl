@@ -40,7 +40,8 @@ low_shelf_db = 1
 
 [noise]
 am = 0.2
-air = 0.015
+air = 0.03
+air_cutoff_hz = 1800
 jet = 0.02
 jet_hz = 1500
 intake = 0.06
