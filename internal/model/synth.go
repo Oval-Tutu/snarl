@@ -22,6 +22,16 @@ const (
 	// injectorFire is the firing interval in an injector cut: one firing
 	// in injectorFire fires.
 	injectorFire = 8
+	// airHz is the cutoff of each of the two one-pole low passes on the
+	// overrun air noise, so that its energy sits below about 1.5 kHz.
+	airHz = 900
+	// airSwell is the decay time constant in seconds of the air noise
+	// swell at a lift-off, and airSteady is the steady air level after it,
+	// relative to the swell peak.
+	airSwell  = 0.12
+	airSteady = 0.25
+	// airGain makes up the level that the air noise low passes take out.
+	airGain = 10
 )
 
 // Control is the engine state for one block.
@@ -82,7 +92,9 @@ type Synth struct {
 	kRPM, kCtl, kMaster, kCam    float32
 	kLim                         float32
 	jit                          dsp.OnePole
-	amLP                         dsp.OnePole
+	amLP, airLP1, airLP2         dsp.OnePole
+	swell, swellDecay            float32
+	wasOver                      bool
 	idleRPM, ovLevel, ovIdle     float32
 	partLoad                     float32
 	idleGain, knee               float32
@@ -140,7 +152,7 @@ func New(s *Spec, rate int, tier1 bool) (*Synth, error) {
 		camAttack:  float32(s.Pulse.CamAttack),
 		decay:      float32(s.Pulse.Decay),
 		amCfg:      float32(s.Noise.AM),
-		airCfg:     float32(s.Noise.Air),
+		airCfg:     float32(airGain * s.Noise.Air),
 		jetCfg:     float32(s.Noise.Jet),
 		intakeCfg:  float32(s.Noise.Intake),
 		intakeHz:   float32(s.Noise.IntakeHz),
@@ -164,6 +176,9 @@ func New(s *Spec, rate int, tier1 bool) (*Synth, error) {
 		kLim:       dsp.TimeCoef(0.002, chunkHz),
 		jit:        dsp.OnePole{A: dsp.OnePoleCoef(2, chunkHz)},
 		amLP:       dsp.OnePole{A: dsp.OnePoleCoef(2000, fs)},
+		airLP1:     dsp.OnePole{A: dsp.OnePoleCoef(airHz, fs)},
+		airLP2:     dsp.OnePole{A: dsp.OnePoleCoef(airHz, fs)},
+		swellDecay: 1 - dsp.TimeCoef(airSwell, chunkHz),
 		idleRPM:    float32(s.IdleRPM),
 		ovLevel:    float32(math.Pow(10, s.Overrun.LevelDB/20)),
 		ovIdle:     float32(math.Pow(10, s.Overrun.IdleLevelDB/20)),
@@ -376,9 +391,8 @@ func (y *Synth) control(c *Control, n int) {
 	ld := float64(y.load)
 	rr := min(y.rpm/y.redline, 1.2)
 	// The pulse gain follows the load curve. On overrun, it moves to the
-	// overrun level. lift is the overrun gain over the idle floor. The air
-	// noise and the pops follow it, so that they keep their balance with
-	// the pulses.
+	// overrun level. lift is the overrun gain over the idle floor. The pops
+	// follow it, so that they keep their balance with the pulses.
 	pos := min(1, max(0, (y.rpm-y.idleRPM)/(y.redline-y.idleRPM)))
 	lvl := y.ovIdle + (y.ovLevel-y.ovIdle)*pos
 	shape := loadLevel(ld, lvl, y.partLoad)
@@ -388,7 +402,13 @@ func (y *Synth) control(c *Control, n int) {
 		(1 + y.camGain*y.camMix) * (1 + 2*y.jitter*j) * y.idle.rock
 	gate := float32(math.Pow(math.Max(ld, 0.02), 0.7))
 	y.amDepth = y.amCfg * gate
-	y.air = y.airCfg * y.overrun * y.master * (0.3 + rr) * y.lift
+	// The air noise swells at a lift-off and falls to a low steady level.
+	if over && !y.wasOver {
+		y.swell = 1
+	}
+	y.wasOver = over
+	y.swell *= y.swellDecay
+	y.air = y.airCfg * y.overrun * y.master * (0.3 + rr) * (airSteady + (1-airSteady)*y.swell)
 
 	// The RPM gain ramps over the chunk. It starts at its first value.
 	g := rpmGain(y.rpm, y.knee, y.redline, y.idleGain)
@@ -562,7 +582,10 @@ func (y *Synth) process(dst []float32) {
 
 		nz := y.amLP.Process(y.noise.Bipolar()) * noiseScale
 		am := 1 + y.amDepth*nz
-		airN := y.air * nz
+		var airN float32
+		if y.air != 0 {
+			airN = y.air * y.airLP2.Process(y.airLP1.Process(nz))
+		}
 		jump, crack := y.pops.tick(&y.noise, np)
 
 		var sum float32

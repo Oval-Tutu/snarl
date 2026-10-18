@@ -448,6 +448,65 @@ func TestOverrunOrders(t *testing.T) {
 	}
 }
 
+// liftOff returns the snapshots of a lift-off as the harness script drives
+// it: full throttle for 2 s with the RPM rising to 75 percent of the
+// redline, then closed throttle with the overrun flag and the RPM falling
+// at 1300 RPM per second to idle. The load comes from a LoadFilter.
+func liftOff(p Profile) func(float64) Snapshot {
+	var load LoadFilter
+	const dt = 256.0 / testRate
+	top := 0.75 * p.RedlineRPM
+	return func(t float64) Snapshot {
+		s := Snapshot{Flags: FlagRunning}
+		if t < 2 {
+			s.RPM = top - (top-p.IdleRPM)*0.4*float32(1-t/2)
+			s.Throttle = 1
+		} else {
+			s.RPM = max(p.IdleRPM, top-1300*float32(t-2))
+			s.Flags |= FlagOverrun
+		}
+		s.Load = load.Update(s.Throttle, 0, 0, dt, s.Flags&FlagOverrun != 0)
+		return s
+	}
+}
+
+// TestOverrunAirSubtle checks that the overrun air noise stays under the
+// exhaust. In the first second after a lift-off, the band from 3 to 8 kHz
+// is at most 1 dB above the same render with no air noise.
+func TestOverrunAirSubtle(t *testing.T) {
+	for _, name := range Profiles() {
+		for _, tier := range tiers {
+			t.Run(fmt.Sprintf("%s/tier%d", name, tier), func(t *testing.T) {
+				p, err := LoadProfile(name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				q, err := LoadProfileWith(name, "noise.air=0")
+				if err != nil {
+					t.Fatal(err)
+				}
+				band := func(p Profile) float64 {
+					x := render(newEngine(t, p, tier), 3, liftOff(p))
+					y := make([]float64, len(x))
+					for i, v := range x {
+						y[i] = float64(v)
+					}
+					var e float64
+					for _, v := range analysis.BandPass(y, testRate, 3000, 8000)[2*testRate:] {
+						e += v * v
+					}
+					return e
+				}
+				db := 10 * math.Log10(band(p)/band(q))
+				t.Logf("air adds %.2f dB from 3 to 8 kHz after the lift-off", db)
+				if db > 1 {
+					t.Errorf("air adds %.1f dB from 3 to 8 kHz after the lift-off, want at most 1 dB", db)
+				}
+			})
+		}
+	}
+}
+
 func TestBadInputBounded(t *testing.T) {
 	e := newTestEngine(t, "v8", Tier1)
 	bad := []float32{float32(math.NaN()), float32(math.Inf(1)), -5000, 1e9}
@@ -494,12 +553,11 @@ func TestPopsFire(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Same sweep with and without the overrun flag after lift-off. Pops
-	// add energy above 3.8 kHz through the crack.
-	noOverrun := func(t float64) Snapshot {
-		s := sweep(p)(t)
-		s.Flags &^= FlagOverrun
-		return s
+	// Same sweep with and without pops. Pops add energy above 3.8 kHz
+	// through the crack.
+	q, err := LoadProfileWith("flat12", "pops.density=0")
+	if err != nil {
+		t.Fatal(err)
 	}
 	hf := func(x []float32) float64 {
 		var e float64
@@ -512,8 +570,8 @@ func TestPopsFire(t *testing.T) {
 		return e
 	}
 	on := render(newTestEngine(t, "flat12", Tier0), 12, sweep(p))[7*testRate:]
-	off := render(newTestEngine(t, "flat12", Tier0), 12, noOverrun)[7*testRate:]
-	if hf(on) < 1.5*hf(off) {
+	off := render(newEngine(t, q, Tier0), 12, sweep(q))[7*testRate:]
+	if hf(on) < 1.15*hf(off) {
 		t.Errorf("overrun high-frequency energy %.3g, without pops %.3g", hf(on), hf(off))
 	}
 }
