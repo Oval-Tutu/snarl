@@ -1,6 +1,7 @@
 package model
 
 import (
+	"math"
 	"slices"
 	"testing"
 
@@ -107,6 +108,30 @@ func TestPopNeedsHeatAndArming(t *testing.T) {
 		}
 		if p.tick(&n, 1); p.busy > 0 {
 			t.Fatal("pop from a cold exhaust")
+		}
+	}
+}
+
+// TestLoadLevel checks that the pulse gain rises with load from the
+// overrun level to full load, through the part-load level at load 0.5.
+func TestLoadLevel(t *testing.T) {
+	for _, c := range []struct{ lvl, part float32 }{{0.5, 0.7}, {0.2, 0.8}, {0.95, 0.7}, {0.7, 0.7}} {
+		prev := float32(-1)
+		for i := range 101 {
+			g := loadLevel(float64(i)/100, c.lvl, c.part)
+			if g < prev || g < c.lvl || g > 1 {
+				t.Fatalf("lvl %v, part %v: gain %v at load %v after %v", c.lvl, c.part, g, float64(i)/100, prev)
+			}
+			prev = g
+		}
+		if g := loadLevel(0, c.lvl, c.part); g != c.lvl {
+			t.Errorf("lvl %v: gain %v at load 0", c.lvl, g)
+		}
+		if g := loadLevel(1, c.lvl, c.part); g != 1 {
+			t.Errorf("lvl %v: gain %v at load 1", c.lvl, g)
+		}
+		if g := loadLevel(0.5, c.lvl, c.part); c.lvl < c.part && math.Abs(float64(g-c.part)) > 1e-4 {
+			t.Errorf("lvl %v: gain %v at load 0.5, want %v", c.lvl, g, c.part)
 		}
 	}
 }

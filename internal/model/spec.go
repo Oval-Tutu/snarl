@@ -50,8 +50,14 @@ type PulseSpec struct {
 	CamAttack float64 `toml:"cam_attack"`
 	// CamGain is the extra pulse gain above the cam switch RPM.
 	CamGain float64 `toml:"cam_gain"`
-	// IdleFloor is the pulse gain at zero load, as a fraction of full load.
+	// IdleFloor is the reference pulse gain for the overrun air noise and
+	// pops, as a fraction of full load. On overrun, both rise by the
+	// overrun level over this gain.
 	IdleFloor float64 `toml:"idle_floor"`
+	// PartLoadDB is the pulse level at load 0.5 in decibels, relative to
+	// full load at the same RPM. The pulse level rises smoothly with load
+	// from the overrun level at load 0 to full load at load 1.
+	PartLoadDB float64 `toml:"part_load_db"`
 	// CycleVariation is the random per-firing gain spread.
 	CycleVariation float64 `toml:"cycle_variation"`
 	// Jitter is the slow random RPM and gain wander, as a fraction.
@@ -179,7 +185,7 @@ func DefaultSpec() Spec {
 		LimiterKind: "fuel",
 		LimiterMS:   80,
 		Pulse: PulseSpec{
-			WidthDeg: 160, Attack: 25, Decay: 7, IdleFloor: 0.2,
+			WidthDeg: 160, Attack: 25, Decay: 7, IdleFloor: 0.2, PartLoadDB: -0.6,
 			CycleVariation: 0.08, Jitter: 0.003,
 			GainVariation: 0.06, TimingVariationDeg: 1.5,
 		},
@@ -244,6 +250,8 @@ func (s *Spec) validateEngine() error {
 		return errors.New("exhaust low_shelf_db must be from -20 to 20 and low_shelf_hz positive")
 	case s.Overrun.LevelDB > 6 || s.Overrun.IdleLevelDB > 6 || s.Overrun.LevelDB < -40 || s.Overrun.IdleLevelDB < -40:
 		return errors.New("overrun level_db and idle_level_db must be from -40 to 6")
+	case s.Pulse.PartLoadDB >= 0 || s.Pulse.PartLoadDB < -20:
+		return errors.New("pulse part_load_db must be from -20 to below 0")
 	}
 	return nil
 }

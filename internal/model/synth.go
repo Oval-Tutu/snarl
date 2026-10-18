@@ -75,6 +75,7 @@ type Synth struct {
 	jit                          dsp.OnePole
 	amLP                         dsp.OnePole
 	idleRPM, ovLevel, ovIdle     float32
+	partLoad                     float32
 	shape, lift                  float32
 	intakeBP, jetBP, tickHP      dsp.Biquad
 	intakeSetMix                 float32
@@ -139,6 +140,7 @@ func New(s *Spec, rate int, tier1 bool) (*Synth, error) {
 		idleRPM:    float32(s.IdleRPM),
 		ovLevel:    float32(math.Pow(10, s.Overrun.LevelDB/20)),
 		ovIdle:     float32(math.Pow(10, s.Overrun.IdleLevelDB/20)),
+		partLoad:   float32(math.Pow(10, s.Pulse.PartLoadDB/20)),
 		tickDec:    dsp.DecayCoef(40, 0.004, fs),
 		pops:       newPops(s, fs, chunk/fs, tier1),
 	}
@@ -283,6 +285,16 @@ func b2f(b bool) float32 {
 	return 0
 }
 
+// loadLevel returns the pulse gain at load ld, relative to full load at
+// the same RPM. It rises with load along lvl+(1-lvl)*ld^k, from the
+// overrun level lvl at load 0 to 1 at load 1. The exponent k puts the gain
+// at load 0.5 on part. When lvl is not below part, k stops at its upper
+// bound, and the gain stays near lvl up to high load.
+func loadLevel(ld float64, lvl, part float32) float32 {
+	k := math.Log2(float64(1-lvl) / math.Max(float64(part-lvl), 1e-3))
+	return lvl + (1-lvl)*float32(math.Pow(ld, min(max(k, 0.2), 8)))
+}
+
 // control runs once per chunk of n samples.
 func (y *Synth) control(c *Control, n int) {
 	rpm := clampf(c.RPM, 0, maxRPM)
@@ -311,13 +323,13 @@ func (y *Synth) control(c *Control, n int) {
 
 	ld := float64(y.load)
 	rr := min(y.rpm/y.redline, 1.2)
-	// On overrun, the pulse gain moves from the load shape to the overrun
-	// level, relative to full load. lift is the overrun gain over the
-	// zero-load pulses. The air noise and the pops follow it, so that they
-	// keep their balance with the pulses.
+	// The pulse gain follows the load curve. On overrun, it moves to the
+	// overrun level. lift is the overrun gain over the idle floor. The air
+	// noise and the pops follow it, so that they keep their balance with
+	// the pulses.
 	pos := min(1, max(0, (y.rpm-y.idleRPM)/(y.redline-y.idleRPM)))
 	lvl := y.ovIdle + (y.ovLevel-y.ovIdle)*pos
-	shape := y.idleFloor + (1-y.idleFloor)*float32(math.Pow(ld, 0.8))
+	shape := loadLevel(ld, lvl, y.partLoad)
 	y.shape = shape + (lvl-shape)*y.overrun
 	y.lift = 1 + (lvl/max(y.idleFloor, 0.05)-1)*y.overrun
 	y.amp = y.master * y.voiceGain * y.shape * (0.5 + 0.5*rr) *
