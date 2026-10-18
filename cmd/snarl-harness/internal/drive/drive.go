@@ -33,10 +33,10 @@ const (
 	maxAccel     = 80.0      // Largest speed change in m/s per second.
 
 	// throttleReach is the goal in revs at full throttle. It is past 1, so
-	// that full throttle reaches the limiter.
+	// that full throttle reaches the limiter. The goal stops at 1.
 	throttleReach = 1.05
-	// CutTime is the time in seconds for which the limiter cuts the throttle.
-	CutTime = 0.08
+	// limitEps is the margin below 1 at which the revs are at the limiter.
+	limitEps = 1e-9
 	// OverrunThrottle is the throttle below which falling revs are overrun.
 	OverrunThrottle = 0.05
 )
@@ -72,11 +72,13 @@ type Model struct {
 	gears, gear int
 	speed       float64 // Car speed in m/s.
 	accel       float64 // Car acceleration of the last step, m/s per second.
-	cut         float64 // Seconds left of the limiter cut.
+	limit       bool
 	overrun     bool
 
-	// ShiftUp, ShiftDown and Limiter count the events, as in
-	// snarl.Snapshot.
+	// ShiftUp and ShiftDown count the events, as in snarl.Snapshot.
+	// Limiter counts the arrivals at the limiter. The engine detects the
+	// limiter from the RPM by itself, so the count only shows on screen
+	// and starts a cut that the engine starts anyway.
 	ShiftUp, ShiftDown, Limiter uint8
 }
 
@@ -156,8 +158,9 @@ func (m *Model) PeakAccel() float64 {
 // were above idle in the last step.
 func (m *Model) Overrun() bool { return m.overrun }
 
-// Cut reports whether the limiter cuts the throttle.
-func (m *Model) Cut() bool { return m.cut > 0 }
+// Cut reports whether the revs are held at the limiter with the throttle
+// open, where the engine cuts.
+func (m *Model) Cut() bool { return m.limit }
 
 // climbRate returns the rev climb rate per second in the selected gear for
 // the revClimb step c. A lower gear climbs faster by the square of its
@@ -172,19 +175,17 @@ func (m *Model) climbRate(c float64) float64 {
 }
 
 // Step advances the model by dt seconds with the throttle from 0 to 1.
-// While the engine is not running, the throttle does nothing.
+// While the engine is not running, the throttle does nothing. With the
+// throttle open, the revs stop at the limiter and hold there. The drive
+// makes no cut: the engine bounces off the limiter by itself.
 func (m *Model) Step(throttle float64, running bool, dt float64) {
 	if dt <= 0 {
 		return
 	}
 	ratio := m.ratio(m.gear)
 	revs := m.revs()
-	goal := throttle * throttleReach
+	goal := min(throttle*throttleReach, 1)
 	if !running {
-		goal = 0
-	}
-	if m.cut > 0 {
-		m.cut -= dt
 		goal = 0
 	}
 	var next float64
@@ -203,9 +204,9 @@ func (m *Model) Step(throttle float64, running bool, dt float64) {
 	m.accel = (v - m.speed) / dt
 	m.speed = v
 	now := m.revs()
-	if now >= 1 && goal >= 1 && m.cut <= 0 {
+	if now >= 1-limitEps && revs < 1-limitEps {
 		m.Limiter++
-		m.cut = CutTime
 	}
+	m.limit = now >= 1-limitEps && goal >= 1
 	m.overrun = running && throttle < OverrunThrottle && (now < revs || now > 0)
 }

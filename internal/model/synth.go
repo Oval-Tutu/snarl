@@ -17,6 +17,11 @@ const (
 	maxRPM = 20000
 	// noiseScale brings the 2 kHz low-passed noise to about unit range.
 	noiseScale = 3
+	// gateStep is the change of the limiter jet noise gate per sample.
+	gateStep = 1.0 / 16
+	// injectorFire is the firing interval in an injector cut: one firing
+	// in injectorFire fires.
+	injectorFire = 8
 )
 
 // Control is the engine state for one block.
@@ -72,8 +77,10 @@ type Synth struct {
 	steepCfg, voiceGain          float32
 	overlap                      float32
 	limKind                      string
-	limSamples                   int
+	limRPM, limDip               float32
+	limCut, limRec               int
 	kRPM, kCtl, kMaster, kCam    float32
+	kLim                         float32
 	jit                          dsp.OnePole
 	amLP                         dsp.OnePole
 	idleRPM, ovLevel, ovIdle     float32
@@ -91,7 +98,17 @@ type Synth struct {
 	inc, step, amp, amDepth, air float32
 	jetGain, intakeGain, fanGain float32
 	tickGain, ka, kb, liveNorm   float32
-	cut, cutCount                int
+
+	// Rev limiter state. cut and rec are the samples left of the cut and
+	// of the recovery after it. cutting is true for a chunk inside a cut.
+	// limRot counts the cuts. dip is the RPM fall of the bounce. bangAt is
+	// the time into an ignition cut in samples at which the unburnt fuel
+	// bangs, or -1. gate is the jet noise gain of the cut, and gateTo is
+	// its target.
+	cut, rec, cutCount, limRot int
+	bangAt                     int
+	cutting, limEvent          bool
+	dip, gate, gateTo          float32
 }
 
 // New returns a synth for the spec at the sample rate. tier1 selects the
@@ -134,11 +151,17 @@ func New(s *Spec, rate int, tier1 bool) (*Synth, error) {
 		overlap:    float32(s.Exhaust.Overlap),
 		voiceGain:  float32(s.Voice.Gain),
 		limKind:    s.LimiterKind,
-		limSamples: int(s.LimiterMS * 1e-3 * fs),
+		limRPM:     float32(s.LimiterRPM),
+		limDip:     float32(s.LimiterDipRPM),
+		limCut:     int(s.LimiterMS * 1e-3 * fs),
+		limRec:     int(s.LimiterRecoveryMS * 1e-3 * fs),
+		gate:       1,
+		gateTo:     1,
 		kRPM:       dsp.TimeCoef(0.012, chunkHz),
 		kCtl:       dsp.TimeCoef(0.025, chunkHz),
 		kMaster:    dsp.TimeCoef(0.02, chunkHz),
 		kCam:       dsp.TimeCoef(0.015, chunkHz),
+		kLim:       dsp.TimeCoef(0.002, chunkHz),
 		jit:        dsp.OnePole{A: dsp.OnePoleCoef(2, chunkHz)},
 		amLP:       dsp.OnePole{A: dsp.OnePoleCoef(2000, fs)},
 		idleRPM:    float32(s.IdleRPM),
@@ -273,8 +296,7 @@ func envelopePeak(a, b float64) float64 {
 // Render fills dst. It allocates nothing.
 func (y *Synth) Render(dst []float32, c Control) {
 	if c.LimiterEvents > 0 {
-		y.cut = y.limSamples
-		y.cutCount = 0
+		y.limEvent = true
 	}
 	for len(dst) > 0 {
 		n := min(len(dst), chunk)
@@ -328,8 +350,13 @@ func (y *Synth) control(c *Control, n int) {
 	y.throttle += (thr - y.throttle) * y.kCtl
 	y.load += (load - y.load) * y.kCtl
 	y.master += (b2f(c.Running) - y.master) * y.kMaster
-	over := c.Overrun && thr < 0.05
-	y.overrun += (b2f(over) - y.overrun) * y.kCtl
+	limiting := y.limit(rpm, thr, n)
+	over := c.Overrun && thr < 0.05 && !limiting
+	k := y.kCtl
+	if limiting {
+		k = y.kLim
+	}
+	y.overrun += (b2f(over) - y.overrun) * k
 
 	if y.camRPM > 0 {
 		if !y.camHigh && y.rpm > y.camRPM {
@@ -342,7 +369,7 @@ func (y *Synth) control(c *Control, n int) {
 
 	j := y.jit.Process(y.noise.Bipolar() * 1.7)
 	y.idle.control(rpm, y.load)
-	inc := y.rpm * y.invRate120 * (1 + y.jitter*j) * y.idle.speed
+	inc := max(0, y.rpm-y.dip) * y.invRate120 * (1 + y.jitter*j) * y.idle.speed
 	y.inc = min(inc, y.maxInc)
 	y.step = y.inc * y.stepPerCycle
 
@@ -370,17 +397,53 @@ func (y *Synth) control(c *Control, n int) {
 	}
 	y.rpmStep = (g - y.rpmG) / float32(n)
 
-	if y.cut > 0 {
-		y.cut -= n
-	}
 	heat := b2f(y.throttle > 0.2) * y.load * min(rr, 1)
-	y.pops.control(y.rpm, y.throttle, over && y.master > 0.5, y.cut > 0, heat, &y.noise)
+	y.pops.control(y.rpm, y.throttle, over && y.master > 0.5, limiting, heat, &y.noise)
 
 	if y.tier1 {
 		// The exhaust flow layers follow the pulse gain, so that the level
 		// order over load holds in tier 1 as in tier 0.
 		y.controlTier1(y.shape, rr)
 	}
+}
+
+// limit runs the rev limiter for a chunk of n samples, from the input RPM
+// and throttle. A cut starts at the limiter RPM with the throttle open, or
+// on a limiter event, when no cut or recovery runs. It reports whether a
+// cut or a recovery runs, so that no overrun effect plays.
+func (y *Synth) limit(rpm, thr float32, n int) bool {
+	at := y.limRPM > 0 && rpm >= y.limRPM*0.998 && thr > 0.1
+	if y.cut <= 0 && y.rec <= 0 && (at || y.limEvent) && y.limCut > 0 {
+		y.cut, y.rec = y.limCut, y.limRec
+		y.cutCount = 0
+		y.limRot++
+		y.bangAt = -1
+		// An ignition cut bangs with a chance of the pop density, at a
+		// random time in the cut.
+		if y.limKind == "ignition" && y.noise.Unipolar() < y.pops.density {
+			y.bangAt = int((0.2 + 0.8*y.noise.Unipolar()) * float32(y.limCut))
+		}
+	}
+	y.limEvent = false
+	y.cutting = y.cut > 0
+	y.gateTo = 1
+	switch {
+	case y.cutting:
+		y.cut -= n
+		y.dip = y.limDip * min(1, float32(y.limCut-y.cut)/float32(y.limCut))
+		if y.limKind == "injector" {
+			y.gateTo = 1.0 / injectorFire
+		} else {
+			y.gateTo = 0
+		}
+	case y.rec > 0:
+		y.rec -= n
+		y.dip = y.limDip * max(0, float32(y.rec)/float32(y.limRec))
+	default:
+		y.dip = 0
+		return false
+	}
+	return true
 }
 
 func (y *Synth) controlTier1(flow, rr float32) {
@@ -412,15 +475,20 @@ func (y *Synth) controlTier1(flow, rr float32) {
 
 // fire starts the pulse of one cylinder.
 func (y *Synth) fire(cyl int) {
-	if y.cut > 0 {
+	if y.cutting {
 		y.cutCount++
 		switch y.limKind {
 		case "injector":
-			if y.cutCount&1 == 1 {
+			// One firing in injectorFire fires. The firing that fires moves on
+			// with each cut.
+			if (y.cutCount+y.limRot)%injectorFire != 0 {
 				return
 			}
 		case "ignition":
-			y.pops.misfire(&y.noise, len(y.paths))
+			if y.bangAt >= 0 && y.limCut-y.cut >= y.bangAt {
+				y.pops.bang(&y.noise, len(y.paths))
+				y.bangAt = -1
+			}
 			return
 		default:
 			return
@@ -529,7 +597,11 @@ func (y *Synth) layers(bank *[MaxBanks]float32, np int) float32 {
 		pulse += bank[b]
 	}
 	n2 := y.noise2.Bipolar()
-	out := y.jetBP.Process(n2) * y.jetGain
+	// The jet noise follows the cut through a short ramp against clicks.
+	if d := y.gateTo - y.gate; d != 0 {
+		y.gate += max(-gateStep, min(gateStep, d))
+	}
+	out := y.jetBP.Process(n2) * y.jetGain * y.gate
 	if y.intakeGain > 0 {
 		out += y.intakeBP.Process(n2) * pulse * y.intakeGain
 	}

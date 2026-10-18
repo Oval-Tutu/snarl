@@ -6,8 +6,12 @@ import (
 	"github.com/oval-tutu/snarl/internal/dsp"
 )
 
-// golden is the step of the low-discrepancy sequences for pop timing.
-const golden = 0.6180339887
+const (
+	// golden is the step of the low-discrepancy sequences for pop timing.
+	golden = 0.6180339887
+	// bangGain is the gain of an ignition cut bang relative to a pop.
+	bangGain = 3
+)
 
 // pops is the overrun pop model: the arm and fire logic, the two-level
 // scheduler and the pop voice. A pop is a rounded pressure jump with a
@@ -171,12 +175,11 @@ func (p *pops) fire(n *dsp.Noise, paths int, scale float32) {
 	}
 }
 
-// misfire is a skipped firing during an ignition cut. Unburnt charge can
-// pop in the exhaust.
-func (p *pops) misfire(n *dsp.Noise, paths int) {
-	if p.density > 0 && p.busy == 0 && n.Unipolar() < p.density {
-		p.fire(n, paths, 0.6)
-	}
+// bang is the bang of unburnt fuel in an ignition cut: a pop with a
+// shorter pressure jump, so that its attack is sharper.
+func (p *pops) bang(n *dsp.Noise, paths int) {
+	p.fire(n, paths, bangGain)
+	p.jumpLeft = max(1, p.jumpLen/3)
 }
 
 // tick runs once per sample. It returns the pressure jump for the target

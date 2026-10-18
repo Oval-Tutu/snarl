@@ -97,9 +97,10 @@ func New(p Profile, sampleRate int, tier Tier) (Engine, error) {
 	return &engine{synth: s}, nil
 }
 
-// LoadFilter derives Snapshot.Load from the car acceleration. The handling
-// model has no engine load, so the game calls Update once per tick. The
-// zero value is ready to use, with a time constant of 0.1 seconds.
+// LoadFilter derives Snapshot.Load from the throttle and the car
+// acceleration. The handling model has no engine load, so the game calls
+// Update once per tick. The zero value is ready to use, with a time
+// constant of 0.1 seconds.
 type LoadFilter struct {
 	// TimeConstant is the smoothing time in seconds. Zero selects 0.1.
 	TimeConstant float32
@@ -107,15 +108,20 @@ type LoadFilter struct {
 	load float32
 }
 
-// Update returns the smoothed load, from 0 to 1. accel is the car
-// acceleration in metres per second squared, peakAccel is the peak
-// acceleration of the current gear, and dt is the tick length in seconds.
-// The load is clamp(accel / peakAccel, 0, 1), and it is zero while the
-// engine is on overrun.
-func (f *LoadFilter) Update(accel, peakAccel, dt float32, overrun bool) float32 {
+// Update returns the smoothed load, from 0 to 1. throttle is the throttle
+// position from 0 to 1, accel is the car acceleration in metres per second
+// squared, peakAccel is the peak acceleration of the current gear, and dt
+// is the tick length in seconds. The load is the throttle, raised to
+// accel / peakAccel when that is higher, and clamped from 0 to 1. A steady
+// part throttle, with no acceleration, keeps its load. The load is zero
+// while the engine is on overrun.
+func (f *LoadFilter) Update(throttle, accel, peakAccel, dt float32, overrun bool) float32 {
 	var target float32
-	if !overrun && peakAccel > 0 && accel > 0 {
-		target = min(1, accel/peakAccel)
+	if !overrun {
+		target = min(1, max(0, throttle))
+		if peakAccel > 0 && accel > 0 {
+			target = max(target, min(1, accel/peakAccel))
+		}
 	}
 	tc := f.TimeConstant
 	if tc <= 0 {

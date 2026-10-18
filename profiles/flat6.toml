@@ -9,7 +9,9 @@ redline_rpm = 6800
 limiter_rpm = 6700
 # Governed speed, a soft cut.
 limiter_kind = "injector"
-limiter_ms = 70
+limiter_ms = 110
+limiter_recovery_ms = 70
+limiter_dip_rpm = 500
 
 [pulse]
 width_deg = 150

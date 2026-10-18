@@ -9,7 +9,9 @@ redline_rpm = 6000
 limiter_rpm = 6250
 # Fuel cut one injector at a time.
 limiter_kind = "injector"
-limiter_ms = 90
+limiter_ms = 120
+limiter_recovery_ms = 75
+limiter_dip_rpm = 450
 
 [pulse]
 width_deg = 170

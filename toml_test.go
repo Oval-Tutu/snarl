@@ -97,6 +97,8 @@ gain = 1
 		"bad crank":    strings.Replace(good, "crank_deg = 0", "crank_deg = 720", 1),
 		"bad redline":  strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 700", 1),
 		"bad limiter":  good + "\nlimiter_kind = \"spark\"",
+		"bad dip":      strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nlimiter_dip_rpm = 2000", 1),
+		"bad recovery": strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nlimiter_recovery_ms = -1", 1),
 		"bad crossing": strings.Replace(good, "[[cylinder]]", "[exhaust]\ncrossover = \"some\"\n[[cylinder]]", 1),
 		"bad shelf":    strings.Replace(good, "[[cylinder]]", "[exhaust]\nlow_shelf_db = 30\n[[cylinder]]", 1),
 		"bad overrun":  strings.Replace(good, "[[cylinder]]", "[overrun]\nlevel_db = 10\n[[cylinder]]", 1),

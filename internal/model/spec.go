@@ -17,15 +17,29 @@ const MaxBanks = 4
 // Spec is the parsed content of an engine profile. The toml tags name the
 // keys in the profile files.
 type Spec struct {
-	Name         string  `toml:"name"`
-	Description  string  `toml:"description"`
-	Seed         int     `toml:"seed"`
-	IdleRPM      float64 `toml:"idle_rpm"`
-	RedlineRPM   float64 `toml:"redline_rpm"`
-	LimiterRPM   float64 `toml:"limiter_rpm"`
-	LimiterKind  string  `toml:"limiter_kind"`
-	LimiterMS    float64 `toml:"limiter_ms"`
-	CamSwitchRPM float64 `toml:"cam_switch_rpm"`
+	Name        string  `toml:"name"`
+	Description string  `toml:"description"`
+	Seed        int     `toml:"seed"`
+	IdleRPM     float64 `toml:"idle_rpm"`
+	RedlineRPM  float64 `toml:"redline_rpm"`
+	// LimiterRPM is the snapshot RPM at which the rev limiter cuts with
+	// the throttle open. Zero turns the limiter off.
+	LimiterRPM float64 `toml:"limiter_rpm"`
+	// LimiterKind is the cut: "fuel" stops every cylinder, "injector"
+	// stops seven firings in eight with a subset that moves on with each
+	// cut, and "ignition" stops every cylinder with bangs from the unburnt
+	// fuel.
+	LimiterKind string `toml:"limiter_kind"`
+	// LimiterMS is the length of one cut in milliseconds.
+	LimiterMS float64 `toml:"limiter_ms"`
+	// LimiterRecoveryMS is the time in milliseconds after a cut in which
+	// the engine fires and the RPM climbs back. The next cut can only start
+	// after it, so one bounce takes LimiterMS plus LimiterRecoveryMS.
+	LimiterRecoveryMS float64 `toml:"limiter_recovery_ms"`
+	// LimiterDipRPM is the RPM fall over one cut. The pitch falls by it in
+	// a straight line over the cut and climbs back over the recovery.
+	LimiterDipRPM float64 `toml:"limiter_dip_rpm"`
+	CamSwitchRPM  float64 `toml:"cam_switch_rpm"`
 
 	Pulse      PulseSpec      `toml:"pulse"`
 	Exhaust    ExhaustSpec    `toml:"exhaust"`
@@ -217,9 +231,11 @@ type VoiceSpec struct {
 // DefaultSpec returns the defaults that a profile file overrides.
 func DefaultSpec() Spec {
 	return Spec{
-		Seed:        1,
-		LimiterKind: "fuel",
-		LimiterMS:   80,
+		Seed:              1,
+		LimiterKind:       "fuel",
+		LimiterMS:         40,
+		LimiterRecoveryMS: 30,
+		LimiterDipRPM:     200,
 		Pulse: PulseSpec{
 			WidthDeg: 160, Attack: 25, Decay: 7, IdleFloor: 0.2, PartLoadDB: -0.6,
 			CycleVariation: 0.08, Jitter: 0.003,
@@ -257,7 +273,7 @@ func (s *Spec) Validate() error {
 	if s.Name == "" {
 		return errors.New("profile has no name")
 	}
-	for _, check := range []func() error{s.validateEngine, s.validateIdle, s.validateCylinders, s.validatePaths} {
+	for _, check := range []func() error{s.validateEngine, s.validateLimiter, s.validateIdle, s.validateCylinders, s.validatePaths} {
 		if err := check(); err != nil {
 			return fmt.Errorf("profile %s: %w", s.Name, err)
 		}
@@ -271,8 +287,6 @@ func (s *Spec) validateEngine() error {
 		return errors.New("seed must be from 0 to 65535")
 	case s.IdleRPM <= 0 || s.RedlineRPM <= s.IdleRPM || s.LimiterMS < 0:
 		return errors.New("idle_rpm, redline_rpm and limiter_ms must be positive, and redline above idle")
-	case s.LimiterKind != "fuel" && s.LimiterKind != "injector" && s.LimiterKind != "ignition":
-		return fmt.Errorf("limiter_kind %q is not fuel, injector or ignition", s.LimiterKind)
 	case s.Exhaust.Crossover != "none" && s.Exhaust.Crossover != "full" && s.Exhaust.Crossover != "partial":
 		return fmt.Errorf("crossover %q is not none, full or partial", s.Exhaust.Crossover)
 	case s.Pulse.WidthDeg <= 0 || s.Pulse.WidthDeg > 360 || s.Pulse.Attack <= 0 || s.Pulse.Decay <= 0:
@@ -292,6 +306,17 @@ func (s *Spec) validateEngine() error {
 		return errors.New("overrun level_db and idle_level_db must be from -40 to 6")
 	case s.Pulse.PartLoadDB >= 0 || s.Pulse.PartLoadDB < -20:
 		return errors.New("pulse part_load_db must be from -20 to below 0")
+	}
+	return nil
+}
+
+func (s *Spec) validateLimiter() error {
+	switch {
+	case s.LimiterKind != "fuel" && s.LimiterKind != "injector" && s.LimiterKind != "ignition":
+		return fmt.Errorf("limiter_kind %q is not fuel, injector or ignition", s.LimiterKind)
+	case s.LimiterRPM < 0 || s.LimiterMS > 500 || s.LimiterRecoveryMS < 0 || s.LimiterRecoveryMS > 500 ||
+		s.LimiterDipRPM < 0 || s.LimiterDipRPM > 1000:
+		return errors.New("limiter_rpm must not be negative, limiter_ms and limiter_recovery_ms from 0 to 500, and limiter_dip_rpm from 0 to 1000")
 	}
 	return nil
 }

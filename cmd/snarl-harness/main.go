@@ -249,7 +249,7 @@ func step(d *drive.Model, load *snarl.LoadFilter, pr snarl.Profile, throttle flo
 	s := snarl.Snapshot{
 		RPM:       rpm,
 		Throttle:  float32(throttle),
-		Load:      load.Update(float32(d.Accel()), float32(d.PeakAccel()), float32(dt), overrun),
+		Load:      load.Update(float32(throttle), float32(d.Accel()), float32(d.PeakAccel()), float32(dt), overrun),
 		Speed:     float32(d.Speed()),
 		Gear:      uint8(d.Gear()), //nolint:gosec // The gear is below drive.MaxGears.
 		ShiftUp:   d.ShiftUp,

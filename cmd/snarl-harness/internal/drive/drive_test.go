@@ -54,24 +54,53 @@ func TestOverrunOnLiftOff(t *testing.T) {
 	}
 }
 
+// TestLimiter checks that full throttle holds the revs at the limiter
+// with no cut and no overrun, counts one arrival, and that a lift-off
+// leaves the limiter.
 func TestLimiter(t *testing.T) {
 	m := New(DefaultGears)
-	run(m, 1, 0.5)
-	for i := 0; m.Limiter == 0; i++ {
+	for i := 0; !m.Cut(); i++ {
 		if i > 60*30 {
-			t.Fatalf("no limiter cut after 30 s at full throttle, revs %v", m.Revs())
+			t.Fatalf("not at the limiter after 30 s at full throttle, revs %v", m.Revs())
 		}
 		m.Step(1, true, dt)
 	}
-	if m.Revs() < 0.99 || !m.Cut() {
-		t.Errorf("limiter cut at revs %v, cut %t", m.Revs(), m.Cut())
+	if m.Limiter != 1 {
+		t.Errorf("limiter count %d on arrival, want 1", m.Limiter)
 	}
-	run(m, 1, 1)
-	if m.Limiter < 2 {
-		t.Errorf("limiter count %d after 1 s on the limiter, want at least 2", m.Limiter)
+	for range 60 {
+		m.Step(1, true, dt)
+		if m.Revs() < 1-1e-6 || m.revs() > 1+1e-6 || !m.Cut() || m.Overrun() {
+			t.Fatalf("at the limiter: revs %v, held %t, overrun %t", m.revs(), m.Cut(), m.Overrun())
+		}
 	}
-	if m.Revs() > 1 {
-		t.Errorf("revs %v past the limiter", m.Revs())
+	if m.Accel() != 0 || m.Limiter != 1 {
+		t.Errorf("held at the limiter: accel %v, limiter count %d", m.Accel(), m.Limiter)
+	}
+	m.Step(0, true, dt)
+	if m.Cut() || m.Revs() >= 1 || !m.Overrun() {
+		t.Errorf("lift-off: revs %v, held %t, overrun %t", m.Revs(), m.Cut(), m.Overrun())
+	}
+	run(m, 0.5, 0.5)
+	run(m, 1, 5)
+	if m.Limiter != 2 || !m.Cut() {
+		t.Errorf("second arrival: limiter count %d, held %t", m.Limiter, m.Cut())
+	}
+}
+
+// TestDownshiftOverRev checks that revs past the limiter after a downshift
+// fall back to the limiter and hold there with the throttle open.
+func TestDownshiftOverRev(t *testing.T) {
+	m := New(DefaultGears)
+	m.Upshift()
+	run(m, 1, 20)
+	m.Downshift()
+	if m.revs() <= 1 {
+		t.Fatalf("revs %v after the downshift, want past the limiter", m.revs())
+	}
+	run(m, 1, 5)
+	if m.revs() > 1+1e-6 || !m.Cut() {
+		t.Errorf("revs %v, held %t after the over-rev", m.revs(), m.Cut())
 	}
 }
 

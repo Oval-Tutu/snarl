@@ -11,6 +11,8 @@ limiter_rpm = 7000
 # Unverified. Modelled as a soft ignition cut.
 limiter_kind = "ignition"
 limiter_ms = 70
+limiter_recovery_ms = 40
+limiter_dip_rpm = 700
 
 [pulse]
 width_deg = 120

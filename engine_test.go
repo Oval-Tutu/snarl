@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 
@@ -559,23 +560,39 @@ func TestSetRenderConcurrent(t *testing.T) {
 	wg.Wait()
 }
 
+// TestLoadFilter checks that the throttle is the lower limit of the load,
+// that acceleration raises it, and that overrun sets it to zero.
 func TestLoadFilter(t *testing.T) {
+	cases := []struct {
+		name                  string
+		throttle, accel, peak float32
+		overrun               bool
+		want                  float32
+	}{
+		{"steady part throttle", 0.4, 0, 4, false, 0.4},
+		{"part throttle falling speed", 0.4, -2, 4, false, 0.4},
+		{"acceleration above throttle", 0.4, 3, 4, false, 0.75},
+		{"acceleration below throttle", 0.8, 2, 4, false, 0.8},
+		{"acceleration past peak", 0.2, 5, 4, false, 1},
+		{"no peak", 0.3, 5, 0, false, 0.3},
+		{"throttle out of range", 1.5, 0, 4, false, 1},
+		{"negative throttle", -1, 0, 4, false, 0},
+		{"overrun", 0.04, 3, 4, true, 0},
+	}
+	for _, c := range cases {
+		var f LoadFilter
+		var l float32
+		for range 100 {
+			l = f.Update(c.throttle, c.accel, c.peak, 0.02, c.overrun)
+		}
+		if math.Abs(float64(l-c.want)) > 0.01 {
+			t.Errorf("%s: load %v, want %v", c.name, l, c.want)
+		}
+	}
 	var f LoadFilter
-	var l float32
-	for range 100 {
-		l = f.Update(5, 4, 0.02, false)
-	}
-	if l < 0.99 || l > 1 {
-		t.Errorf("load %v, want 1", l)
-	}
-	for range 100 {
-		l = f.Update(5, 4, 0.02, true)
-	}
-	if l > 0.01 {
-		t.Errorf("overrun load %v, want 0", l)
-	}
-	if l = f.Update(-3, 4, 0.02, false); l < 0 {
-		t.Errorf("negative load %v", l)
+	f.Update(1, 0, 4, 0.02, false)
+	if l := f.Update(1, 0, 4, 0, false); l <= 0 || l >= 1 {
+		t.Errorf("load %v after one tick, want smoothed between 0 and 1", l)
 	}
 }
 
@@ -593,6 +610,134 @@ func BenchmarkRender(b *testing.B) {
 				blockNs := 256.0 / testRate * 1e9
 				nsPerBlock := float64(b.Elapsed().Nanoseconds()) / float64(b.N)
 				b.ReportMetric(100*nsPerBlock/blockNs, "%realtime")
+			})
+		}
+	}
+}
+
+// limiterDips measures the bounce of x from a short-window envelope: 15 ms
+// RMS windows every 1 ms, in decibels. A dip starts when the envelope
+// falls below 35 percent of its 10 to 90 percentile range and ends when it
+// stays above 65 percent for 25 ms. It returns the dip rate per second from
+// the mean interval between dip starts, the median depth of a dip from the
+// peak before it in decibels, and the coefficient of variation of the dip
+// intervals.
+func limiterDips(x []float32) (rate, depth, cv float64) {
+	const win, hop = 15 * testRate / 1000, testRate / 1000
+	var env []float64
+	for i := 0; i+win <= len(x); i += hop {
+		var e float64
+		for _, v := range x[i : i+win] {
+			e += float64(v) * float64(v)
+		}
+		env = append(env, 10*math.Log10(e/win+1e-20))
+	}
+	s := slices.Clone(env)
+	slices.Sort(s)
+	lo, hi := s[len(s)/10], s[len(s)*9/10]
+	down, up := lo+0.35*(hi-lo), lo+0.65*(hi-lo)
+	var starts []int
+	var depths []float64
+	// A dip in progress at the start does not count.
+	in := env[0] < up
+	above := 0
+	peak, low := math.Inf(-1), math.Inf(1)
+	for i, v := range env {
+		switch {
+		case !in && v < down:
+			in = true
+			starts = append(starts, i)
+			low = v
+		case in && v > up:
+			// A single firing inside an injector cut does not end the dip.
+			if above++; above >= 25 {
+				in = false
+				above = 0
+				if len(starts) > 0 {
+					depths = append(depths, peak-low)
+				}
+				peak = v
+			}
+		case in:
+			above = 0
+			low = min(low, v)
+		default:
+			peak = max(peak, v)
+		}
+	}
+	if len(starts) < 3 || len(depths) == 0 {
+		return 0, 0, 0
+	}
+	var gaps []float64
+	for i := 1; i < len(starts); i++ {
+		gaps = append(gaps, float64(starts[i]-starts[i-1]))
+	}
+	mean, sd := meanSD(gaps)
+	slices.Sort(depths)
+	return 1000 / mean, depths[len(depths)/2], sd / mean
+}
+
+func meanSD(x []float64) (mean, sd float64) {
+	for _, v := range x {
+		mean += v
+	}
+	mean /= float64(len(x))
+	for _, v := range x {
+		sd += (v - mean) * (v - mean)
+	}
+	return mean, math.Sqrt(sd / float64(len(x)))
+}
+
+// bandPower returns the mean square of x above 3 kHz.
+func bandPower(x []float32) float64 {
+	y := make([]float64, len(x))
+	for i, v := range x {
+		y[i] = float64(v)
+	}
+	var e float64
+	for _, v := range analysis.BandPass(y, testRate, 3000, 20000) {
+		e += v * v
+	}
+	return e / float64(len(y))
+}
+
+// TestLimiterBounce holds the snapshot RPM at the limiter with full
+// throttle for 2 s, with the overrun flag set as a careless game can set
+// it. The engine bounces off the limiter by itself: from 0.5 s, 8 to 20
+// regular dips per second of at least 10 dB, or 6 dB for an injector cut,
+// which fires a third of the cylinders. No overrun air noise plays: the
+// band above 3 kHz is not louder than full throttle 150 RPM below the
+// limiter. The output stays finite and below full scale.
+func TestLimiterBounce(t *testing.T) {
+	for _, name := range Profiles() {
+		for _, tier := range tiers {
+			t.Run(fmt.Sprintf("%s/tier%d", name, tier), func(t *testing.T) {
+				p, err := LoadProfile(name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				hold := func(rpm float32) []float32 {
+					return render(newEngine(t, p, tier), 2, func(float64) Snapshot {
+						return Snapshot{RPM: rpm, Throttle: 1, Load: 1, Flags: FlagRunning | FlagOverrun | FlagRedZone}
+					})[testRate/2:]
+				}
+				x, ref := hold(p.LimiterRPM), hold(p.LimiterRPM-150)
+				for i, v := range x {
+					if v != v || v > 0.99 || v < -0.99 {
+						t.Fatalf("sample %d is %v", i, v)
+					}
+				}
+				rate, depth, cv := limiterDips(x)
+				hf := 10 * math.Log10(bandPower(x)/bandPower(ref))
+				t.Logf("%.1f cuts per second, dips %.1f dB, interval CV %.2f, band above 3 kHz %+.1f dB", rate, depth, cv, hf)
+				want := 1000 / (p.spec.LimiterMS + p.spec.LimiterRecoveryMS)
+				if rate < 4 || rate > 20 || math.Abs(rate-want) > 0.15*want || depth < 10 || cv > 0.15 {
+					t.Errorf("%.1f dips per second of %.1f dB with interval CV %.2f, want %.1f (4 to 20) of at least 10 dB with CV up to 0.15",
+						rate, depth, cv, want)
+				}
+				if hf > 1 {
+					t.Errorf("band above 3 kHz %.1f dB above full throttle below the limiter", hf)
+				}
 			})
 		}
 	}
