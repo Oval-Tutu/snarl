@@ -94,6 +94,7 @@ type Synth struct {
 	limKind                      string
 	limRPM, limFall, limRise     float32
 	limCut                       int
+	limJitter                    float32
 	pumpLvl, notchLvl, barkLvl   float32
 	notchStep, kBark             float32
 	kRPM, kCtl, kMaster, kCam    float32
@@ -118,7 +119,8 @@ type Synth struct {
 	jetGain, intakeGain, fanGain float32
 	tickGain, ka, kb, liveNorm   float32
 
-	// Rev limiter state. cut is the samples left of the cut. cutting is
+	// Rev limiter state. cut is the samples left of the cut, and cutLen is
+	// the length of the cut in samples. cutting is
 	// true for a chunk inside a cut. bounce is true while the snapshot
 	// holds the engine at the limiter, and climb is true while the
 	// internal RPM lrpm climbs back to the limiter RPM after a cut of a
@@ -128,7 +130,7 @@ type Synth struct {
 	// the cut, and gateTo is its target. gear is the last gear. pump is
 	// the gain of a pumping pulse in a cut, notch is the phase of the notch
 	// in cycles, and bark is the extra firing gain after a cut.
-	cut, limRot             int
+	cut, cutLen, limRot     int
 	bangAt                  int
 	cutting, limEvent       bool
 	bounce, climb           bool
@@ -181,6 +183,7 @@ func New(s *Spec, rate int, tier1 bool) (*Synth, error) {
 		limFall:    float32(s.LimiterFallRPMS * s.LimiterLoadScale / fs),
 		limRise:    float32(s.LimiterRiseRPMS * s.LimiterLoadScale / fs),
 		limCut:     int(s.LimiterMS * 1e-3 * fs),
+		limJitter:  float32(s.LimiterJitter),
 		pumpLvl:    float32(math.Pow(10, s.LimiterPumpDB/20)),
 		notchLvl:   float32(math.Pow(10, s.LimiterNotchDB/20)),
 		barkLvl:    float32(math.Pow(10, s.LimiterBarkDB/20) - 1),
@@ -482,7 +485,13 @@ func (y *Synth) limit(rpm, thr float32, gear uint8, n int) bool {
 		y.bounce, y.climb, y.cut = false, false, 0
 	}
 	if y.cut <= 0 && !y.climb && (at || y.limEvent) && y.limCut > 0 {
-		y.cut = y.limCut
+		// The draw only runs with a jitter, so that a profile with none
+		// keeps its random sequence.
+		y.cutLen = y.limCut
+		if y.limJitter > 0 {
+			y.cutLen = int(float32(y.limCut) * (1 + y.limJitter*y.noise.Bipolar()))
+		}
+		y.cut = y.cutLen
 		y.bounce = at
 		y.lrpm = y.rpm - y.dip
 		y.notch = 0
@@ -491,7 +500,7 @@ func (y *Synth) limit(rpm, thr float32, gear uint8, n int) bool {
 		// An ignition cut bangs with a chance of the pop density, at a
 		// random time in the cut.
 		if y.limKind == "ignition" && y.noise.Unipolar() < y.pops.density {
-			y.bangAt = int((0.2 + 0.8*y.noise.Unipolar()) * float32(y.limCut))
+			y.bangAt = int((0.2 + 0.8*y.noise.Unipolar()) * float32(y.cutLen))
 		}
 	}
 	y.limEvent = false
@@ -564,7 +573,7 @@ func (y *Synth) fire(cyl int) {
 	var g, late float32
 	if y.cutting {
 		g = y.pump
-		if y.bangAt >= 0 && y.limCut-y.cut >= y.bangAt {
+		if y.bangAt >= 0 && y.cutLen-y.cut >= y.bangAt {
 			y.pops.bang(&y.noise, len(y.paths))
 			y.bangAt = -1
 		}

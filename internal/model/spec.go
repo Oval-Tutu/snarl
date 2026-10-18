@@ -30,6 +30,10 @@ type Spec struct {
 	LimiterKind string `toml:"limiter_kind"`
 	// LimiterMS is the length of one cut in milliseconds.
 	LimiterMS float64 `toml:"limiter_ms"`
+	// LimiterJitter is the random spread of the cut length. Each cut is
+	// LimiterMS times a random factor from 1-LimiterJitter to
+	// 1+LimiterJitter, drawn once per cut. Zero gives a regular bounce.
+	LimiterJitter float64 `toml:"limiter_jitter"`
 	// LimiterFallRPMS is the rate in RPM per second at which the engine
 	// slows down during a cut, from friction and pumping. The dip of one
 	// bounce is this rate times the cut length.
@@ -342,10 +346,11 @@ func (s *Spec) validateLimiter() error {
 		s.LimiterBarkDB < 0 || s.LimiterBarkDB > 12:
 		return errors.New("limiter_pump_db must be from -60 to 0, limiter_notch_db from -60 to limiter_pump_db and limiter_bark_db from 0 to 12")
 	case s.LimiterRPM < 0 || s.LimiterMS > 500 || s.LimiterFallRPMS < 0 || s.LimiterFallRPMS > 100000 ||
-		s.LimiterRiseRPMS <= 0 || s.LimiterRiseRPMS > 100000 || s.LimiterLoadScale < 0.1 || s.LimiterLoadScale > 10:
-		return errors.New("limiter_rpm must not be negative, limiter_ms from 0 to 500, limiter_fall_rpm_s from 0 to 100000, limiter_rise_rpm_s from above 0 to 100000 and limiter_load_scale from 0.1 to 10")
-	case s.LimiterMS*1e-3*s.LimiterFallRPMS*s.LimiterLoadScale >= s.LimiterRPM && s.LimiterRPM > 0:
-		return errors.New("the limiter dip, limiter_ms times limiter_fall_rpm_s and limiter_load_scale, must stay below limiter_rpm")
+		s.LimiterRiseRPMS <= 0 || s.LimiterRiseRPMS > 100000 || s.LimiterLoadScale < 0.1 || s.LimiterLoadScale > 10 ||
+		s.LimiterJitter < 0 || s.LimiterJitter > 0.5:
+		return errors.New("limiter_rpm must not be negative, limiter_ms from 0 to 500, limiter_fall_rpm_s from 0 to 100000, limiter_rise_rpm_s from above 0 to 100000, limiter_load_scale from 0.1 to 10 and limiter_jitter from 0 to 0.5")
+	case s.LimiterMS*(1+s.LimiterJitter)*1e-3*s.LimiterFallRPMS*s.LimiterLoadScale >= s.LimiterRPM && s.LimiterRPM > 0:
+		return errors.New("the longest limiter dip, limiter_ms times 1+limiter_jitter, limiter_fall_rpm_s and limiter_load_scale, must stay below limiter_rpm")
 	}
 	return nil
 }

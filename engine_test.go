@@ -810,12 +810,21 @@ var limiterTargets = map[string]struct{ rate, dip, cut, notch, bark float64 }{
 	"v8":      {3.7, 604, -1.5, -12.6, 1.6},
 }
 
+// limiterByEar names the profiles whose cut length is set by ear rather
+// than from the engine-sim reference, so that only their level shape is
+// checked against the reference.
+var limiterByEar = map[string]bool{"v8": true}
+
 // TestLimiterBounce holds the snapshot RPM at the limiter with full
 // throttle for 3 s, with the overrun flag set as a careless game can set
 // it. The engine bounces off the limiter by itself. From 0.5 s, the rate
-// of the cuts and the dip of the internal RPM are within 20 percent of the
-// values that the profile limiter settings give, and within 25 percent of
-// the engine-sim references at a load scale of 1. The level shape of the
+// of the cuts and the mean dip of the internal RPM are within 20 percent
+// of the values that the profile limiter settings give, and within 25
+// percent of the engine-sim references at a load scale of 1. The
+// coefficient of variation of the intervals between cuts is at most 0.03
+// with no limiter jitter. With a jitter j, it is from 0.5 to 1.5 times
+// j/sqrt(3), the value for a uniform cut length, and no interval is more
+// than j plus 2 percent from the mean. The level shape of the
 // bounces with no pops is within 1.5 dB of the engine-sim reference for
 // the level in a cut and the re-fire bark, and within 3 dB for the notch.
 // No overrun air noise plays: the band above 3 kHz is not louder than full
@@ -851,20 +860,39 @@ func TestLimiterBounce(t *testing.T) {
 					t.Fatalf("%d bounces in 2.5 s", len(bs))
 				}
 				rate := float64(len(bs)-1) * testRate / limiterHop / float64(bs[len(bs)-1].cut-bs[0].cut)
-				dip := float64(p.LimiterRPM - slices.Min(pitch))
+				var dip, sum, sq float64
+				for _, b := range bs {
+					dip += float64(p.LimiterRPM - pitch[b.fire])
+					d := float64(b.next - b.cut)
+					sum += d
+					sq += d * d
+				}
+				nb := float64(len(bs))
+				dip /= nb
+				mean := sum / nb
+				cv := math.Sqrt(max(0, sq/nb-mean*mean)) / mean
+				var spread float64
+				for _, b := range bs {
+					spread = max(spread, math.Abs(float64(b.next-b.cut)/mean-1))
+				}
 				cut, notch, bark := limiterShape(clean, pitch)
 				hf := 10 * math.Log10(bandPower(x)/bandPower(ref))
 				sp := p.spec
 				wantRate := 1000 / (sp.LimiterMS * (1 + sp.LimiterFallRPMS/sp.LimiterRiseRPMS))
 				wantDip := sp.LimiterFallRPMS * sp.LimiterLoadScale * sp.LimiterMS / 1000
 				ref0 := limiterTargets[name]
-				t.Logf("%.2f cuts per second, RPM dip %.0f, cut %+.1f dB, notch %+.1f dB, bark %+.1f dB, band above 3 kHz %+.1f dB",
-					rate, dip, cut, notch, bark, hf)
+				t.Logf("%.2f cuts per second, mean RPM dip %.0f, interval variation %.3f and spread %.3f, cut %+.1f dB, notch %+.1f dB, bark %+.1f dB, band above 3 kHz %+.1f dB",
+					rate, dip, cv, spread, cut, notch, bark, hf)
 				if math.Abs(rate-wantRate) > 0.2*wantRate || math.Abs(dip-wantDip) > 0.2*wantDip {
 					t.Errorf("%.1f cuts per second with an RPM dip of %.0f, want %.1f and %.0f from the profile",
 						rate, dip, wantRate, wantDip)
 				}
-				if sp.LimiterLoadScale == 1 && (math.Abs(rate-ref0.rate) > 0.25*ref0.rate || math.Abs(dip-ref0.dip) > 0.25*ref0.dip) {
+				j := sp.LimiterJitter
+				if j == 0 && cv > 0.03 || j > 0 && (cv < 0.5*j/math.Sqrt(3) || cv > 1.5*j/math.Sqrt(3) || spread > j+0.02) {
+					t.Errorf("interval variation %.3f and spread %.3f, want about %.3f and at most %.2f for a limiter jitter of %.2f",
+						cv, spread, j/math.Sqrt(3), j+0.02, j)
+				}
+				if sp.LimiterLoadScale == 1 && !limiterByEar[name] && (math.Abs(rate-ref0.rate) > 0.25*ref0.rate || math.Abs(dip-ref0.dip) > 0.25*ref0.dip) {
 					t.Errorf("%.1f cuts per second with an RPM dip of %.0f, want %.1f and %.0f from engine-sim",
 						rate, dip, ref0.rate, ref0.dip)
 				}

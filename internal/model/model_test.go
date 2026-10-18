@@ -152,7 +152,8 @@ func limiterSpec(kind string) Spec {
 // TestLimiterCuts checks the internal rev limiter. At the limiter RPM with
 // the throttle open, each cut lowers the internal RPM by the fall rate
 // times the cut length, and the climb back at the rise rate sets the cut
-// rate. The load scale scales the dip and keeps the rate. No overrun
+// rate. The load scale scales the dip and keeps the rate. A limiter jitter
+// spreads the cut intervals and keeps the mean rate and dip. No overrun
 // effect plays, even with the overrun flag set. Below the limiter, or with
 // the throttle at 0.1, no cut starts. A closed throttle or a gear change
 // ends the bounce, and the pitch returns to the smoothed RPM in small
@@ -162,53 +163,76 @@ func TestLimiterCuts(t *testing.T) {
 	for _, kind := range []string{"fuel", "ignition"} {
 		for _, tier1 := range []bool{false, true} {
 			for _, scale := range []float64{1, 2} {
-				s := limiterSpec(kind)
-				s.LimiterLoadScale = scale
-				y, err := New(&s, rate, tier1)
-				if err != nil {
-					t.Fatal(err)
+				for _, jitter := range []float64{0, 0.15} {
+					s := limiterSpec(kind)
+					s.LimiterLoadScale = scale
+					s.LimiterJitter = jitter
+					y, err := New(&s, rate, tier1)
+					if err != nil {
+						t.Fatal(err)
+					}
+					name := fmt.Sprintf("%s/tier1 %t/scale %v/jitter %v", kind, tier1, scale, jitter)
+					checkBounce(t, name, &s, y)
+					checkHandover(t, name, &s, y)
+					checkEvent(t, name, y)
 				}
-				name := fmt.Sprintf("%s/tier1 %t/scale %v", kind, tier1, scale)
-				checkBounce(t, name, &s, y)
-				checkHandover(t, name, &s, y)
-				checkEvent(t, name, y)
 			}
 		}
 	}
 }
 
 // checkBounce holds the limiter RPM with the throttle open for 2 s and
-// checks the cut rate and the dip against the profile values. The fan
-// tone holds its pitch: it moves by less than a quarter of the pitch dip.
+// checks the cut rate and the mean dip against the profile values. The
+// coefficient of variation of the intervals between cuts is at most 0.03
+// with no jitter, and from 0.5 to 1.5 times jitter/sqrt(3) with a jitter.
+// The fan tone holds its pitch: it moves by less than a quarter of the
+// largest pitch dip.
 func checkBounce(t *testing.T, name string, s *Spec, y *Synth) {
 	t.Helper()
 	buf := make([]float32, chunk)
 	c := Control{RPM: float32(s.LimiterRPM), Throttle: 1, Load: 1, Running: true, Overrun: true, Gear: 1}
-	var dip float32
+	var top, dip float32
+	var dips, gaps []float64
 	fanLo, fanHi := float32(math.Inf(1)), float32(0)
-	n := 0
+	n, rot, start := 0, 0, -1
 	for i := range 2 * rate / chunk {
 		if i == rate/5/chunk {
-			n = y.limRot
+			n, rot = y.limRot, y.limRot
 		}
 		y.Render(buf, c)
 		if i > 0 && (y.air != 0 || y.overrun > 1e-6 || y.pops.window) {
 			t.Fatalf("%s: overrun effect at the limiter: air %v, overrun %v, pop window %t", name, y.air, y.overrun, y.pops.window)
 		}
 		if i >= rate/5/chunk {
+			if y.limRot != rot {
+				if start >= 0 {
+					dips = append(dips, float64(dip))
+					gaps = append(gaps, float64(i-start))
+				}
+				rot, start, dip = y.limRot, i, 0
+			}
 			dip = max(dip, c.RPM-y.PitchRPM())
+			top = max(top, dip)
 			fanLo, fanHi = min(fanLo, y.fanInc), max(fanHi, y.fanInc)
 		}
 	}
-	if fanHi-fanLo > 0.25*fanHi*dip/c.RPM {
-		t.Errorf("%s: fan increment from %v to %v with a pitch dip of %.0f RPM", name, fanLo, fanHi, dip)
+	if len(gaps) < 3 {
+		t.Fatalf("%s: %d bounces", name, len(gaps))
+	}
+	if fanHi-fanLo > 0.25*fanHi*top/c.RPM {
+		t.Errorf("%s: fan increment from %v to %v with a pitch dip of %.0f RPM", name, fanLo, fanHi, top)
 	}
 	ms := s.LimiterMS
 	wantDip := s.LimiterFallRPMS * s.LimiterLoadScale * ms / 1000
 	wantRate := 1000 / (ms * (1 + s.LimiterFallRPMS/s.LimiterRiseRPMS))
 	got := float64(y.limRot-n) / 1.8
-	if math.Abs(got-wantRate) > 0.2*wantRate || math.Abs(float64(dip)-wantDip) > 0.2*wantDip {
-		t.Errorf("%s: %.1f cuts per second with a dip of %.0f RPM, want %.1f and %.0f", name, got, dip, wantRate, wantDip)
+	meanDip, _ := meanCV(dips)
+	_, cv := meanCV(gaps)
+	if math.Abs(got-wantRate) > 0.2*wantRate || math.Abs(meanDip-wantDip) > 0.2*wantDip {
+		t.Errorf("%s: %.1f cuts per second with a mean dip of %.0f RPM, want %.1f and %.0f", name, got, meanDip, wantRate, wantDip)
+	}
+	if j := s.LimiterJitter; j == 0 && cv > 0.03 || j > 0 && (cv < 0.5*j/math.Sqrt(3) || cv > 1.5*j/math.Sqrt(3)) {
+		t.Errorf("%s: cut interval variation %.3f, want about %.3f", name, cv, j/math.Sqrt(3))
 	}
 	for _, c := range []Control{
 		{RPM: float32(s.LimiterRPM) - 100, Throttle: 1, Load: 1, Running: true, Gear: 1},
@@ -227,6 +251,18 @@ func checkBounce(t *testing.T, name string, s *Spec, y *Synth) {
 	}
 }
 
+// meanCV returns the mean of v and its coefficient of variation.
+func meanCV(v []float64) (mean, cv float64) {
+	var sum, sq float64
+	for _, x := range v {
+		sum += x
+		sq += x * x
+	}
+	n := float64(len(v))
+	mean = sum / n
+	return mean, math.Sqrt(max(0, sq/n-mean*mean)) / mean
+}
+
 // checkHandover ends a bounce mid-cut with a closed throttle and with a
 // gear change. The pitch returns to the smoothed RPM within 150 ms, with
 // no step above 5 percent of the dip.
@@ -242,7 +278,7 @@ func checkHandover(t *testing.T, name string, s *Spec, y *Synth) {
 		for range rate / 2 / chunk {
 			y.Render(buf, c)
 		}
-		for !y.cutting || y.cut > y.limCut/2 {
+		for !y.cutting || y.cut > y.cutLen/2 {
 			y.Render(buf, c)
 		}
 		step := 0.05 * float32(s.LimiterFallRPMS*s.LimiterLoadScale*s.LimiterMS/1000)
@@ -282,7 +318,7 @@ func checkEvent(t *testing.T, name string, y *Synth) {
 	if y.limRot != n+1 || !y.cutting || y.pops.window {
 		t.Errorf("%s: limiter event: cuts %d, cutting %t, pop window %t", name, y.limRot-n, y.cutting, y.pops.window)
 	}
-	for range y.limCut/len(buf) - 1 {
+	for range y.cutLen/len(buf) - 1 {
 		y.Render(buf, over)
 	}
 	if y.overrun > 0.01 || !y.cutting {

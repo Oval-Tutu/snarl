@@ -9,9 +9,12 @@ redline_rpm = 6000
 limiter_rpm = 6250
 # A full cut of every cylinder, as engine-sim cuts.
 limiter_kind = "fuel"
-# Cut length, slow-down and climb rates measured from the engine-sim
-# limiter reference with the engine running free.
-limiter_ms = 208
+# Slow-down and climb rates measured from the engine-sim limiter reference
+# with the engine running free. The cut length is set by ear, shorter than
+# the 208 ms of the reference, and a random spread of the cut length makes
+# the bounce less regular.
+limiter_ms = 140
+limiter_jitter = 0.15
 limiter_fall_rpm_s = 2900
 limiter_rise_rpm_s = 9500
 limiter_load_scale = 1.0
