@@ -54,6 +54,14 @@ A scenario is a list of segments on the command line. The segments run in the gi
 | `--csv-every N` | 1 | Write every Nth simulation step to the CSV. |
 | `--data-dir DIR` | build output | Directory that contains `es/`. |
 
+### Limiter reference
+
+`just ref-limiter [profile]` renders the limiter reference for one profile, or for all four profiles, into `out/reference/engine-sim/<profile>/limiter.wav` with a CSV beside it (every 10th step). It reads the start rpm and the limiter rpm from the first sweep in `scenarios/<profile>/limiter.scn`. The dynamometer holds the start rpm at full throttle for 0.5 s (`--hold START:1:0.5`). Then the engine runs free at full throttle for 5 s (`--free 1:5`). The engine reaches its limiter about 0.1 s into the free run and bounces off it for about 4.7 s.
+
+The upstream inline4 script `atg-video-1/05_honda_vtec.mr` cuts at 9400 rpm. The snarl `inline4` profile cuts at 8500 rpm. The recipe renders the inline4 reference from a temporary copy of the upstream script with `rev_limit` changed to 8500 rpm. The rev limit is a literal inside the engine node, so a local wrapper script cannot override it. `just ref-set` still uses the unchanged upstream script, because its holds stay below 8500 rpm.
+
+In a free run the engine has no vehicle load, so the RPM dip at each cut is larger than in gear.
+
 The script must be an engine-sim engine file that defines `public node main` and calls `set_engine`, `set_vehicle` and `set_transmission`, as the upstream files in `engines/` do. The renderer imports it by absolute path, so a local copy (for example a flat-6 derived from the EJ25) works.
 
 Closest upstream scripts for the snarl profiles:

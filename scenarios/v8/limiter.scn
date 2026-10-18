@@ -1,0 +1,6 @@
+# v8: full-throttle sweep up to the 6250 rpm limiter, then full throttle held
+# at the limiter, then lift-off at the limiter. ref-set skips this file: the
+# engine-sim limiter reference comes from just ref-limiter.
+sweep 4750 6250 1 2
+hold 6250 1 4
+hold 6250 0 1

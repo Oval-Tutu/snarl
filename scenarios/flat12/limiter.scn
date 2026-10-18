@@ -1,0 +1,6 @@
+# flat12: full-throttle sweep up to the 7000 rpm limiter, then full throttle held
+# at the limiter, then lift-off at the limiter. ref-set skips this file: the
+# engine-sim limiter reference comes from just ref-limiter.
+sweep 5500 7000 1 2
+hold 7000 1 4
+hold 7000 0 1

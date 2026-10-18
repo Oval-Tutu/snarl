@@ -71,6 +71,9 @@ ref-set profile="":
         mkdir -p "${out}"
         for scn in scenarios/"${p}"/*.scn; do
             name="$(basename "${scn}" .scn)"
+            # A dynamometer hold at the limiter gives no bounce: ref-limiter
+            # renders this reference with the engine running free.
+            [[ "${name}" == limiter ]] && continue
             segments=()
             while read -r kind a b c d extra; do
                 case "${kind}" in
@@ -84,6 +87,50 @@ ref-set profile="":
             "${r}/bin/engine-sim-render" --script "${scripts[${p}]}" "${segments[@]}" \
                 --volume 0.5 --out "${out}/${name}.wav" --csv "${out}/${name}.csv" --csv-every 100
         done
+    done
+
+# Render the engine-sim limiter reference for one profile, or for all
+# profiles when none is given. The first sweep in scenarios/<profile>/limiter.scn
+# gives the start and limiter rpm. The dynamometer holds the start rpm at full
+# throttle for 0.5 s, then the engine runs free at full throttle for 5 s and
+# bounces off its limiter. The inline4 run uses a copy of the upstream script
+# with the rev limit changed from 9400 to the 8500 rpm of the snarl profile.
+# Writes out/reference/engine-sim/<profile>/limiter.wav with a CSV beside it.
+ref-limiter profile="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    r="$(nix build .#engine-sim-render --print-out-paths --no-link)"
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "${tmp}"' EXIT
+    honda="${r}/share/engine-sim/engines/atg-video-1/05_honda_vtec.mr"
+    sed -e 's/rev_limit: 9400 \* units.rpm/rev_limit: 8500 * units.rpm/' "${honda}" > "${tmp}/inline4.mr"
+    if ! grep -q 'rev_limit: 8500 \* units.rpm' "${tmp}/inline4.mr"; then
+        echo "Error: no 9400 rpm rev limit in ${honda}." >&2
+        exit 1
+    fi
+    declare -A scripts=(
+        [flat12]="${PWD}/reference/engine-sim/engines/flat12.mr"
+        [inline4]="${tmp}/inline4.mr"
+        [flat6]="${PWD}/reference/engine-sim/engines/flat6.mr"
+        [v8]="${PWD}/reference/engine-sim/engines/v8.mr"
+    )
+    profiles=({{ if profile == "" { "flat12 inline4 flat6 v8" } else { profile } }})
+    for p in "${profiles[@]}"; do
+        if [[ -z "${scripts[${p}]:-}" ]]; then
+            echo "Error: unknown profile '${p}'. Use flat12, inline4, flat6 or v8." >&2
+            exit 1
+        fi
+        scn="scenarios/${p}/limiter.scn"
+        read -r kind start limit _ < <(sed -e 's/#.*//' "${scn}" | grep -v '^[[:space:]]*$' | head -n 1)
+        if [[ "${kind}" != sweep ]]; then
+            echo "Error: ${scn}: the first segment is not a sweep." >&2
+            exit 1
+        fi
+        out="out/reference/engine-sim/${p}"
+        mkdir -p "${out}"
+        echo "${p}: free run from ${start} rpm into the ${limit} rpm limiter"
+        "${r}/bin/engine-sim-render" --script "${scripts[${p}]}" --hold "${start}:1:0.5" --free 1:5 \
+            --volume 0.5 --out "${out}/limiter.wav" --csv "${out}/limiter.csv" --csv-every 10
     done
 
 # Build listening files in out/listen from existing snarl and engine-sim
