@@ -49,9 +49,16 @@ min_rpm = 3500
 body_hz = 220
 body_ms = 30
 
+[overrun]
+level_db = -1.4
+idle_level_db = -1.4
+
 [voice]
-output_db = -4.0
-tier1_db = 4.0
+output_db = -8.2
+tier1_db = 4.6
+idle_gain_db = 7.5
+idle_gain_rpm = 3080
+tier1_idle_gain_db = -1.0
 
 [[cylinder]] # 1
 crank_deg = 0

@@ -22,6 +22,11 @@ func newTestEngine(t testing.TB, name string, tier Tier) Engine {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return newEngine(t, p, tier)
+}
+
+func newEngine(t testing.TB, p Profile, tier Tier) Engine {
+	t.Helper()
 	e, err := New(p, testRate, tier)
 	if err != nil {
 		t.Fatal(err)
@@ -225,14 +230,11 @@ func rms(x []float64) float64 {
 	return math.Sqrt(e / float64(len(x)))
 }
 
-// TestOverrunLevel checks the overrun scenario in 200 ms windows against
-// the overrun level of the profile at the window RPM. The closed-throttle
-// hold from 2 to 4 seconds stays within 3 dB of the overrun level relative
-// to full throttle from 1 to 2 seconds. The closed-throttle sweep to idle
-// stays within 4 dB of the overrun level relative to full throttle at the
-// same RPM, from a full-throttle render of the same RPM course. The lower
-// bound holds with pops. The upper bound holds without pops, because a
-// pop adds to the level.
+// TestOverrunLevel checks that the overrun scenario keeps the level of
+// full throttle at the top RPM. Every 200 ms window from the lift-off at
+// 2 s to the end is within 3 dB of the full-throttle level from 1 to 2 s.
+// The lower bound holds with pops. The upper bound holds without pops,
+// because a pop adds to the level.
 func TestOverrunLevel(t *testing.T) {
 	for _, name := range Profiles() {
 		for _, tier := range tiers {
@@ -247,26 +249,119 @@ func TestOverrunLevel(t *testing.T) {
 				q.spec = &s
 				x, scn := renderScenario(t, p, "overrun", tier)
 				quiet, _ := renderScenario(t, q, "overrun", tier)
-				wot, _ := renderScenarioWith(t, p, "overrun", tier, func(rpm, _ float64) Snapshot {
-					return Snapshot{RPM: float32(rpm), Throttle: 1, Load: 1, Flags: FlagRunning}
-				})
 				ref := rms(x[testRate : 2*testRate])
-				ov := p.spec.Overrun
-				for w := 10; w < 50; w++ {
+				for w := 10; float64(w+1)/5 <= scn.Duration(); w++ {
 					t0 := float64(w) / 5
-					rpm, _ := scn.At(t0 + 0.1)
-					pos := math.Min(1, math.Max(0, (rpm-p.spec.IdleRPM)/(p.spec.RedlineRPM-p.spec.IdleRPM)))
-					lin := math.Pow(10, ov.IdleLevelDB/20) +
-						(math.Pow(10, ov.LevelDB/20)-math.Pow(10, ov.IdleLevelDB/20))*pos
-					want, tol := 20*math.Log10(lin), 3.0
-					if t0 >= 4 {
-						want += windowDB(wot, t0, ref)
-						tol = 4
-					}
 					lo, hi := windowDB(x, t0, ref), windowDB(quiet, t0, ref)
-					if lo < want-tol || hi > want+tol {
-						t.Errorf("window at %.1f s, %.0f RPM: %.1f dB, %.1f dB without pops, want %.1f dB within %.0f dB",
-							t0, rpm, lo, hi, want, tol)
+					if lo < -3 || hi > 3 {
+						rpm, _ := scn.At(t0 + 0.1)
+						t.Errorf("window at %.1f s, %.0f RPM: %.1f dB, %.1f dB without pops, want within 3 dB",
+							t0, rpm, lo, hi)
+					}
+				}
+			})
+		}
+	}
+}
+
+// TestLoadLevelOrder checks the level order over load at each hold RPM of
+// the holds-t000, holds-t050 and holds-t100 scenarios. In a 1 s window in
+// the middle of each hold, throttle 0.5 is not below closed throttle, and
+// throttle 1 is the loudest by at least 0.5 dB. Throttle 0.5 is 0.5 to
+// 4 dB below throttle 1. The closed-throttle render has no pops, because a
+// pop adds to the level.
+func TestLoadLevelOrder(t *testing.T) {
+	for _, name := range Profiles() {
+		for _, tier := range tiers {
+			t.Run(fmt.Sprintf("%s/tier%d", name, tier), func(t *testing.T) {
+				p, err := LoadProfile(name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				q := p
+				s := *p.spec
+				s.Pops.Density = 0
+				q.spec = &s
+				over, scn := renderScenario(t, q, "holds-t000", tier)
+				part, _ := renderScenario(t, p, "holds-t050", tier)
+				full, _ := renderScenario(t, p, "holds-t100", tier)
+				level := func(x []float64, t0 float64) float64 {
+					return 20 * math.Log10(rms(x[int(t0*testRate):int((t0+1)*testRate)]))
+				}
+				start := 0.0
+				for _, seg := range scn.Segments {
+					if seg.Kind == scenario.Hold {
+						t0 := start + seg.Seconds/2 - 0.5
+						o, h, f := level(over, t0), level(part, t0), level(full, t0)
+						if o > h || h > f-0.5 || h < f-4 {
+							t.Errorf("%.0f RPM: overrun %.1f dB, part %.1f dB, relative to full throttle",
+								seg.RPM0, o-f, h-f)
+						}
+					}
+					start += seg.Seconds
+				}
+			})
+		}
+	}
+}
+
+// withoutIdle returns the profile with every [idle] depth at zero.
+func withoutIdle(p Profile) Profile {
+	s := *p.spec
+	s.Idle.Variation, s.Idle.TimingDeg, s.Idle.Imbalance, s.Idle.Hunt, s.Idle.Rock = 0, 0, 0, 0, 0
+	p.spec = &s
+	return p
+}
+
+// TestIdleCharacter checks the [idle] settings. At idle and closed
+// throttle, the per-cycle energy of the low band varies at least twice as
+// much as without them, with a coefficient of variation of at least 0.06.
+// At 4000 RPM and at the redline, the output equals the output without
+// them.
+func TestIdleCharacter(t *testing.T) {
+	cycleCV := func(p Profile, tier Tier) float64 {
+		e, err := New(p, testRate, tier)
+		if err != nil {
+			t.Fatal(err)
+		}
+		x := render(e, 3, held(p.IdleRPM, 0))[testRate/2:]
+		y := make([]float64, len(x))
+		for i, v := range x {
+			y[i] = float64(v)
+		}
+		band := analysis.BandPass(y, testRate, analysis.DefaultBandLo, analysis.DefaultBandHi)[testRate/5:]
+		cv, _, _, ok := analysis.CycleVariation(band, testRate, func(float64) float64 { return float64(p.IdleRPM) })
+		if !ok {
+			t.Fatal("too few cycles")
+		}
+		return cv
+	}
+	for _, name := range Profiles() {
+		for _, tier := range tiers {
+			t.Run(fmt.Sprintf("%s/tier%d", name, tier), func(t *testing.T) {
+				p, err := LoadProfile(name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				q := withoutIdle(p)
+				if id := p.spec.Idle; id.Variation > 0 || id.TimingDeg > 0 {
+					on, off := cycleCV(p, tier), cycleCV(q, tier)
+					if on < 0.06 || on < 2*off {
+						t.Errorf("idle cycle energy CV %.3f, %.3f without [idle]", on, off)
+					}
+				}
+				for _, rpm := range []float32{4000, p.RedlineRPM} {
+					for _, thr := range []float32{0, 0.5, 1} {
+						a := render(newEngine(t, p, tier), 1, held(rpm, thr))
+						b := render(newEngine(t, q, tier), 1, held(rpm, thr))
+						var d, e float64
+						for i := range a {
+							d += float64(a[i]-b[i]) * float64(a[i]-b[i])
+							e += float64(b[i]) * float64(b[i])
+						}
+						if d > 1e-10*e {
+							t.Errorf("%.0f RPM, throttle %.1f: output differs by %.2g RMS relative", rpm, thr, math.Sqrt(d/e))
+						}
 					}
 				}
 			})

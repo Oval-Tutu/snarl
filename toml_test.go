@@ -100,6 +100,9 @@ gain = 1
 		"bad crossing": strings.Replace(good, "[[cylinder]]", "[exhaust]\ncrossover = \"some\"\n[[cylinder]]", 1),
 		"bad shelf":    strings.Replace(good, "[[cylinder]]", "[exhaust]\nlow_shelf_db = 30\n[[cylinder]]", 1),
 		"bad overrun":  strings.Replace(good, "[[cylinder]]", "[overrun]\nlevel_db = 10\n[[cylinder]]", 1),
+		"bad idle":     strings.Replace(good, "[[cylinder]]", "[idle]\nfade_rpm = 500\n[[cylinder]]", 1),
+		"bad hunt":     strings.Replace(good, "[[cylinder]]", "[idle]\nhunt = 0.5\n[[cylinder]]", 1),
+		"bad knee":     strings.Replace(good, "[[cylinder]]", "[voice]\nidle_gain_rpm = 6000\n[[cylinder]]", 1),
 	}
 	for name, src := range bad {
 		if _, err := parseProfile(src); err == nil {

@@ -31,7 +31,7 @@ low_shelf_db = -3
 
 [noise]
 am = 0.2
-air = 0.03
+air = 0.015
 jet = 0.025
 jet_hz = 1200
 intake = 0.04
@@ -46,9 +46,19 @@ min_rpm = 2500
 body_hz = 160
 body_ms = 40
 
+[idle]
+variation = 0.28
+timing_deg = 2
+imbalance = 0.5
+hunt = 0.006
+rock = 0.01
+
 [voice]
-output_db = -0.9
-tier1_db = 7.4
+output_db = -7.5
+tier1_db = 6.0
+idle_gain_db = 7.5
+idle_gain_rpm = 4935
+tier1_idle_gain_db = 1.5
 
 [[cylinder]] # 1
 crank_deg = 0

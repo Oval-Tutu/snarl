@@ -33,6 +33,7 @@ type Spec struct {
 	Mechanical MechanicalSpec `toml:"mechanical"`
 	Pops       PopSpec        `toml:"pops"`
 	Overrun    OverrunSpec    `toml:"overrun"`
+	Idle       IdleSpec       `toml:"idle"`
 	Voice      VoiceSpec      `toml:"voice"`
 	Cylinders  []CylinderSpec `toml:"cylinder"`
 	Paths      []PathSpec     `toml:"path"`
@@ -167,6 +168,32 @@ type OverrunSpec struct {
 	IdleLevelDB float64 `toml:"idle_level_db"`
 }
 
+// IdleSpec is the low-RPM character: combustion variation, cylinder
+// imbalance, a slow idle hunt and a slow rocking. Each effect has its full
+// depth at idle and falls along a smoothstep over RPM to zero at FadeRPM.
+// The variation, hunt and rocking also fall linearly with load to zero at
+// full load. Above FadeRPM, the output does not change with these
+// settings.
+type IdleSpec struct {
+	// FadeRPM is the RPM at which the effects reach zero.
+	FadeRPM float64 `toml:"fade_rpm"`
+	// Variation is the extra random per-firing gain spread.
+	Variation float64 `toml:"variation"`
+	// TimingDeg is the extra random per-firing delay spread in crank
+	// degrees.
+	TimingDeg float64 `toml:"timing_deg"`
+	// Imbalance is the extra fixed per-cylinder gain spread. It scales the
+	// gain_variation pattern and adds half-order content.
+	Imbalance float64 `toml:"imbalance"`
+	// Hunt is the depth of the slow RPM modulation, as a fraction of RPM.
+	Hunt float64 `toml:"hunt"`
+	// Rock is the depth of the slow pulse amplitude modulation.
+	Rock float64 `toml:"rock"`
+	// HuntHz is the rate of the hunt and the rocking in hertz. A slow
+	// random wander makes the modulation irregular.
+	HuntHz float64 `toml:"hunt_hz"`
+}
+
 // VoiceSpec is the output voicing.
 type VoiceSpec struct {
 	Gain float64 `toml:"gain"`
@@ -176,6 +203,15 @@ type VoiceSpec struct {
 	// Tier1DB is the extra output gain of tier 1 in decibels. It
 	// calibrates the tier 1 full-throttle sweep-wot scenario to -16 LUFS.
 	Tier1DB float64 `toml:"tier1_db"`
+	// IdleGainDB is the extra output gain in decibels at and below
+	// IdleGainRPM, for all loads. Above IdleGainRPM, it falls along a
+	// smoothstep to 0 dB at the redline. A positive value makes the level
+	// fall less as the RPM falls. IdleGainRPM 0 selects the idle RPM.
+	IdleGainDB  float64 `toml:"idle_gain_db"`
+	IdleGainRPM float64 `toml:"idle_gain_rpm"`
+	// Tier1IdleGainDB is added to IdleGainDB in tier 1, because the two
+	// tiers change differently in level over RPM.
+	Tier1IdleGainDB float64 `toml:"tier1_idle_gain_db"`
 }
 
 // DefaultSpec returns the defaults that a profile file overrides.
@@ -201,7 +237,8 @@ func DefaultSpec() Spec {
 			MinRPM: 2500, Gain: 1, BodyHz: 200, BodyMS: 35, JumpMS: 3,
 			Crack: 2.5, CrackMS: 16, IntervalM: 174,
 		},
-		Overrun: OverrunSpec{LevelDB: -1.5, IdleLevelDB: -4},
+		Overrun: OverrunSpec{LevelDB: -1.2, IdleLevelDB: -1.2},
+		Idle:    IdleSpec{FadeRPM: 2200, HuntHz: 1.2},
 		Voice:   VoiceSpec{Gain: 1},
 	}
 }
@@ -220,7 +257,7 @@ func (s *Spec) Validate() error {
 	if s.Name == "" {
 		return errors.New("profile has no name")
 	}
-	for _, check := range []func() error{s.validateEngine, s.validateCylinders, s.validatePaths} {
+	for _, check := range []func() error{s.validateEngine, s.validateIdle, s.validateCylinders, s.validatePaths} {
 		if err := check(); err != nil {
 			return fmt.Errorf("profile %s: %w", s.Name, err)
 		}
@@ -246,12 +283,27 @@ func (s *Spec) validateEngine() error {
 		return errors.New("pops body_hz, body_ms, jump_ms, crack_ms and interval_ms must be positive")
 	case s.Voice.Gain <= 0 || math.Abs(s.Voice.OutputDB) > 40 || math.Abs(s.Voice.Tier1DB) > 20:
 		return errors.New("voice gain must be positive, output_db from -40 to 40 and tier1_db from -20 to 20")
+	case math.Abs(s.Voice.IdleGainDB) > 20 || math.Abs(s.Voice.IdleGainDB+s.Voice.Tier1IdleGainDB) > 20 ||
+		s.Voice.IdleGainRPM < 0 || s.Voice.IdleGainRPM >= s.RedlineRPM:
+		return errors.New("voice idle_gain_db must be from -20 to 20 in both tiers, and idle_gain_rpm from 0 to below redline_rpm")
 	case math.Abs(s.Exhaust.LowShelfDB) > 20 || s.Exhaust.LowShelfHz <= 0:
 		return errors.New("exhaust low_shelf_db must be from -20 to 20 and low_shelf_hz positive")
 	case s.Overrun.LevelDB > 6 || s.Overrun.IdleLevelDB > 6 || s.Overrun.LevelDB < -40 || s.Overrun.IdleLevelDB < -40:
 		return errors.New("overrun level_db and idle_level_db must be from -40 to 6")
 	case s.Pulse.PartLoadDB >= 0 || s.Pulse.PartLoadDB < -20:
 		return errors.New("pulse part_load_db must be from -20 to below 0")
+	}
+	return nil
+}
+
+func (s *Spec) validateIdle() error {
+	d := s.Idle
+	switch {
+	case d.FadeRPM <= s.IdleRPM || d.HuntHz <= 0 || d.HuntHz > 10:
+		return errors.New("idle fade_rpm must be above idle_rpm and hunt_hz from above 0 to 10")
+	case d.Variation < 0 || d.Variation > 1 || d.Imbalance < 0 || d.Imbalance > 1 ||
+		d.Hunt < 0 || d.Hunt > 0.2 || d.Rock < 0 || d.Rock > 1 || d.TimingDeg < 0 || d.TimingDeg > 90:
+		return errors.New("idle variation, imbalance and rock must be from 0 to 1, hunt from 0 to 0.2 and timing_deg from 0 to 90")
 	}
 	return nil
 }

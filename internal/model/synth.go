@@ -42,10 +42,12 @@ type Synth struct {
 	rate  float64
 
 	noise, noise2 dsp.Noise
+	idle          idle
 	crank         crank
 	voices        []voice
 	delay         []float32
 	cylGain       []float32
+	cylDev        []float32
 	tabLow        []float32
 	tabHigh       []float32
 	stepPerCycle  float32
@@ -76,6 +78,8 @@ type Synth struct {
 	amLP                         dsp.OnePole
 	idleRPM, ovLevel, ovIdle     float32
 	partLoad                     float32
+	idleGain, knee               float32
+	rpmG, rpmStep                float32
 	shape, lift                  float32
 	intakeBP, jetBP, tickHP      dsp.Biquad
 	intakeSetMix                 float32
@@ -141,6 +145,7 @@ func New(s *Spec, rate int, tier1 bool) (*Synth, error) {
 		ovLevel:    float32(math.Pow(10, s.Overrun.LevelDB/20)),
 		ovIdle:     float32(math.Pow(10, s.Overrun.IdleLevelDB/20)),
 		partLoad:   float32(math.Pow(10, s.Pulse.PartLoadDB/20)),
+		rpmG:       -1,
 		tickDec:    dsp.DecayCoef(40, 0.004, fs),
 		pops:       newPops(s, fs, chunk/fs, tier1),
 	}
@@ -149,6 +154,11 @@ func New(s *Spec, rate int, tier1 bool) (*Synth, error) {
 		outDB += s.Voice.Tier1DB
 	}
 	y.out = newOutput(outDB, fs)
+	y.knee = float32(max(s.Voice.IdleGainRPM, s.IdleRPM))
+	y.idleGain = float32(s.Voice.IdleGainDB)
+	if tier1 {
+		y.idleGain += float32(s.Voice.Tier1IdleGainDB)
+	}
 	if y.camAttack <= 0 {
 		y.camAttack = y.attack
 	}
@@ -167,6 +177,7 @@ func New(s *Spec, rate int, tier1 bool) (*Synth, error) {
 	y.jetBP.SetBandPass(jetHz, 0.7, fs)
 	y.tickHP.SetHighPass(s.Mechanical.TickHz, 0.9, fs)
 
+	y.idle = newIdle(s, seed, chunkHz)
 	y.initCylinders(s, fs)
 	y.initPaths(s, fs)
 	return y, nil
@@ -177,12 +188,14 @@ func (y *Synth) initCylinders(s *Spec, fs float64) {
 	y.voices = make([]voice, n)
 	y.delay = make([]float32, n)
 	y.cylGain = make([]float32, n)
+	y.cylDev = make([]float32, n)
 	offsets := make([]float32, n)
 	setup := dsp.NewNoise(uint32(s.Seed&math.MaxUint16) + 0x7a11)
 	for i, c := range s.Cylinders {
 		deg := c.CrankDeg + s.Pulse.TimingVariationDeg*float64(setup.Bipolar())
 		deg = math.Mod(deg+720, 720)
-		y.cylGain[i] = 1 + float32(s.Pulse.GainVariation)*setup.Bipolar()
+		y.cylDev[i] = setup.Bipolar()
+		y.cylGain[i] = 1 + float32(s.Pulse.GainVariation)*y.cylDev[i]
 		offsets[i] = float32(deg / 720)
 		y.voices[i].bank = c.Bank
 		y.delay[i] = float32(c.PrimaryM / s.Exhaust.SpeedOfSound * fs)
@@ -295,6 +308,17 @@ func loadLevel(ld float64, lvl, part float32) float32 {
 	return lvl + (1-lvl)*float32(math.Pow(ld, min(max(k, 0.2), 8)))
 }
 
+// rpmGain returns the output gain at the RPM for an extra gain of db
+// decibels at and below the knee RPM. Above the knee, the gain in decibels
+// falls along a smoothstep to 0 at the redline.
+func rpmGain(rpm, knee, redline, db float32) float32 {
+	if db == 0 {
+		return 1
+	}
+	w := min(1, max(0, (redline-rpm)/(redline-knee)))
+	return float32(math.Pow(10, float64(db*w*w*(3-2*w))/20))
+}
+
 // control runs once per chunk of n samples.
 func (y *Synth) control(c *Control, n int) {
 	rpm := clampf(c.RPM, 0, maxRPM)
@@ -317,7 +341,8 @@ func (y *Synth) control(c *Control, n int) {
 	}
 
 	j := y.jit.Process(y.noise.Bipolar() * 1.7)
-	inc := y.rpm * y.invRate120 * (1 + y.jitter*j)
+	y.idle.control(rpm, y.load)
+	inc := y.rpm * y.invRate120 * (1 + y.jitter*j) * y.idle.speed
 	y.inc = min(inc, y.maxInc)
 	y.step = y.inc * y.stepPerCycle
 
@@ -333,10 +358,17 @@ func (y *Synth) control(c *Control, n int) {
 	y.shape = shape + (lvl-shape)*y.overrun
 	y.lift = 1 + (lvl/max(y.idleFloor, 0.05)-1)*y.overrun
 	y.amp = y.master * y.voiceGain * y.shape * (0.5 + 0.5*rr) *
-		(1 + y.camGain*y.camMix) * (1 + 2*y.jitter*j)
+		(1 + y.camGain*y.camMix) * (1 + 2*y.jitter*j) * y.idle.rock
 	gate := float32(math.Pow(math.Max(ld, 0.02), 0.7))
 	y.amDepth = y.amCfg * gate
 	y.air = y.airCfg * y.overrun * y.master * (0.3 + rr) * y.lift
+
+	// The RPM gain ramps over the chunk. It starts at its first value.
+	g := rpmGain(y.rpm, y.knee, y.redline, y.idleGain)
+	if y.rpmG < 0 {
+		y.rpmG = g
+	}
+	y.rpmStep = (g - y.rpmG) / float32(n)
 
 	if y.cut > 0 {
 		y.cut -= n
@@ -345,9 +377,9 @@ func (y *Synth) control(c *Control, n int) {
 	y.pops.control(y.rpm, y.throttle, over && y.master > 0.5, y.cut > 0, heat, &y.noise)
 
 	if y.tier1 {
-		// The exhaust flow layers follow the pulses to the overrun level.
-		flow := y.load + (lvl-y.load)*y.overrun
-		y.controlTier1(flow, rr)
+		// The exhaust flow layers follow the pulse gain, so that the level
+		// order over load holds in tier 1 as in tier 0.
+		y.controlTier1(y.shape, rr)
 	}
 }
 
@@ -395,8 +427,10 @@ func (y *Synth) fire(cyl int) {
 		}
 	}
 	v := &y.voices[cyl]
-	v.gain = y.amp * y.cylGain[cyl] * (1 + y.cycleVar*y.noise.Bipolar())
-	v.pos = y.crank.past*y.stepPerCycle - y.delay[cyl]*y.step
+	g, late := y.idle.firing()
+	v.gain = y.amp * (y.cylGain[cyl] + y.idle.imbalance*y.cylDev[cyl]) *
+		(1 + y.cycleVar*y.noise.Bipolar()) * g
+	v.pos = (y.crank.past-late)*y.stepPerCycle - y.delay[cyl]*y.step
 	v.active = true
 	v.started = false
 	y.tickEnv = y.tickGain
@@ -483,7 +517,8 @@ func (y *Synth) process(dst []float32) {
 		if y.tier1 {
 			sum += y.layers(&bank, np)
 		}
-		dst[i] = y.out.process(sum)
+		y.rpmG += y.rpmStep
+		dst[i] = y.out.process(sum * y.rpmG)
 	}
 }
 
