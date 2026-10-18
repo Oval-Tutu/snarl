@@ -58,7 +58,12 @@ type Spec struct {
 	// LimiterBarkDB is the extra gain in decibels of the first firings
 	// after a cut. It decays with a time constant of 10 ms.
 	LimiterBarkDB float64 `toml:"limiter_bark_db"`
-	CamSwitchRPM  float64 `toml:"cam_switch_rpm"`
+	// FinalGearWaver is the depth of the slow pitch waver in the final
+	// gear at the limiter RPM, as a share of the RPM. The pitch moves from
+	// the limiter RPM down to the limiter RPM times 1-FinalGearWaver. Zero
+	// gives a fixed pitch.
+	FinalGearWaver float64 `toml:"final_gear_waver"`
+	CamSwitchRPM   float64 `toml:"cam_switch_rpm"`
 
 	Pulse      PulseSpec      `toml:"pulse"`
 	Exhaust    ExhaustSpec    `toml:"exhaust"`
@@ -268,6 +273,7 @@ func DefaultSpec() Spec {
 		LimiterPumpDB:    -1,
 		LimiterNotchDB:   -3,
 		LimiterBarkDB:    1,
+		FinalGearWaver:   0.003,
 		Pulse: PulseSpec{
 			WidthDeg: 160, Attack: 25, Decay: 7, IdleFloor: 0.2, PartLoadDB: -0.6,
 			CycleVariation: 0.08, Jitter: 0.003,
@@ -362,6 +368,8 @@ func (s *Spec) validateLimiter() error {
 		return errors.New("limiter_rpm must not be negative, limiter_ms from 0 to 500, limiter_fall_rpm_s from 0 to 100000, limiter_rise_rpm_s from above 0 to 100000, limiter_load_scale from 0.1 to 10 and limiter_jitter from 0 to 0.5")
 	case s.LimiterMS*(1+s.LimiterJitter)*1e-3*s.LimiterFallRPMS*s.LimiterLoadScale >= s.LimiterRPM && s.LimiterRPM > 0:
 		return errors.New("the longest limiter dip, limiter_ms times 1+limiter_jitter, limiter_fall_rpm_s and limiter_load_scale, must stay below limiter_rpm")
+	case s.FinalGearWaver < 0 || s.FinalGearWaver > 0.05:
+		return errors.New("final_gear_waver must be from 0 to 0.05")
 	}
 	return nil
 }

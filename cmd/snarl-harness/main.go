@@ -265,6 +265,9 @@ func step(d *drive.Model, load *snarl.LoadFilter, pr snarl.Profile, throttle flo
 	if rpm >= min(pr.RedlineRPM, pr.LimiterRPM) {
 		s.Flags |= snarl.FlagRedZone
 	}
+	if d.Gear() == d.Gears()-1 {
+		s.Flags |= snarl.FlagFinalGear
+	}
 	return s
 }
 
@@ -441,7 +444,8 @@ func (h *harness) Draw(screen *ebiten.Image) {
 
 func ms(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
 
-// flags names the set flags of s, and the limiter cut.
+// flags names the set flags of s, and the limiter cut, which the final
+// gear does not make.
 func flags(s snarl.Snapshot, cut bool) string {
 	var b strings.Builder
 	for _, f := range []struct {
@@ -451,7 +455,8 @@ func flags(s snarl.Snapshot, cut bool) string {
 		{s.Flags&snarl.FlagRunning != 0, "RUNNING"},
 		{s.Flags&snarl.FlagOverrun != 0, "OVERRUN"},
 		{s.Flags&snarl.FlagRedZone != 0, "RED-ZONE"},
-		{cut, "LIMITER-CUT"},
+		{s.Flags&snarl.FlagFinalGear != 0, "FINAL-GEAR"},
+		{cut && s.Flags&snarl.FlagFinalGear == 0, "LIMITER-CUT"},
 	} {
 		if f.on {
 			b.WriteString(f.name)

@@ -34,12 +34,24 @@ const (
 	// handover is the time constant in seconds over which the pitch
 	// returns from the internal limiter RPM to the smoothed RPM.
 	handover = 0.017
+	// fadeDB is the rise in decibels per second of the firing gain after
+	// the final gear ends a cut. A fixed rate in decibels gives no step,
+	// for a shallow or a deep notch.
+	fadeDB = 200
+	// waverHz1 and waverHz2 are the rates of the two slow sines of the
+	// final gear waver. Their ratio is not a simple fraction, so that the
+	// waver does not repeat audibly.
+	waverHz1 = 0.37
+	waverHz2 = 1.13
 )
 
 // Control is the engine state for one block.
 type Control struct {
 	RPM, Throttle, Load float32
 	Running, Overrun    bool
+	// Final is true in the final gear. The limiter does not cut, and the
+	// engine holds the limiter RPM.
+	Final bool
 	// LimiterEvents is the number of rev limiter events since the last
 	// block.
 	LimiterEvents int
@@ -129,7 +141,9 @@ type Synth struct {
 	// at which the unburnt fuel bangs, or -1. gate is the jet noise gain of
 	// the cut, and gateTo is its target. gear is the last gear. pump is
 	// the gain of a pumping pulse in a cut, notch is the phase of the notch
-	// in cycles, and bark is the extra firing gain after a cut.
+	// in cycles, and bark is the extra firing gain after a cut. fade is the
+	// firing gain after the final gear ends a cut. It starts at the pump
+	// level and rises by the factor fadeRate per chunk to 1.
 	cut, cutLen, limRot     int
 	bangAt                  int
 	cutting, limEvent       bool
@@ -137,6 +151,15 @@ type Synth struct {
 	gear                    uint8
 	lrpm, dip, gate, gateTo float32
 	pump, notch, bark       float32
+	fade, fadeRate          float32
+
+	// Final gear waver. waver is the depth from the profile, and wavMix
+	// fades it in and out at the limiter RPM. wav is the pitch offset of
+	// the chunk, from -waver to 0. wavPh1 and wavPh2 are the sine phases in
+	// cycles, which advance by wavInc1 and wavInc2 per chunk.
+	waver, wavMix, wav float32
+	wavPh1, wavPh2     float32
+	wavInc1, wavInc2   float32
 }
 
 // New returns a synth for the spec at the sample rate. tier1 selects the
@@ -184,6 +207,11 @@ func New(s *Spec, rate int, tier1 bool) (*Synth, error) {
 		limRise:    float32(s.LimiterRiseRPMS * s.LimiterLoadScale / fs),
 		limCut:     int(s.LimiterMS * 1e-3 * fs),
 		limJitter:  float32(s.LimiterJitter),
+		fade:       1,
+		fadeRate:   float32(math.Pow(10, fadeDB/20/chunkHz)),
+		waver:      float32(s.FinalGearWaver),
+		wavInc1:    float32(waverHz1 / chunkHz),
+		wavInc2:    float32(waverHz2 / chunkHz),
 		pumpLvl:    float32(math.Pow(10, s.LimiterPumpDB/20)),
 		notchLvl:   float32(math.Pow(10, s.LimiterNotchDB/20)),
 		barkLvl:    float32(math.Pow(10, s.LimiterBarkDB/20) - 1),
@@ -332,14 +360,15 @@ func envelopePeak(a, b float64) float64 {
 }
 
 // PitchRPM returns the RPM that the firing follows. It differs from the
-// smoothed input RPM in a limiter bounce and in the handover after it.
+// smoothed input RPM in a limiter bounce, in the handover after it, and in
+// the final gear waver.
 func (y *Synth) PitchRPM() float32 {
-	return max(0, y.rpm-y.dip)
+	return max(0, (y.rpm-y.dip)*(1+y.wav))
 }
 
 // Render fills dst. It allocates nothing.
 func (y *Synth) Render(dst []float32, c Control) {
-	if c.LimiterEvents > 0 {
+	if c.LimiterEvents > 0 && !c.Final {
 		y.limEvent = true
 	}
 	for len(dst) > 0 {
@@ -388,13 +417,17 @@ func rpmGain(rpm, knee, redline, db float32) float32 {
 // control runs once per chunk of n samples.
 func (y *Synth) control(c *Control, n int) {
 	rpm := clampf(c.RPM, 0, maxRPM)
+	if c.Final && y.limRPM > 0 {
+		// The final gear runs out of power at the limiter RPM.
+		rpm = min(rpm, y.limRPM)
+	}
 	thr := clampf(c.Throttle, 0, 1)
 	load := clampf(c.Load, 0, 1)
 	y.rpm += (rpm - y.rpm) * y.kRPM
 	y.throttle += (thr - y.throttle) * y.kCtl
 	y.load += (load - y.load) * y.kCtl
 	y.master += (b2f(c.Running) - y.master) * y.kMaster
-	limiting := y.limit(rpm, thr, c.Gear, n)
+	limiting := y.limit(rpm, thr, c.Gear, c.Final, n)
 	over := c.Overrun && thr < 0.05 && !limiting
 	k := y.kCtl
 	if limiting {
@@ -474,17 +507,28 @@ func (y *Synth) control(c *Control, n int) {
 // to the notch level shortly after the cut starts, and the first firings
 // after the cut bark. The engine-sim output has this level shape, from its
 // leveller.
-func (y *Synth) limit(rpm, thr float32, gear uint8, n int) bool {
+//
+// In the final gear, no cut starts, and a cut or a climb in progress ends.
+// The firing gain returns from the pump level to full with the pitch, with
+// no bark. At the limiter RPM with the throttle open, the pitch wavers
+// slowly below the limiter RPM, so that the held tone does not sound
+// fixed.
+func (y *Synth) limit(rpm, thr float32, gear uint8, final bool, n int) bool {
 	was := y.cutting
 	y.bark *= y.kBark
+	y.waverStep(final && y.limRPM > 0 && rpm >= y.limRPM*0.998 && thr > 0.1)
 	// The smoothed RPM must be near the limiter too, so that a bounce
 	// starts from the limiter RPM.
-	at := y.limRPM > 0 && rpm >= y.limRPM*0.998 && y.rpm >= y.limRPM*0.99 && thr > 0.1 && gear == y.gear
+	at := !final && y.limRPM > 0 && rpm >= y.limRPM*0.998 && y.rpm >= y.limRPM*0.99 && thr > 0.1 && gear == y.gear
 	y.gear = gear
-	if y.bounce && !at {
+	if final && y.cut > 0 {
+		y.fade = y.pump
+		y.bark = 0
+	}
+	if y.bounce && !at || final {
 		y.bounce, y.climb, y.cut = false, false, 0
 	}
-	if y.cut <= 0 && !y.climb && (at || y.limEvent) && y.limCut > 0 {
+	if !final && y.cut <= 0 && !y.climb && (at || y.limEvent) && y.limCut > 0 {
 		// The draw only runs with a jitter, so that a profile with none
 		// keeps its random sequence.
 		y.cutLen = y.limCut
@@ -495,6 +539,7 @@ func (y *Synth) limit(rpm, thr float32, gear uint8, n int) bool {
 		y.bounce = at
 		y.lrpm = y.rpm - y.dip
 		y.notch = 0
+		y.fade = 1
 		y.limRot++
 		y.bangAt = -1
 		// An ignition cut bangs with a chance of the pop density, at a
@@ -505,7 +550,7 @@ func (y *Synth) limit(rpm, thr float32, gear uint8, n int) bool {
 	}
 	y.limEvent = false
 	y.cutting = y.cut > 0
-	if was && !y.cutting {
+	if was && !y.cutting && !final {
 		y.bark = y.barkLvl
 	}
 	y.gateTo = 1
@@ -534,10 +579,40 @@ func (y *Synth) limit(rpm, thr float32, gear uint8, n int) bool {
 		if y.dip < 1 && y.dip > -1 {
 			y.dip = 0
 		}
+		if y.fade < 1 {
+			y.fade = min(1, max(y.fade, 1e-3)*y.fadeRate)
+			y.gateTo = y.fade
+		}
 		return false
 	}
 	y.dip = y.rpm - y.lrpm
 	return true
+}
+
+// waverStep updates the final gear waver for one chunk. top is true in the
+// final gear at the limiter RPM with the throttle open. The waver fades in
+// and out with the control time constant. It is the sum of two slow table
+// sines, mapped from -waver to 0, so that the pitch never passes the
+// limiter RPM.
+func (y *Synth) waverStep(top bool) {
+	if y.waver == 0 || !top && y.wavMix == 0 {
+		return
+	}
+	y.wavMix += (b2f(top) - y.wavMix) * y.kCtl
+	if !top && y.wavMix < 1e-4 {
+		y.wavMix, y.wav = 0, 0
+		return
+	}
+	y.wavPh1 += y.wavInc1
+	if y.wavPh1 >= 1 {
+		y.wavPh1--
+	}
+	y.wavPh2 += y.wavInc2
+	if y.wavPh2 >= 1 {
+		y.wavPh2--
+	}
+	w := 0.6*dsp.Sine(y.wavPh1) + 0.4*dsp.Sine(y.wavPh2)
+	y.wav = y.waver * y.wavMix * (w - 1) * 0.5
 }
 
 func (y *Synth) controlTier1(flow, rr float32) {
@@ -579,7 +654,7 @@ func (y *Synth) fire(cyl int) {
 		}
 	} else {
 		g, late = y.idle.firing()
-		g *= (1 + y.bark) * (1 + y.cycleVar*y.noise.Bipolar())
+		g *= (1 + y.bark) * y.fade * (1 + y.cycleVar*y.noise.Bipolar())
 	}
 	v := &y.voices[cyl]
 	v.gain = y.amp * (y.cylGain[cyl] + y.idle.imbalance*y.cylDev[cyl]) * g

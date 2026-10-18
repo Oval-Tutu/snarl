@@ -33,6 +33,10 @@ const (
 	// FlagOverrun is set while the throttle is closed and the wheels
 	// drive the engine.
 	FlagOverrun
+	// FlagFinalGear is set while the selected gear is the last gear. In
+	// the last gear, the engine holds a steady tone at the limiter RPM and
+	// does not bounce off the limiter.
+	FlagFinalGear
 )
 
 // Snapshot is the engine state that the game writes once per tick. The

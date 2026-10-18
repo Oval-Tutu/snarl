@@ -327,3 +327,66 @@ func checkEvent(t *testing.T, name string, y *Synth) {
 		t.Errorf("%s: 200 ms after a limiter event cut: cuts %d, dip %.0f RPM, overrun %v", name, y.limRot-n, y.dip, y.overrun)
 	}
 }
+
+// TestFinalGear checks the final gear at the limiter. At and above the
+// limiter RPM with the throttle open, the overrun flag set and a limiter
+// event in every block, no cut starts, no overrun effect plays, and the
+// pitch stays from the limiter RPM times 1-FinalGearWaver to the limiter
+// RPM. The final gear ends a bounce mid-cut at once, with no bark. The
+// firing gain then rises from the pump level to 1 by at most fadeDB per
+// second, and the pitch returns to the smoothed RPM within 150 ms.
+func TestFinalGear(t *testing.T) {
+	for _, kind := range []string{"fuel", "ignition"} {
+		for _, tier1 := range []bool{false, true} {
+			s := limiterSpec(kind)
+			s.LimiterNotchDB = -18
+			y, err := New(&s, rate, tier1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			name := fmt.Sprintf("%s/tier1 %t", kind, tier1)
+			buf := make([]float32, chunk)
+			lim := float32(s.LimiterRPM)
+			lo := lim * float32(1-s.FinalGearWaver)
+			for _, rpm := range []float32{lim, lim + 300} {
+				c := Control{RPM: rpm, Throttle: 1, Load: 1, Running: true, Overrun: true, Final: true, Gear: 1, LimiterEvents: 1}
+				n := y.limRot
+				for i := range 2 * rate / chunk {
+					y.Render(buf, c)
+					if y.limRot != n || y.cutting || y.climb {
+						t.Fatalf("%s: cut in the final gear at %.0f RPM", name, rpm)
+					}
+					if y.air != 0 || y.overrun > 1e-6 || y.pops.window {
+						t.Fatalf("%s: overrun effect in the final gear: air %v, overrun %v, pop window %t", name, y.air, y.overrun, y.pops.window)
+					}
+					if p := y.PitchRPM(); i > rate/5/chunk && (p < lo-1 || p > lim) {
+						t.Fatalf("%s: pitch %.1f RPM in the final gear, want from %.1f to %.0f", name, p, lo, lim)
+					}
+				}
+			}
+			c := Control{RPM: lim, Throttle: 1, Load: 1, Running: true, Gear: 1}
+			for range rate / 2 / chunk {
+				y.Render(buf, c)
+			}
+			for !y.cutting || y.cut > y.cutLen/2 {
+				y.Render(buf, c)
+			}
+			c.Final = true
+			y.Render(buf, c)
+			if y.cutting || y.climb || y.bark != 0 || y.fade >= 1 {
+				t.Fatalf("%s: after the final gear mid-cut: cutting %t, climb %t, bark %v, fade %v", name, y.cutting, y.climb, y.bark, y.fade)
+			}
+			maxStep := math.Pow(10, float64(fadeDB)/20*chunk/rate) * 1.0001
+			for range rate * 3 / 20 / chunk {
+				prev := y.fade
+				y.Render(buf, c)
+				if y.fade < prev || float64(y.fade/prev) > maxStep {
+					t.Fatalf("%s: firing gain from %v to %v in one chunk", name, prev, y.fade)
+				}
+			}
+			if y.fade != 1 || y.dip != 0 {
+				t.Errorf("%s: 150 ms after the final gear: firing gain %v, pitch %.0f RPM below the smoothed RPM", name, y.fade, y.dip)
+			}
+		}
+	}
+}

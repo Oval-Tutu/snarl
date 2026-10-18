@@ -742,6 +742,23 @@ func bounces(pitch []float32) []bounce {
 	return out
 }
 
+// envWin and envHop are the window and the hop in samples of envelopeDB.
+const envWin, envHop = 15 * testRate / 1000, testRate / 1000
+
+// envelopeDB returns the level of x in decibels, from 15 ms RMS windows
+// every 1 ms. Value i is the window that starts at i ms.
+func envelopeDB(x []float32) []float64 {
+	sum := make([]float64, len(x)+1)
+	for i, v := range x {
+		sum[i+1] = sum[i] + float64(v)*float64(v)
+	}
+	env := make([]float64, (len(x)-envWin)/envHop)
+	for i := range env {
+		env[i] = 10 * math.Log10((sum[i*envHop+envWin]-sum[i*envHop])/envWin+1e-20)
+	}
+	return env
+}
+
 // limiterShape measures the level shape of the bounces of x, from 15 ms
 // RMS windows every 1 ms in decibels, 4 ms after the pitch, as the
 // engine-sim references were measured. Relative to the median level of the
@@ -750,15 +767,8 @@ func bounces(pitch []float32) []bounce {
 // first half of the firing (the bark). Each is the median over the
 // bounces.
 func limiterShape(x []float32, pitch []float32) (cut, notch, bark float64) {
-	const win, hop, lag = 15 * testRate / 1000, testRate / 1000, 4
-	sum := make([]float64, len(x)+1)
-	for i, v := range x {
-		sum[i+1] = sum[i] + float64(v)*float64(v)
-	}
-	env := make([]float64, (len(x)-win)/hop)
-	for i := range env {
-		env[i] = 10 * math.Log10((sum[i*hop+win]-sum[i*hop])/win+1e-20)
-	}
+	const win, hop, lag = envWin, envHop, 4
+	env := envelopeDB(x)
 	// ms returns the envelope index of pitch step i: the window centre
 	// sits at the pitch time plus the lag.
 	ms := func(i int) int {
@@ -962,6 +972,136 @@ func TestLimiterToneHolds(t *testing.T) {
 				t.Logf("fan tone from %.0f to %.0f Hz", track[len(track)/10], track[len(track)*9/10])
 				if swing > 5 {
 					t.Errorf("fan tone moves by %.0f Hz in the limiter bounce, want at most 5 Hz", swing)
+				}
+			})
+		}
+	}
+}
+
+// finalHold renders seconds of p at the snapshot RPM rpm with full throttle
+// in third gear, with the overrun flag set as a careless game can set it,
+// and with a limiter event every 100 ms. Before each limiterHop block, it
+// sets FlagFinalGear when final returns true for the pitch so far. It
+// returns the output and the pitch RPM of each block.
+func finalHold(t testing.TB, p Profile, tier Tier, rpm float32, seconds float64, final func(pitch []float32) bool) (x, pitch []float32) {
+	t.Helper()
+	e := newEngine(t, p, tier)
+	s := Snapshot{RPM: rpm, Throttle: 1, Load: 1, Gear: 3}
+	x = make([]float32, int(seconds*testRate)/limiterHop*limiterHop)
+	for i := 0; i < len(x); i += limiterHop {
+		s.Flags = FlagRunning | FlagOverrun | FlagRedZone
+		if final(pitch) {
+			s.Flags |= FlagFinalGear
+		}
+		if i%(testRate/10) == 0 {
+			s.Limiter++
+		}
+		e.Set(s)
+		e.Render(x[i : i+limiterHop])
+		pitch = append(pitch, e.(*engine).synth.PitchRPM())
+	}
+	return x, pitch
+}
+
+// levelSteps returns the deepest dip of the 15 ms level of x below its
+// median, and the largest rise of the level in 5 ms, in decibels.
+func levelSteps(x []float32) (dip, rise float64) {
+	env := envelopeDB(x)
+	s := slices.Clone(env)
+	slices.Sort(s)
+	for i := 0; i+5 < len(env); i++ {
+		rise = max(rise, env[i+5]-env[i])
+	}
+	return s[0] - s[len(s)/2], rise
+}
+
+// TestFinalGearHolds holds the snapshot RPM at and 300 RPM above the
+// limiter with full throttle and FlagFinalGear for 2.5 s, with limiter
+// events. From 0.5 s, no cut occurs: the pitch stays from the limiter RPM
+// times 1-final_gear_waver to the limiter RPM, and the waver uses at least
+// half of that range. The deepest dip of the 15 ms level below its median
+// is at most 0.5 dB deeper than in the same hold 150 RPM below the limiter.
+// The output stays finite and below full scale.
+func TestFinalGearHolds(t *testing.T) {
+	always := func([]float32) bool { return true }
+	for _, name := range Profiles() {
+		for _, tier := range tiers {
+			p, err := LoadProfile(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			skip := testRate / 2
+			ref, _ := finalHold(t, p, tier, p.LimiterRPM-150, 2.5, always)
+			refDip, _ := levelSteps(ref[skip:])
+			for _, over := range []float32{0, 300} {
+				t.Run(fmt.Sprintf("%s/tier%d/+%.0f", name, tier, over), func(t *testing.T) {
+					x, pitch := finalHold(t, p, tier, p.LimiterRPM+over, 2.5, always)
+					x, pitch = x[skip:], pitch[skip/limiterHop:]
+					for i, v := range x {
+						if v != v || v > 0.99 || v < -0.99 {
+							t.Fatalf("sample %d is %v", i, v)
+						}
+					}
+					lo := p.LimiterRPM * float32(1-p.spec.FinalGearWaver)
+					pLo, pHi := slices.Min(pitch), slices.Max(pitch)
+					dip, _ := levelSteps(x)
+					t.Logf("pitch from %.1f to %.1f RPM, deepest dip %.2f dB, %.2f dB below the limiter", pLo, pHi, dip, refDip)
+					if pLo < lo-1 || pHi > p.LimiterRPM || pHi-pLo < 0.5*(p.LimiterRPM-lo) {
+						t.Errorf("pitch from %.0f to %.0f RPM, want a waver from %.0f to %.0f", pLo, pHi, lo, p.LimiterRPM)
+					}
+					if dip < refDip-0.5 {
+						t.Errorf("level dips %.1f dB below the median, %.1f dB below the limiter", dip, refDip)
+					}
+				})
+			}
+		}
+	}
+}
+
+// TestFinalGearHandover holds the snapshot RPM at the limiter with full
+// throttle, and sets FlagFinalGear 35 ms into a cut, at the notch. The
+// bounce ends: from 150 ms after the switch, the pitch stays in the waver
+// range below the limiter RPM. From 20 ms before to 150 ms after the
+// switch, the 15 ms
+// level rises by at most 2 dB more in 5 ms than it does in a steady hold
+// 150 RPM below the limiter. The firing gain returns from the notch at
+// 1 dB per 5 ms. A step from the -18 dB v8 notch would rise by about 13 dB.
+func TestFinalGearHandover(t *testing.T) {
+	const notchHops = 35 * testRate / 1000 / limiterHop
+	always := func([]float32) bool { return true }
+	for _, name := range Profiles() {
+		for _, tier := range tiers {
+			t.Run(fmt.Sprintf("%s/tier%d", name, tier), func(t *testing.T) {
+				p, err := LoadProfile(name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				ref, _ := finalHold(t, p, tier, p.LimiterRPM-150, 2.5, always)
+				_, refRise := levelSteps(ref[testRate/2:])
+				at := -1
+				final := func(pitch []float32) bool {
+					n := len(pitch)
+					if at < 0 && n > testRate/2/limiterHop && pitch[n-1] < pitch[n-2] && pitch[n-2] >= pitch[n-3] {
+						at = n + notchHops
+					}
+					return at >= 0 && n >= at
+				}
+				x, pitch := finalHold(t, p, tier, p.LimiterRPM, 1.5, final)
+				if at < 0 || at >= len(pitch) {
+					t.Fatal("no cut to end")
+				}
+				// The windows start 20 ms before the switch, so that they span it.
+				i := at*limiterHop - 20*testRate/1000
+				_, rise := levelSteps(x[i : i+(20+150)*testRate/1000])
+				settle := at + 150*testRate/1000/limiterHop
+				lo := p.LimiterRPM * float32(1-p.spec.FinalGearWaver)
+				pLo, pHi := slices.Min(pitch[settle:]), slices.Max(pitch[settle:])
+				t.Logf("dip %.0f RPM at the switch, largest rise %.2f dB per 5 ms, %.2f dB below the limiter", p.LimiterRPM-pitch[at], rise, refRise)
+				if rise > refRise+2 {
+					t.Errorf("level rises %.1f dB in 5 ms after the switch, %.1f dB below the limiter", rise, refRise)
+				}
+				if pLo < lo-1 || pHi > p.LimiterRPM {
+					t.Errorf("pitch from %.0f to %.0f RPM 150 ms after the switch, want from %.0f to %.0f", pLo, pHi, lo, p.LimiterRPM)
 				}
 			})
 		}
