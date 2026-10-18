@@ -16,7 +16,15 @@ vuln:
 # Run the real-time Ebitengine harness, with pad input and an on-screen
 # display of RPM, throttle, load, and gear.
 run-harness *args: (_command "snarl-harness")
-    go run ./cmd/snarl-harness {{ args }}
+    cd cmd/snarl-harness && go run . {{ args }}
+
+# Vet and test the harness, which is a separate module.
+test-harness: (_command "snarl-harness")
+    cd cmd/snarl-harness && go vet ./... && go test -cover -covermode=atomic ./...
+
+# Lint the harness module with the root golangci-lint configuration.
+lint-harness: (_command "snarl-harness")
+    cd cmd/snarl-harness && go mod tidy -diff && golangci-lint fmt --config ../../.golangci.yml --diff && golangci-lint run --config ../../.golangci.yml
 
 # Render a profile offline to a WAV file from an RPM and throttle script.
 render profile script *args: (_command "snarl-render")
