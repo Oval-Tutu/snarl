@@ -27,6 +27,15 @@ const (
 // holder lets an atomic.Pointer carry an Engine.
 type holder struct{ e snarl.Engine }
 
+// Tap receives a copy of each block that the source plays, as mono
+// samples, on the audio goroutine. Capture must not allocate or wait.
+type Tap interface {
+	Capture(mono []float32)
+}
+
+// tapHolder lets an atomic.Pointer carry a Tap.
+type tapHolder struct{ t Tap }
+
 // Stats are the render timings. Max values count from the last Reset.
 type Stats struct {
 	Blocks    int64         // Blocks rendered.
@@ -40,6 +49,7 @@ type Stats struct {
 // allocate.
 type Source struct {
 	next atomic.Pointer[holder]
+	tap  atomic.Pointer[tapHolder]
 
 	// The audio goroutine owns these.
 	cur, old *holder
@@ -62,6 +72,16 @@ func New() *Source { return &Source{pos: BlockBytes} }
 // the previous engine over four blocks. Build e and call e.Set before
 // SetEngine, outside the audio goroutine.
 func (s *Source) SetEngine(e snarl.Engine) { s.next.Store(&holder{e}) }
+
+// SetTap makes t receive each block from the next block on. A nil t stops
+// the copies. A Capture call can still run when SetTap returns.
+func (s *Source) SetTap(t Tap) {
+	if t == nil {
+		s.tap.Store(nil)
+		return
+	}
+	s.tap.Store(&tapHolder{t})
+}
 
 // Reset clears the timings on the next Read.
 func (s *Source) Reset() { s.reset.Store(true) }
@@ -139,6 +159,9 @@ func (s *Source) render() {
 		if s.fade <= 0 {
 			s.old = nil
 		}
+	}
+	if t := s.tap.Load(); t != nil {
+		t.t.Capture(s.mono[:])
 	}
 	for i, v := range s.mono {
 		b := math.Float32bits(v)

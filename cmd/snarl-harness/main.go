@@ -1,12 +1,25 @@
 // Command snarl-harness plays a snarl engine in real time. A game
 // controller or the keyboard drives a simple drivetrain, and the screen
-// shows the engine state and the audio timings.
+// shows the engine state and the audio timings. It can record the
+// snapshots and the played audio, and it can write the snapshot log of a
+// scripted drive without a window.
+//
+// Usage:
+//
+//	snarl-harness [-profile NAME] [-record DIR]
+//	snarl-harness [-profile NAME] -script LOG.csv
 package main
 
 import (
+	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"image/color"
 	"log"
+	"os"
+	"os/signal"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -19,11 +32,12 @@ import (
 	"github.com/oval-tutu/snarl"
 	"github.com/oval-tutu/snarl/cmd/snarl-harness/internal/drive"
 	"github.com/oval-tutu/snarl/cmd/snarl-harness/internal/pads"
+	"github.com/oval-tutu/snarl/cmd/snarl-harness/internal/record"
 	"github.com/oval-tutu/snarl/cmd/snarl-harness/internal/stream"
 )
 
 const (
-	screenW, screenH = 960, 400
+	screenW, screenH = 960, 460
 	tps              = 60
 )
 
@@ -48,7 +62,7 @@ const (
 	padDown      = ebiten.StandardGamepadButtonLeftBottom
 	padSelect    = ebiten.StandardGamepadButtonCenterLeft
 	padStart     = ebiten.StandardGamepadButtonCenterRight
-	legend       = "Throttle RT/Up/W  Shift RB,A/E up  LB,X/Q down  Profile D-pad L,R/1-4,Left,Right  Tier Y/T  Gears Back/G  Ignition Start/Space  Buffer D-pad U,D/PgUp,PgDn"
+	legend       = "Throttle RT/Up/W  Shift RB,A/E up  LB,X/Q down  Profile D-pad L,R/1-4,Left,Right  Tier Y/T  Gears Back/G  Ignition Start/Space  Buffer D-pad U,D/PgUp,PgDn  Record R"
 	keyboardName = "keyboard"
 )
 
@@ -70,9 +84,35 @@ type harness struct {
 	running  bool
 	buffer   int // Index in bufferBlocks.
 	snap     snarl.Snapshot
+
+	quit   context.Context // Done on an interrupt signal.
+	rec    *record.Recorder
+	recDir string
+	recMsg string // The result of the last recording.
 }
 
-func newHarness() (*harness, error) {
+// loadProfiles returns the embedded profiles and the index of the named
+// one.
+func loadProfiles(name string) ([]snarl.Profile, int, error) {
+	var ps []snarl.Profile
+	index := -1
+	for i, n := range snarl.Profiles() {
+		p, err := snarl.LoadProfile(n)
+		if err != nil {
+			return nil, 0, err
+		}
+		ps = append(ps, p)
+		if n == name {
+			index = i
+		}
+	}
+	if index < 0 {
+		return nil, 0, fmt.Errorf("%w: %q", snarl.ErrUnknownProfile, name)
+	}
+	return ps, index, nil
+}
+
+func newHarness(quit context.Context, profile, recDir string, recordNow bool) (*harness, error) {
 	h := &harness{
 		pads:    pads.NewReader(),
 		drive:   drive.New(drive.DefaultGears),
@@ -80,17 +120,41 @@ func newHarness() (*harness, error) {
 		tier:    snarl.Tier1,
 		running: true,
 		buffer:  defaultBuffer,
+		quit:    quit,
+		recDir:  recDir,
 	}
-	for _, name := range snarl.Profiles() {
-		p, err := snarl.LoadProfile(name)
-		if err != nil {
-			return nil, err
-		}
-		h.profiles = append(h.profiles, p)
+	var err error
+	if h.profiles, h.profile, err = loadProfiles(profile); err != nil {
+		return nil, err
 	}
 	h.ctx = audio.NewContext(stream.SampleRate)
 	h.swapEngine()
+	if recordNow {
+		h.toggleRecord()
+	}
 	return h, nil
+}
+
+// toggleRecord starts a recording, or stops the current one.
+func (h *harness) toggleRecord() {
+	if h.rec == nil {
+		r, err := record.Start(h.recDir, time.Now(), stream.SampleRate, stream.Block)
+		if err != nil {
+			h.recMsg = fmt.Sprintf("Record error: %v", err)
+			return
+		}
+		h.rec = r
+		h.rec.Snapshot(h.profiles[h.profile].Name, h.tier, h.snap)
+		h.src.SetTap(r)
+		return
+	}
+	h.src.SetTap(nil)
+	res, err := h.rec.Stop()
+	h.rec = nil
+	h.recMsg = fmt.Sprintf("Saved %s and %s: %v", res.CSVPath, filepath.Base(res.WAVPath), res)
+	if err != nil {
+		h.recMsg = fmt.Sprintf("Record error: %v (%v)", err, res)
+	}
 }
 
 // swapEngine builds the engine of the selected profile and tier, and
@@ -142,6 +206,9 @@ func keyJust(keys ...ebiten.Key) bool {
 }
 
 func (h *harness) Update() error {
+	if h.quit.Err() != nil {
+		return ebiten.Termination
+	}
 	h.pads.Poll()
 	h.startAudio()
 	p := h.pads
@@ -157,23 +224,39 @@ func (h *harness) Update() error {
 		h.drive.Downshift()
 	}
 	h.updateSwitches()
+	if keyJust(ebiten.KeyR) {
+		h.toggleRecord()
+	}
 
 	dt := 1.0 / float64(ebiten.TPS())
-	h.drive.Step(throttle, h.running, dt)
-	pr := h.profiles[h.profile]
-	rpm := h.drive.RPM(pr.IdleRPM, pr.LimiterRPM)
-	overrun := h.drive.Overrun()
+	s := step(h.drive, &h.load, h.profiles[h.profile], throttle, h.running, dt)
+	h.snap = s
+	if h.eng != nil {
+		h.eng.Set(s)
+		if h.rec != nil {
+			h.rec.Snapshot(h.profiles[h.profile].Name, h.tier, s)
+		}
+	}
+	return nil
+}
+
+// step advances the drivetrain by dt seconds and returns the snapshot for
+// the engine of profile pr.
+func step(d *drive.Model, load *snarl.LoadFilter, pr snarl.Profile, throttle float64, running bool, dt float64) snarl.Snapshot {
+	d.Step(throttle, running, dt)
+	rpm := d.RPM(pr.IdleRPM, pr.LimiterRPM)
+	overrun := d.Overrun()
 	s := snarl.Snapshot{
 		RPM:       rpm,
 		Throttle:  float32(throttle),
-		Load:      h.load.Update(float32(h.drive.Accel()), float32(h.drive.PeakAccel()), float32(dt), overrun),
-		Speed:     float32(h.drive.Speed()),
-		Gear:      uint8(h.drive.Gear()), //nolint:gosec // The gear is below drive.MaxGears.
-		ShiftUp:   h.drive.ShiftUp,
-		ShiftDown: h.drive.ShiftDown,
-		Limiter:   h.drive.Limiter,
+		Load:      load.Update(float32(d.Accel()), float32(d.PeakAccel()), float32(dt), overrun),
+		Speed:     float32(d.Speed()),
+		Gear:      uint8(d.Gear()), //nolint:gosec // The gear is below drive.MaxGears.
+		ShiftUp:   d.ShiftUp,
+		ShiftDown: d.ShiftDown,
+		Limiter:   d.Limiter,
 	}
-	if h.running {
+	if running {
 		s.Flags |= snarl.FlagRunning
 	}
 	if overrun {
@@ -182,11 +265,7 @@ func (h *harness) Update() error {
 	if rpm >= min(pr.RedlineRPM, pr.LimiterRPM) {
 		s.Flags |= snarl.FlagRedZone
 	}
-	h.snap = s
-	if h.eng != nil {
-		h.eng.Set(s)
-	}
-	return nil
+	return s
 }
 
 // updateSwitches reads the profile, tier, gear count, ignition, and
@@ -341,6 +420,21 @@ func (h *harness) Draw(screen *ebiten.Image) {
 	}
 	say(8, "Input %s", name)
 	next()
+	if h.rec != nil {
+		say(8, "RECORDING %.1f s   dropped blocks %d   R stops", h.rec.Elapsed().Seconds(), h.rec.Dropped())
+		if err := h.rec.Err(); err != nil {
+			say(500, "Log error: %v", err)
+		}
+		next()
+		say(8, "%s", h.rec.CSVPath)
+		next()
+		say(8, "%s", h.rec.WAVPath)
+	} else {
+		say(8, "Recording off   R records to %s", h.recDir)
+		next()
+		say(8, "%s", h.recMsg)
+	}
+	next()
 	next()
 	say(8, "%s", legend)
 }
@@ -373,14 +467,45 @@ func flags(s snarl.Snapshot, cut bool) string {
 func (h *harness) Layout(int, int) (int, int) { return screenW, screenH }
 
 func main() {
-	h, err := newHarness()
+	profile := flag.String("profile", snarl.Profiles()[0], "start `profile`")
+	recDir := flag.String("record", "", "record from the start into `dir`; R starts and stops recordings in dir (default "+
+		filepath.Join(os.TempDir(), "snarl-record")+")")
+	script := flag.String("script", "", "write the snapshot log of the scripted lift-off drive to `file` and exit, with no window or audio")
+	flag.Parse()
+	var err error
+	if *script != "" {
+		err = writeScript(*script, *profile)
+	} else {
+		err = play(*profile, *recDir)
+	}
 	if err != nil {
 		log.Fatal(err)
+	}
+}
+
+// play runs the harness window. When recDir is not empty, it records from
+// the start. An interrupt signal ends the harness, and the recording.
+func play(profile, recDir string) error {
+	dir, recordNow := recDir, recDir != ""
+	if !recordNow {
+		dir = filepath.Join(os.TempDir(), "snarl-record")
+	}
+	quit, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	h, err := newHarness(quit, profile, dir, recordNow)
+	if err != nil {
+		return err
 	}
 	ebiten.SetWindowTitle("snarl harness")
 	ebiten.SetWindowSize(screenW, screenH)
 	ebiten.SetTPS(tps)
-	if err := ebiten.RunGame(h); err != nil {
-		log.Fatal(err)
+	err = ebiten.RunGame(h)
+	if h.rec != nil {
+		h.toggleRecord()
+		log.Print(h.recMsg)
 	}
+	if errors.Is(err, ebiten.Termination) {
+		return nil
+	}
+	return err
 }

@@ -108,3 +108,52 @@ func TestReadDoesNotAllocate(t *testing.T) {
 		t.Errorf("%v allocations per Read, want 0", a)
 	}
 }
+
+// copyTap keeps the last block it receives.
+type copyTap struct {
+	last  [Block]float32
+	count int
+}
+
+func (c *copyTap) Capture(mono []float32) {
+	copy(c.last[:], mono)
+	c.count++
+}
+
+func TestTapGetsPlayedAudio(t *testing.T) {
+	s := New()
+	s.SetEngine(newEngine(t, "v8", snarl.Tier1))
+	tap := &copyTap{}
+	s.SetTap(tap)
+	buf := make([]byte, BlockBytes)
+	for range 3 {
+		if n, _ := s.Read(buf); n != BlockBytes {
+			t.Fatalf("Read = %d", n)
+		}
+	}
+	for i, v := range tap.last {
+		if b := math.Float32bits(v); b != binary.LittleEndian.Uint32(buf[8*i:]) {
+			t.Fatalf("frame %d: tap %v differs from the played sample", i, v)
+		}
+	}
+	s.SetTap(nil)
+	_, _ = s.Read(buf)
+	if tap.count != 3 {
+		t.Errorf("tap got %d blocks, want 3", tap.count)
+	}
+}
+
+func TestReadWithTapDoesNotAllocate(t *testing.T) {
+	s := New()
+	s.SetEngine(newEngine(t, "flat6", snarl.Tier1))
+	s.SetTap(&copyTap{})
+	buf := make([]byte, BlockBytes)
+	_, _ = s.Read(buf)
+	if a := testing.AllocsPerRun(100, func() {
+		if n, _ := s.Read(buf); n != BlockBytes {
+			t.Fatalf("Read = %d", n)
+		}
+	}); a != 0 {
+		t.Errorf("%v allocations per Read with a tap, want 0", a)
+	}
+}
