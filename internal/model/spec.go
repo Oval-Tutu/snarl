@@ -32,14 +32,19 @@ type Spec struct {
 	LimiterKind string `toml:"limiter_kind"`
 	// LimiterMS is the length of one cut in milliseconds.
 	LimiterMS float64 `toml:"limiter_ms"`
-	// LimiterRecoveryMS is the time in milliseconds after a cut in which
-	// the engine fires and the RPM climbs back. The next cut can only start
-	// after it, so one bounce takes LimiterMS plus LimiterRecoveryMS.
-	LimiterRecoveryMS float64 `toml:"limiter_recovery_ms"`
-	// LimiterDipRPM is the RPM fall over one cut. The pitch falls by it in
-	// a straight line over the cut and climbs back over the recovery.
-	LimiterDipRPM float64 `toml:"limiter_dip_rpm"`
-	CamSwitchRPM  float64 `toml:"cam_switch_rpm"`
+	// LimiterFallRPMS is the rate in RPM per second at which the engine
+	// slows down during a cut, from friction and pumping. The dip of one
+	// bounce is this rate times the cut length.
+	LimiterFallRPMS float64 `toml:"limiter_fall_rpm_s"`
+	// LimiterRiseRPMS is the rate in RPM per second at which the engine
+	// climbs back to the limiter RPM after a cut. The next cut starts when
+	// it gets there, so one bounce takes LimiterMS plus the dip divided by
+	// this rate.
+	LimiterRiseRPMS float64 `toml:"limiter_rise_rpm_s"`
+	// LimiterLoadScale multiplies both rates, for an engine in gear. The
+	// dip grows with it, and the bounce rate stays the same.
+	LimiterLoadScale float64 `toml:"limiter_load_scale"`
+	CamSwitchRPM     float64 `toml:"cam_switch_rpm"`
 
 	Pulse      PulseSpec      `toml:"pulse"`
 	Exhaust    ExhaustSpec    `toml:"exhaust"`
@@ -231,11 +236,12 @@ type VoiceSpec struct {
 // DefaultSpec returns the defaults that a profile file overrides.
 func DefaultSpec() Spec {
 	return Spec{
-		Seed:              1,
-		LimiterKind:       "fuel",
-		LimiterMS:         40,
-		LimiterRecoveryMS: 30,
-		LimiterDipRPM:     200,
+		Seed:             1,
+		LimiterKind:      "fuel",
+		LimiterMS:        50,
+		LimiterFallRPMS:  6000,
+		LimiterRiseRPMS:  10000,
+		LimiterLoadScale: 1,
 		Pulse: PulseSpec{
 			WidthDeg: 160, Attack: 25, Decay: 7, IdleFloor: 0.2, PartLoadDB: -0.6,
 			CycleVariation: 0.08, Jitter: 0.003,
@@ -314,9 +320,11 @@ func (s *Spec) validateLimiter() error {
 	switch {
 	case s.LimiterKind != "fuel" && s.LimiterKind != "injector" && s.LimiterKind != "ignition":
 		return fmt.Errorf("limiter_kind %q is not fuel, injector or ignition", s.LimiterKind)
-	case s.LimiterRPM < 0 || s.LimiterMS > 500 || s.LimiterRecoveryMS < 0 || s.LimiterRecoveryMS > 500 ||
-		s.LimiterDipRPM < 0 || s.LimiterDipRPM > 1000:
-		return errors.New("limiter_rpm must not be negative, limiter_ms and limiter_recovery_ms from 0 to 500, and limiter_dip_rpm from 0 to 1000")
+	case s.LimiterRPM < 0 || s.LimiterMS > 500 || s.LimiterFallRPMS < 0 || s.LimiterFallRPMS > 100000 ||
+		s.LimiterRiseRPMS <= 0 || s.LimiterRiseRPMS > 100000 || s.LimiterLoadScale < 0.1 || s.LimiterLoadScale > 10:
+		return errors.New("limiter_rpm must not be negative, limiter_ms from 0 to 500, limiter_fall_rpm_s from 0 to 100000, limiter_rise_rpm_s from above 0 to 100000 and limiter_load_scale from 0.1 to 10")
+	case s.LimiterMS*1e-3*s.LimiterFallRPMS*s.LimiterLoadScale >= s.LimiterRPM && s.LimiterRPM > 0:
+		return errors.New("the limiter dip, limiter_ms times limiter_fall_rpm_s and limiter_load_scale, must stay below limiter_rpm")
 	}
 	return nil
 }

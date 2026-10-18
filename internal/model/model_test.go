@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"math"
 	"slices"
 	"testing"
@@ -148,66 +149,142 @@ func limiterSpec(kind string) Spec {
 }
 
 // TestLimiterCuts checks the internal rev limiter. At the limiter RPM with
-// the throttle open, cuts start at the rate of the cut and recovery times,
-// and no overrun effect plays, even with the overrun flag set. Below the
-// limiter, or with the throttle at 0.1, no cut starts. A limiter event
-// starts one cut on overrun, which stops the overrun effects within a few
-// milliseconds.
+// the throttle open, each cut lowers the internal RPM by the fall rate
+// times the cut length, and the climb back at the rise rate sets the cut
+// rate. The load scale scales the dip and keeps the rate. No overrun
+// effect plays, even with the overrun flag set. Below the limiter, or with
+// the throttle at 0.1, no cut starts. A closed throttle or a gear change
+// ends the bounce, and the pitch returns to the smoothed RPM in small
+// steps. A limiter event starts one cut on overrun, which stops the
+// overrun effects within a few milliseconds.
 func TestLimiterCuts(t *testing.T) {
 	for _, kind := range []string{"fuel", "injector", "ignition"} {
 		for _, tier1 := range []bool{false, true} {
-			s := limiterSpec(kind)
-			y, err := New(&s, rate, tier1)
-			if err != nil {
-				t.Fatal(err)
-			}
-			buf := make([]float32, 256)
-			c := Control{RPM: 7000, Throttle: 1, Load: 1, Running: true, Overrun: true}
-			for i := range 2 * rate / len(buf) {
-				y.Render(buf, c)
-				if i > 0 && (y.air != 0 || y.overrun > 1e-6 || y.pops.window) {
-					t.Fatalf("%s: overrun effect at the limiter: air %v, overrun %v, pop window %t", kind, y.air, y.overrun, y.pops.window)
+			for _, scale := range []float64{1, 2} {
+				s := limiterSpec(kind)
+				s.LimiterLoadScale = scale
+				y, err := New(&s, rate, tier1)
+				if err != nil {
+					t.Fatal(err)
 				}
-			}
-			want := 2 * 1000 / (s.LimiterMS + s.LimiterRecoveryMS)
-			if got := float64(y.limRot); math.Abs(got-want) > 1 {
-				t.Errorf("%s: %v cuts in 2 s, want %.1f", kind, got, want)
-			}
-			for _, c := range []Control{
-				{RPM: 6900, Throttle: 1, Load: 1, Running: true},
-				{RPM: 7000, Throttle: 0.1, Running: true},
-			} {
-				for range rate / 2 / len(buf) {
-					y.Render(buf, c)
-				}
-				n := y.limRot
-				for range rate / len(buf) {
-					y.Render(buf, c)
-				}
-				if y.limRot != n {
-					t.Errorf("%s: cut at %.0f RPM and throttle %.1f", kind, c.RPM, c.Throttle)
-				}
-			}
-			over := Control{RPM: 5000, Running: true, Overrun: true}
-			for range rate / len(buf) {
-				y.Render(buf, over)
-			}
-			if y.overrun < 0.99 {
-				t.Fatalf("%s: overrun %v before the limiter event", kind, y.overrun)
-			}
-			n := y.limRot
-			over.LimiterEvents = 1
-			y.Render(buf, over)
-			over.LimiterEvents = 0
-			if y.limRot != n+1 || !y.cutting || y.pops.window {
-				t.Errorf("%s: limiter event: cuts %d, cutting %t, pop window %t", kind, y.limRot-n, y.cutting, y.pops.window)
-			}
-			for range int(s.LimiterMS+s.LimiterRecoveryMS)*rate/1000/len(buf) - 1 {
-				y.Render(buf, over)
-			}
-			if y.overrun > 0.01 || y.limRot != n+1 {
-				t.Errorf("%s: after a limiter event on overrun: overrun %v, cuts %d", kind, y.overrun, y.limRot-n)
+				name := fmt.Sprintf("%s/tier1 %t/scale %v", kind, tier1, scale)
+				checkBounce(t, name, &s, y)
+				checkHandover(t, name, &s, y)
+				checkEvent(t, name, y)
 			}
 		}
+	}
+}
+
+// checkBounce holds the limiter RPM with the throttle open for 2 s and
+// checks the cut rate and the dip against the profile values.
+func checkBounce(t *testing.T, name string, s *Spec, y *Synth) {
+	t.Helper()
+	buf := make([]float32, chunk)
+	c := Control{RPM: float32(s.LimiterRPM), Throttle: 1, Load: 1, Running: true, Overrun: true, Gear: 1}
+	var dip float32
+	n := 0
+	for i := range 2 * rate / chunk {
+		if i == rate/5/chunk {
+			n = y.limRot
+		}
+		y.Render(buf, c)
+		if i > 0 && (y.air != 0 || y.overrun > 1e-6 || y.pops.window) {
+			t.Fatalf("%s: overrun effect at the limiter: air %v, overrun %v, pop window %t", name, y.air, y.overrun, y.pops.window)
+		}
+		if i >= rate/5/chunk {
+			dip = max(dip, c.RPM-y.PitchRPM())
+		}
+	}
+	ms := s.LimiterMS
+	wantDip := s.LimiterFallRPMS * s.LimiterLoadScale * ms / 1000
+	wantRate := 1000 / (ms * (1 + s.LimiterFallRPMS/s.LimiterRiseRPMS))
+	got := float64(y.limRot-n) / 1.8
+	if math.Abs(got-wantRate) > 0.2*wantRate || math.Abs(float64(dip)-wantDip) > 0.2*wantDip {
+		t.Errorf("%s: %.1f cuts per second with a dip of %.0f RPM, want %.1f and %.0f", name, got, dip, wantRate, wantDip)
+	}
+	for _, c := range []Control{
+		{RPM: float32(s.LimiterRPM) - 100, Throttle: 1, Load: 1, Running: true, Gear: 1},
+		{RPM: float32(s.LimiterRPM), Throttle: 0.1, Running: true, Gear: 1},
+	} {
+		for range rate / 2 / chunk {
+			y.Render(buf, c)
+		}
+		n := y.limRot
+		for range rate / chunk {
+			y.Render(buf, c)
+		}
+		if y.limRot != n {
+			t.Errorf("%s: cut at %.0f RPM and throttle %.1f", name, c.RPM, c.Throttle)
+		}
+	}
+}
+
+// checkHandover ends a bounce mid-cut with a closed throttle and with a
+// gear change. The pitch returns to the smoothed RPM within 150 ms, with
+// no step above 5 percent of the dip.
+func checkHandover(t *testing.T, name string, s *Spec, y *Synth) {
+	t.Helper()
+	buf := make([]float32, chunk)
+	lim := float32(s.LimiterRPM)
+	for _, end := range []Control{
+		{RPM: lim, Running: true, Gear: 1},
+		{RPM: lim, Throttle: 1, Load: 1, Running: true, Gear: 2},
+	} {
+		c := Control{RPM: lim, Throttle: 1, Load: 1, Running: true, Gear: end.Gear - 1}
+		for range rate / 2 / chunk {
+			y.Render(buf, c)
+		}
+		for !y.cutting || y.cut > y.limCut/2 {
+			y.Render(buf, c)
+		}
+		step := 0.05 * float32(s.LimiterFallRPMS*s.LimiterLoadScale*s.LimiterMS/1000)
+		prev := y.PitchRPM()
+		y.Render(buf, end)
+		if y.cutting || y.climb {
+			t.Errorf("%s: bounce goes on after throttle %.0f and gear %d", name, end.Throttle, end.Gear)
+		}
+		for range rate * 3 / 20 / chunk {
+			if d := y.PitchRPM() - prev; d > step || d < -step {
+				t.Fatalf("%s: pitch step of %.0f RPM in the handover", name, d)
+			}
+			prev = y.PitchRPM()
+			y.Render(buf, Control{RPM: lim, Running: true, Gear: end.Gear})
+		}
+		if y.dip != 0 {
+			t.Errorf("%s: pitch %.0f RPM below the smoothed RPM 150 ms after the handover", name, y.dip)
+		}
+	}
+}
+
+// checkEvent starts one cut with a limiter event on overrun.
+func checkEvent(t *testing.T, name string, y *Synth) {
+	t.Helper()
+	buf := make([]float32, 256)
+	over := Control{RPM: 5000, Running: true, Overrun: true, Gear: 2}
+	for range rate / len(buf) {
+		y.Render(buf, over)
+	}
+	if y.overrun < 0.99 {
+		t.Fatalf("%s: overrun %v before the limiter event", name, y.overrun)
+	}
+	n := y.limRot
+	over.LimiterEvents = 1
+	y.Render(buf, over)
+	over.LimiterEvents = 0
+	if y.limRot != n+1 || !y.cutting || y.pops.window {
+		t.Errorf("%s: limiter event: cuts %d, cutting %t, pop window %t", name, y.limRot-n, y.cutting, y.pops.window)
+	}
+	for range y.limCut/len(buf) - 1 {
+		y.Render(buf, over)
+	}
+	if y.overrun > 0.01 || !y.cutting {
+		t.Errorf("%s: in a limiter event cut on overrun: overrun %v, cutting %t", name, y.overrun, y.cutting)
+	}
+	for range rate / 5 / len(buf) {
+		y.Render(buf, over)
+	}
+	if y.limRot != n+1 || y.dip != 0 || y.overrun < 0.9 {
+		t.Errorf("%s: 200 ms after a limiter event cut: cuts %d, dip %.0f RPM, overrun %v", name, y.limRot-n, y.dip, y.overrun)
 	}
 }

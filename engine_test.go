@@ -759,12 +759,24 @@ func bandPower(x []float32) float64 {
 	return e / float64(len(y))
 }
 
+// limiterTargets are the free-running engine-sim limiter references:
+// cuts per second and the mean RPM dip.
+var limiterTargets = map[string]struct{ rate, dip float64 }{
+	"flat12":  {7.3, 1979},
+	"inline4": {11.1, 367},
+	"flat6":   {4.3, 781},
+	"v8":      {3.7, 604},
+}
+
 // TestLimiterBounce holds the snapshot RPM at the limiter with full
-// throttle for 2 s, with the overrun flag set as a careless game can set
-// it. The engine bounces off the limiter by itself: from 0.5 s, 8 to 20
-// regular dips per second of at least 10 dB, or 6 dB for an injector cut,
-// which fires a third of the cylinders. No overrun air noise plays: the
-// band above 3 kHz is not louder than full throttle 150 RPM below the
+// throttle for 3 s, with the overrun flag set as a careless game can set
+// it. The engine bounces off the limiter by itself. From 0.5 s, the dips
+// of the output envelope with no pops are regular and at least 10 dB
+// deep. Their rate
+// and the dip of the internal RPM are within 20 percent of the values that
+// the profile limiter settings give, and within 25 percent of the
+// engine-sim references at a load scale of 1. No overrun air noise plays:
+// the band above 3 kHz is not louder than full throttle 150 RPM below the
 // limiter. The output stays finite and below full scale.
 func TestLimiterBounce(t *testing.T) {
 	for _, name := range Profiles() {
@@ -774,24 +786,52 @@ func TestLimiterBounce(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				hold := func(rpm float32) []float32 {
-					return render(newEngine(t, p, tier), 2, func(float64) Snapshot {
-						return Snapshot{RPM: rpm, Throttle: 1, Load: 1, Flags: FlagRunning | FlagOverrun | FlagRedZone}
-					})[testRate/2:]
+				pitch := float32(math.Inf(1))
+				hold := func(p Profile, rpm float32) []float32 {
+					e := newEngine(t, p, tier)
+					s := Snapshot{RPM: rpm, Throttle: 1, Load: 1, Gear: 3, Flags: FlagRunning | FlagOverrun | FlagRedZone}
+					x := make([]float32, 3*testRate/256*256)
+					for i := 0; i < len(x); i += 256 {
+						e.Set(s)
+						e.Render(x[i : i+256])
+						if i >= testRate/2 && rpm == p.LimiterRPM {
+							pitch = min(pitch, e.(*engine).synth.PitchRPM())
+						}
+					}
+					return x[testRate/2:]
 				}
-				x, ref := hold(p.LimiterRPM), hold(p.LimiterRPM-150)
+				// The envelope dips come from a render with no pops, because
+				// an ignition cut bang at a random time in a cut can split a
+				// dip in two.
+				q := p
+				noPops := *p.spec
+				noPops.Pops.Density = 0
+				q.spec = &noPops
+				x, ref, clean := hold(p, p.LimiterRPM), hold(p, p.LimiterRPM-150), hold(q, p.LimiterRPM)
 				for i, v := range x {
 					if v != v || v > 0.99 || v < -0.99 {
 						t.Fatalf("sample %d is %v", i, v)
 					}
 				}
-				rate, depth, cv := limiterDips(x)
+				rate, depth, cv := limiterDips(clean)
+				dip := float64(p.LimiterRPM - pitch)
 				hf := 10 * math.Log10(bandPower(x)/bandPower(ref))
-				t.Logf("%.1f cuts per second, dips %.1f dB, interval CV %.2f, band above 3 kHz %+.1f dB", rate, depth, cv, hf)
-				want := 1000 / (p.spec.LimiterMS + p.spec.LimiterRecoveryMS)
-				if rate < 4 || rate > 20 || math.Abs(rate-want) > 0.15*want || depth < 10 || cv > 0.15 {
-					t.Errorf("%.1f dips per second of %.1f dB with interval CV %.2f, want %.1f (4 to 20) of at least 10 dB with CV up to 0.15",
-						rate, depth, cv, want)
+				sp := p.spec
+				wantRate := 1000 / (sp.LimiterMS * (1 + sp.LimiterFallRPMS/sp.LimiterRiseRPMS))
+				wantDip := sp.LimiterFallRPMS * sp.LimiterLoadScale * sp.LimiterMS / 1000
+				ref0 := limiterTargets[name]
+				t.Logf("%.2f cuts per second, RPM dip %.0f, envelope dips %.1f dB, interval CV %.2f, band above 3 kHz %+.1f dB",
+					rate, dip, depth, cv, hf)
+				if math.Abs(rate-wantRate) > 0.2*wantRate || math.Abs(dip-wantDip) > 0.2*wantDip {
+					t.Errorf("%.1f cuts per second with an RPM dip of %.0f, want %.1f and %.0f from the profile",
+						rate, dip, wantRate, wantDip)
+				}
+				if sp.LimiterLoadScale == 1 && (math.Abs(rate-ref0.rate) > 0.25*ref0.rate || math.Abs(dip-ref0.dip) > 0.25*ref0.dip) {
+					t.Errorf("%.1f cuts per second with an RPM dip of %.0f, want %.1f and %.0f from engine-sim",
+						rate, dip, ref0.rate, ref0.dip)
+				}
+				if depth < 10 || cv > 0.15 {
+					t.Errorf("envelope dips of %.1f dB with interval CV %.2f, want at least 10 dB with CV up to 0.15", depth, cv)
 				}
 				if hf > 1 {
 					t.Errorf("band above 3 kHz %.1f dB above full throttle below the limiter", hf)

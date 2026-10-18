@@ -7,9 +7,12 @@ idle_rpm = 800
 redline_rpm = 8400
 limiter_rpm = 8500
 limiter_kind = "fuel"
-limiter_ms = 45
-limiter_recovery_ms = 40
-limiter_dip_rpm = 350
+# Cut length, slow-down and climb rates measured from the engine-sim
+# limiter reference with the engine running free.
+limiter_ms = 56
+limiter_fall_rpm_s = 6600
+limiter_rise_rpm_s = 10500
+limiter_load_scale = 1.0
 cam_switch_rpm = 5700
 
 [pulse]

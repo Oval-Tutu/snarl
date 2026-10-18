@@ -32,6 +32,9 @@ const (
 	airSteady = 0.25
 	// airGain makes up the level that the air noise low passes take out.
 	airGain = 10
+	// handover is the time constant in seconds over which the pitch
+	// returns from the internal limiter RPM to the smoothed RPM.
+	handover = 0.017
 )
 
 // Control is the engine state for one block.
@@ -41,6 +44,8 @@ type Control struct {
 	// LimiterEvents is the number of rev limiter events since the last
 	// block.
 	LimiterEvents int
+	// Gear is the gear of the snapshot. A change ends a limiter bounce.
+	Gear uint8
 }
 
 type voice struct {
@@ -87,10 +92,10 @@ type Synth struct {
 	steepCfg, voiceGain          float32
 	overlap                      float32
 	limKind                      string
-	limRPM, limDip               float32
-	limCut, limRec               int
+	limRPM, limFall, limRise     float32
+	limCut                       int
 	kRPM, kCtl, kMaster, kCam    float32
-	kLim                         float32
+	kLim, kHand                  float32
 	jit                          dsp.OnePole
 	amLP, airLP1, airLP2         dsp.OnePole
 	swell, swellDecay            float32
@@ -111,16 +116,20 @@ type Synth struct {
 	jetGain, intakeGain, fanGain float32
 	tickGain, ka, kb, liveNorm   float32
 
-	// Rev limiter state. cut and rec are the samples left of the cut and
-	// of the recovery after it. cutting is true for a chunk inside a cut.
-	// limRot counts the cuts. dip is the RPM fall of the bounce. bangAt is
-	// the time into an ignition cut in samples at which the unburnt fuel
-	// bangs, or -1. gate is the jet noise gain of the cut, and gateTo is
-	// its target.
-	cut, rec, cutCount, limRot int
-	bangAt                     int
-	cutting, limEvent          bool
-	dip, gate, gateTo          float32
+	// Rev limiter state. cut is the samples left of the cut. cutting is
+	// true for a chunk inside a cut. bounce is true while the snapshot
+	// holds the engine at the limiter, and climb is true while the
+	// internal RPM lrpm climbs back to the limiter RPM after a cut of a
+	// bounce. dip is the pitch offset below the smoothed RPM. limRot
+	// counts the cuts. bangAt is the time into an ignition cut in samples
+	// at which the unburnt fuel bangs, or -1. gate is the jet noise gain of
+	// the cut, and gateTo is its target. gear is the last gear.
+	cut, cutCount, limRot   int
+	bangAt                  int
+	cutting, limEvent       bool
+	bounce, climb           bool
+	gear                    uint8
+	lrpm, dip, gate, gateTo float32
 }
 
 // New returns a synth for the spec at the sample rate. tier1 selects the
@@ -164,9 +173,9 @@ func New(s *Spec, rate int, tier1 bool) (*Synth, error) {
 		voiceGain:  float32(s.Voice.Gain),
 		limKind:    s.LimiterKind,
 		limRPM:     float32(s.LimiterRPM),
-		limDip:     float32(s.LimiterDipRPM),
+		limFall:    float32(s.LimiterFallRPMS * s.LimiterLoadScale / fs),
+		limRise:    float32(s.LimiterRiseRPMS * s.LimiterLoadScale / fs),
 		limCut:     int(s.LimiterMS * 1e-3 * fs),
-		limRec:     int(s.LimiterRecoveryMS * 1e-3 * fs),
 		gate:       1,
 		gateTo:     1,
 		kRPM:       dsp.TimeCoef(0.012, chunkHz),
@@ -174,6 +183,7 @@ func New(s *Spec, rate int, tier1 bool) (*Synth, error) {
 		kMaster:    dsp.TimeCoef(0.02, chunkHz),
 		kCam:       dsp.TimeCoef(0.015, chunkHz),
 		kLim:       dsp.TimeCoef(0.002, chunkHz),
+		kHand:      1 - dsp.TimeCoef(handover, chunkHz),
 		jit:        dsp.OnePole{A: dsp.OnePoleCoef(2, chunkHz)},
 		amLP:       dsp.OnePole{A: dsp.OnePoleCoef(2000, fs)},
 		airLP1:     dsp.OnePole{A: dsp.OnePoleCoef(airHz, fs)},
@@ -308,6 +318,12 @@ func envelopePeak(a, b float64) float64 {
 	return (1 - math.Exp(-a*x)) * math.Exp(-b*x)
 }
 
+// PitchRPM returns the RPM that the firing follows. It differs from the
+// smoothed input RPM in a limiter bounce and in the handover after it.
+func (y *Synth) PitchRPM() float32 {
+	return max(0, y.rpm-y.dip)
+}
+
 // Render fills dst. It allocates nothing.
 func (y *Synth) Render(dst []float32, c Control) {
 	if c.LimiterEvents > 0 {
@@ -365,7 +381,7 @@ func (y *Synth) control(c *Control, n int) {
 	y.throttle += (thr - y.throttle) * y.kCtl
 	y.load += (load - y.load) * y.kCtl
 	y.master += (b2f(c.Running) - y.master) * y.kMaster
-	limiting := y.limit(rpm, thr, n)
+	limiting := y.limit(rpm, thr, c.Gear, n)
 	over := c.Overrun && thr < 0.05 && !limiting
 	k := y.kCtl
 	if limiting {
@@ -384,7 +400,7 @@ func (y *Synth) control(c *Control, n int) {
 
 	j := y.jit.Process(y.noise.Bipolar() * 1.7)
 	y.idle.control(rpm, y.load)
-	inc := max(0, y.rpm-y.dip) * y.invRate120 * (1 + y.jitter*j) * y.idle.speed
+	inc := y.PitchRPM() * y.invRate120 * (1 + y.jitter*j) * y.idle.speed
 	y.inc = min(inc, y.maxInc)
 	y.step = y.inc * y.stepPerCycle
 
@@ -427,14 +443,27 @@ func (y *Synth) control(c *Control, n int) {
 	}
 }
 
-// limit runs the rev limiter for a chunk of n samples, from the input RPM
-// and throttle. A cut starts at the limiter RPM with the throttle open, or
-// on a limiter event, when no cut or recovery runs. It reports whether a
-// cut or a recovery runs, so that no overrun effect plays.
-func (y *Synth) limit(rpm, thr float32, n int) bool {
-	at := y.limRPM > 0 && rpm >= y.limRPM*0.998 && thr > 0.1
-	if y.cut <= 0 && y.rec <= 0 && (at || y.limEvent) && y.limCut > 0 {
-		y.cut, y.rec = y.limCut, y.limRec
+// limit runs the rev limiter for a chunk of n samples, from the input RPM,
+// throttle and gear. It follows the engine-sim limiter: a cut stops the
+// firing for the cut length while the internal RPM falls at the fall rate.
+// After the cut, the engine fires and the internal RPM climbs at the rise
+// rate to the limiter RPM, where the next cut starts. The bounce runs
+// while the snapshot RPM is at the limiter with the throttle open. A
+// limiter event starts one cut when no cut or climb runs. When the bounce
+// or an event cut ends, the pitch returns to the smoothed RPM. It reports
+// whether a cut or a climb runs, so that no overrun effect plays.
+func (y *Synth) limit(rpm, thr float32, gear uint8, n int) bool {
+	// The smoothed RPM must be near the limiter too, so that a bounce
+	// starts from the limiter RPM.
+	at := y.limRPM > 0 && rpm >= y.limRPM*0.998 && y.rpm >= y.limRPM*0.99 && thr > 0.1 && gear == y.gear
+	y.gear = gear
+	if y.bounce && !at {
+		y.bounce, y.climb, y.cut = false, false, 0
+	}
+	if y.cut <= 0 && !y.climb && (at || y.limEvent) && y.limCut > 0 {
+		y.cut = y.limCut
+		y.bounce = at
+		y.lrpm = y.rpm - y.dip
 		y.cutCount = 0
 		y.limRot++
 		y.bangAt = -1
@@ -450,19 +479,29 @@ func (y *Synth) limit(rpm, thr float32, n int) bool {
 	switch {
 	case y.cutting:
 		y.cut -= n
-		y.dip = y.limDip * min(1, float32(y.limCut-y.cut)/float32(y.limCut))
+		y.lrpm -= y.limFall * float32(n)
+		y.climb = y.cut <= 0 && y.bounce
 		if y.limKind == "injector" {
 			y.gateTo = 1.0 / injectorFire
 		} else {
 			y.gateTo = 0
 		}
-	case y.rec > 0:
-		y.rec -= n
-		y.dip = y.limDip * max(0, float32(y.rec)/float32(y.limRec))
+	case y.climb:
+		y.lrpm += y.limRise * float32(n)
+		if y.lrpm >= y.limRPM {
+			y.lrpm = y.limRPM
+			y.climb = false
+		}
 	default:
-		y.dip = 0
+		// Handover: the offset decays, so that the pitch returns to the
+		// smoothed RPM with no step.
+		y.dip *= y.kHand
+		if y.dip < 1 && y.dip > -1 {
+			y.dip = 0
+		}
 		return false
 	}
+	y.dip = y.rpm - y.lrpm
 	return true
 }
 

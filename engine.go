@@ -209,5 +209,6 @@ func (e *engine) Render(dst []float32) {
 		Running:       s.Flags&FlagRunning != 0,
 		Overrun:       s.Flags&FlagOverrun != 0,
 		LimiterEvents: events,
+		Gear:          s.Gear,
 	})
 }

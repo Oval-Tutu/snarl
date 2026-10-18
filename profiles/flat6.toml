@@ -9,9 +9,12 @@ redline_rpm = 6800
 limiter_rpm = 6700
 # Governed speed, a soft cut.
 limiter_kind = "injector"
-limiter_ms = 110
-limiter_recovery_ms = 70
-limiter_dip_rpm = 500
+# Cut length, slow-down and climb rates measured from the engine-sim
+# limiter reference with the engine running free.
+limiter_ms = 163
+limiter_fall_rpm_s = 4800
+limiter_rise_rpm_s = 10800
+limiter_load_scale = 1.0
 
 [pulse]
 width_deg = 150
