@@ -11,7 +11,7 @@ const calCacheMax = 64
 // shared exhaust settings, the pop shape and the sample rate. The pop
 // settings that only the triggers and the gains of the own and requested
 // pops read are zero, so that specs that differ only in them share one
-// calibration. TestCalibrationKey checks that these settings do not change
+// calibration. TestCalibrationCache checks that these settings do not change
 // the calibration.
 type calKey struct {
 	paths   [MaxBanks]PathSpec
