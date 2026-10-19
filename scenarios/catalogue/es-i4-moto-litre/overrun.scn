@@ -1,0 +1,5 @@
+# es-i4-moto-litre: full throttle at the top rpm, then closed throttle held, then a
+# closed-throttle sweep down to idle.
+hold 11000 1 2
+hold 11000 0 2
+sweep 11000 1410 0 6

@@ -1,0 +1,12 @@
+# es-i5-23: 3 s holds at throttle 0, with 0.5 s sweeps between them.
+hold 960 0 3
+sweep 960 2000 0 0.5
+hold 2000 0 3
+sweep 2000 3000 0 0.5
+hold 3000 0 3
+sweep 3000 4000 0 0.5
+hold 4000 0 3
+sweep 4000 5000 0 0.5
+hold 5000 0 3
+sweep 5000 6000 0 0.5
+hold 6000 0 3

@@ -1,0 +1,5 @@
+# el-r5-radial: full throttle at the top rpm, then closed throttle held, then a
+# closed-throttle sweep down to idle.
+hold 2400 1 2
+hold 2400 0 2
+sweep 2400 640 0 6

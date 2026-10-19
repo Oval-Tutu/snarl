@@ -1,0 +1,5 @@
+# el-f4-boxer-turbo: full throttle at the top rpm, then closed throttle held, then a
+# closed-throttle sweep down to idle.
+hold 6700 1 2
+hold 6700 0 2
+sweep 6700 820 0 6

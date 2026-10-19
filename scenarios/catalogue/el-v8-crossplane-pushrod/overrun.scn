@@ -1,0 +1,5 @@
+# el-v8-crossplane-pushrod: full throttle at the top rpm, then closed throttle held, then a
+# closed-throttle sweep down to idle.
+hold 6600 1 2
+hold 6600 0 2
+sweep 6600 720 0 6

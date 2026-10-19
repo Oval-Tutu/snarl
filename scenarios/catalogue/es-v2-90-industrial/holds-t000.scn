@@ -1,0 +1,6 @@
+# es-v2-90-industrial: 3 s holds at throttle 0, with 0.5 s sweeps between them.
+hold 1590 0 3
+sweep 1590 3000 0 0.5
+hold 3000 0 3
+sweep 3000 3600 0 0.5
+hold 3600 0 3

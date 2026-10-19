@@ -1,0 +1,2 @@
+# es-v6-60: full-throttle sweep from idle to the top rpm.
+sweep 720 5500 1 8

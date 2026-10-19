@@ -1,0 +1,2 @@
+# el-i3-240: full-throttle sweep from idle to the top rpm.
+sweep 1300 11000 1 8

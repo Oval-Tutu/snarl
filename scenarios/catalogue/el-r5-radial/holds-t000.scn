@@ -1,0 +1,6 @@
+# el-r5-radial: 3 s holds at throttle 0, with 0.5 s sweeps between them.
+hold 640 0 3
+sweep 640 2000 0 0.5
+hold 2000 0 3
+sweep 2000 2400 0 0.5
+hold 2400 0 3

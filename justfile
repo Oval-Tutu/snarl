@@ -51,10 +51,14 @@ ref-engine-sim script out *args:
 # Render every scenario in scenarios/<profile> with engine-sim, for one
 # profile or for all profiles when none is given. Writes
 # out/reference/engine-sim/<profile>/<scenario>.wav with a CSV beside it.
+# The profile catalogue/<id> renders a catalogue engine from engine-sim,
+# and catalogue renders all of them (scenarios/catalogue/engine-sim-scripts.txt).
 ref-set profile="":
     #!/usr/bin/env bash
     set -euo pipefail
-    r="$(nix build .#engine-sim-render --print-out-paths --no-link)"
+    r="$(nix build -f reference/engine-sim --print-out-paths --no-link)"
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "${tmp}"' EXIT
     declare -A scripts=(
         [flat12]="${PWD}/reference/engine-sim/engines/flat12.mr"
         [inline4]="${r}/share/engine-sim/engines/atg-video-1/05_honda_vtec.mr"
@@ -62,9 +66,19 @@ ref-set profile="":
         [v8]="${PWD}/reference/engine-sim/engines/v8.mr"
     )
     profiles=({{ if profile == "" { "flat12 inline4 flat6 v8" } else { profile } }})
+    catalogue=scenarios/catalogue/engine-sim-scripts.txt
+    if [[ "${profiles[*]}" == catalogue ]]; then
+        mapfile -t profiles < <(sed -e 's/#.*//' "${catalogue}" | awk 'NF { print "catalogue/" $1 }')
+    fi
     for p in "${profiles[@]}"; do
+        if [[ "${p}" == catalogue/* ]]; then
+            rel="$(sed -e 's/#.*//' "${catalogue}" | awk -v id="${p#catalogue/}" '$1 == id { print $2 }')"
+            if [[ -n "${rel}" ]]; then
+                scripts[${p}]="$(tools/import/engine-sim-main.sh "${r}/share/engine-sim/engines/${rel}" "${tmp}")"
+            fi
+        fi
         if [[ -z "${scripts[${p}]:-}" ]]; then
-            echo "Error: unknown profile '${p}'. Use flat12, inline4, flat6 or v8." >&2
+            echo "Error: unknown profile '${p}'. Use flat12, inline4, flat6, v8, catalogue or catalogue/<id> of an engine-sim engine." >&2
             exit 1
         fi
         out="out/reference/engine-sim/${p}"
@@ -194,3 +208,38 @@ _command name:
         echo "Error: cmd/{{ name }} does not exist yet, so this recipe has nothing to run." >&2
         exit 1
     fi
+
+# Import every engine profile of engine-sim and EngineLab into
+# profiles/catalogue, with scenarios in scenarios/catalogue
+# (profiles/catalogue/README.md). The engine-sim renderer dumps the engine
+# that each script builds, yq converts the EngineLab YAML to JSON, and
+# tools/import maps both to snarl profiles and calibrates their output
+# level. The dumps go to out/import.
+import-profiles:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    r="$(nix build -f reference/engine-sim --print-out-paths --no-link)"
+    lab="$(nix build -f tools/import/enginelab.nix --print-out-paths --no-link)"
+    yq="$(nix build --inputs-from . nixpkgs#yq-go --print-out-paths --no-link)/bin/yq"
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "${tmp}"' EXIT
+    rm -rf out/import
+    mkdir -p out/import/engine-sim out/import/enginelab/engines
+    engines="${r}/share/engine-sim/engines"
+    pids=()
+    while read -r rel; do
+        script="$(tools/import/engine-sim-main.sh "${engines}/${rel}" "${tmp}")"
+        out="out/import/engine-sim/${rel%.mr}.json"
+        mkdir -p "$(dirname "${out}")"
+        "${r}/bin/engine-sim-render" --script "${script}" --dump-json "${out}" &
+        pids+=($!)
+    done < <(cd "${engines}" && find . -name '*.mr' ! -name radial.mr | sed 's|^\./||' | sort)
+    for pid in "${pids[@]}"; do
+        wait "${pid}"
+    done
+    for f in "${lab}"/engines/*.engine.yaml; do
+        "${yq}" -o json "${f}" > "out/import/enginelab/engines/$(basename "${f}" .engine.yaml).json"
+    done
+    "${yq}" -o json "${lab}/parts/exhausts.yaml" > out/import/enginelab/exhausts.json
+    go run ./tools/import --engine-sim out/import/engine-sim --enginelab out/import/enginelab \
+        --profiles profiles/catalogue --scenarios scenarios/catalogue

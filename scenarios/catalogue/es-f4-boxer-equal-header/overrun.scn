@@ -1,0 +1,5 @@
+# es-f4-boxer-equal-header: full throttle at the top rpm, then closed throttle held, then a
+# closed-throttle sweep down to idle.
+hold 6500 1 2
+hold 6500 0 2
+sweep 6500 770 0 6

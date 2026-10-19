@@ -1,0 +1,5 @@
+# es-i6-30: full throttle at the top rpm, then closed throttle held, then a
+# closed-throttle sweep down to idle.
+hold 6000 1 2
+hold 6000 0 2
+sweep 6000 1200 0 6

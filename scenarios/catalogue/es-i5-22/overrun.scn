@@ -1,0 +1,5 @@
+# es-i5-22: full throttle at the top rpm, then closed throttle held, then a
+# closed-throttle sweep down to idle.
+hold 7400 1 2
+hold 7400 0 2
+sweep 7400 1500 0 6

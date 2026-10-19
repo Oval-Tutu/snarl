@@ -1,0 +1,5 @@
+# es-v2-90-industrial: full throttle at the top rpm, then closed throttle held, then a
+# closed-throttle sweep down to idle.
+hold 3600 1 2
+hold 3600 0 2
+sweep 3600 1590 0 6

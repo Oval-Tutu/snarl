@@ -1,0 +1,5 @@
+# es-v8-flatplane-dohc: full throttle at the top rpm, then closed throttle held, then a
+# closed-throttle sweep down to idle.
+hold 9000 1 2
+hold 9000 0 2
+sweep 9000 970 0 6

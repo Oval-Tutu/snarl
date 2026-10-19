@@ -1,0 +1,142 @@
+# Imported from engine-sim by just import-profiles. Do not edit: change tools/import
+# and run the import again. profiles/catalogue/README.md names the source file.
+name = "es-r9-radial"
+description = "9-cylinder radial aero engine"
+seed = 3451
+idle_rpm = 600
+redline_rpm = 3000
+limiter_rpm = 3500
+limiter_kind = "fuel"
+limiter_ms = 200
+
+[pulse]
+width_deg = 160
+attack = 25
+decay = 7
+part_load_db = -0.8
+cycle_variation = 0.04
+jitter = 0.003
+gain_variation = 0.12
+timing_variation_deg = 2
+
+[exhaust]
+speed_of_sound = 565
+crossover = "none"
+coupling = 0
+outlet_direct = 0.4
+steepening = 0.3
+overlap = 1.0
+low_shelf_db = 0
+low_shelf_hz = 250
+
+[noise]
+am = 0.2
+jet = 0.02
+jet_hz = 1500
+intake = 0.08
+intake_hz = 844
+
+[mechanical]
+tick_gain = 0.01
+
+[pops]
+density = 0.15
+character = "sport"
+gain = 1
+body_hz = 200
+body_ms = 35
+jump_ms = 3
+crack = 2.5
+crack_ms = 16
+weight_pop = 0.4
+weight_boom = 0.2
+weight_crackle = 0.3
+weight_burble = 0.1
+
+[overrun]
+level_db = -1.2
+idle_level_db = -1.2
+
+[idle]
+fade_rpm = 2000
+variation = 0.15
+timing_deg = 1
+imbalance = 0.25
+hunt = 0.004
+rock = 0.01
+hunt_hz = 1.2
+
+[voice]
+gain = 1
+output_db = -1.08
+idle_gain_db = 5.3
+idle_gain_rpm = 0
+
+[[cylinder]] # 1
+crank_deg = 0
+bank = 0
+primary_m = 3.6403
+
+[[cylinder]] # 2
+crank_deg = 320
+bank = 0
+primary_m = 4.0518
+
+[[cylinder]] # 3
+crank_deg = 640
+bank = 0
+primary_m = 4.3109
+
+[[cylinder]] # 4
+crank_deg = 240
+bank = 0
+primary_m = 4.3536
+
+[[cylinder]] # 5
+crank_deg = 560
+bank = 1
+primary_m = 4.1676
+
+[[cylinder]] # 6
+crank_deg = 160
+bank = 1
+primary_m = 3.7988
+
+[[cylinder]] # 7
+crank_deg = 480
+bank = 1
+primary_m = 3.363
+
+[[cylinder]] # 8
+crank_deg = 80
+bank = 1
+primary_m = 3.0978
+
+[[cylinder]] # 9
+crank_deg = 400
+bank = 1
+primary_m = 3.2319
+
+[[path]]
+collector_m = 2.54
+reflection = -0.4
+damping_hz = 2500
+wall_loss_db = 2.5
+wall_loss_hz = 2000
+pipe_radius_m = 0.0508
+outlet_radius_m = 0.0508
+chamber_m = 0.3
+chamber_area_ratio = 7
+gain = 1
+
+[[path]]
+collector_m = 2.54
+reflection = -0.4
+damping_hz = 2500
+wall_loss_db = 2.5
+wall_loss_hz = 2000
+pipe_radius_m = 0.0508
+outlet_radius_m = 0.0508
+chamber_m = 0.3
+chamber_area_ratio = 7
+gain = 1

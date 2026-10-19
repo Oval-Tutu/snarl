@@ -1,0 +1,5 @@
+# es-v12-60-aero: full throttle at the top rpm, then closed throttle held, then a
+# closed-throttle sweep down to idle.
+hold 3000 1 2
+hold 3000 0 2
+sweep 3000 600 0 6

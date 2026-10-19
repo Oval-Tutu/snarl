@@ -1,0 +1,2 @@
+# es-i6-30: full-throttle sweep from idle to the top rpm.
+sweep 1200 6000 1 8

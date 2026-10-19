@@ -1,0 +1,2 @@
+# el-i2-270: full-throttle sweep from idle to the top rpm.
+sweep 1400 10000 1 8

@@ -1,0 +1,2 @@
+# es-v10-72: full-throttle sweep from idle to the top rpm.
+sweep 900 9000 1 8

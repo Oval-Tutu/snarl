@@ -1,0 +1,2 @@
+# es-i5-23: full-throttle sweep from idle to the top rpm.
+sweep 960 6000 1 8

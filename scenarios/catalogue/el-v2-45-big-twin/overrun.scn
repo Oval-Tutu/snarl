@@ -1,0 +1,5 @@
+# el-v2-45-big-twin: full throttle at the top rpm, then closed throttle held, then a
+# closed-throttle sweep down to idle.
+hold 5600 1 2
+hold 5600 0 2
+sweep 5600 760 0 6

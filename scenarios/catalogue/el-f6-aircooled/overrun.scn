@@ -1,0 +1,5 @@
+# el-f6-aircooled: full throttle at the top rpm, then closed throttle held, then a
+# closed-throttle sweep down to idle.
+hold 7300 1 2
+hold 7300 0 2
+sweep 7300 780 0 6

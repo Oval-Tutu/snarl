@@ -1,0 +1,105 @@
+# Imported from EngineLab by just import-profiles. Do not edit: change tools/import
+# and run the import again. profiles/catalogue/README.md names the source file.
+name = "el-f4-boxer-turbo"
+description = "Flat-4 boxer turbo"
+seed = 16374
+idle_rpm = 820
+redline_rpm = 6800
+limiter_rpm = 6800
+limiter_kind = "fuel"
+limiter_ms = 70
+
+[pulse]
+width_deg = 160
+attack = 25
+decay = 7
+part_load_db = -0.8
+cycle_variation = 0.04
+jitter = 0.003
+gain_variation = 0.12
+timing_variation_deg = 2
+
+[exhaust]
+speed_of_sound = 565
+crossover = "none"
+coupling = 0
+outlet_direct = 0.4
+steepening = 0.3
+overlap = 1.0
+low_shelf_db = 0
+low_shelf_hz = 250
+
+[noise]
+am = 0.2
+jet = 0.02
+jet_hz = 1500
+intake = 0.08
+intake_hz = 252
+
+[mechanical]
+tick_gain = 0.01
+
+[pops]
+density = 0.15
+character = "sport"
+gain = 1
+body_hz = 200
+body_ms = 35
+jump_ms = 3
+crack = 2.5
+crack_ms = 16
+weight_pop = 0.4
+weight_boom = 0.2
+weight_crackle = 0.3
+weight_burble = 0.1
+
+[overrun]
+level_db = -1.2
+idle_level_db = -1.2
+
+[idle]
+fade_rpm = 2220
+variation = 0.15
+timing_deg = 1
+imbalance = 0.25
+hunt = 0.004
+rock = 0.01
+hunt_hz = 1.2
+
+[voice]
+gain = 1
+output_db = -2.75
+idle_gain_db = 7.1
+idle_gain_rpm = 0
+
+[[cylinder]] # 1
+crank_deg = 0
+bank = 0
+primary_m = 0.52
+
+[[cylinder]] # 2
+crank_deg = 360
+bank = 0
+primary_m = 0.52
+
+[[cylinder]] # 3
+crank_deg = 180
+bank = 0
+primary_m = 0.52
+
+[[cylinder]] # 4
+crank_deg = 540
+bank = 0
+primary_m = 0.52
+
+[[path]]
+collector_m = 2.2
+reflection = -0.4
+damping_hz = 2500
+wall_loss_db = 2.5
+wall_loss_hz = 2000
+pipe_radius_m = 0.029
+outlet_radius_m = 0.0315
+chamber_m = 0.33
+chamber_area_ratio = 3.73
+gain = 1

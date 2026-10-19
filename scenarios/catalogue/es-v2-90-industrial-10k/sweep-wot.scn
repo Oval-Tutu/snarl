@@ -1,0 +1,2 @@
+# es-v2-90-industrial-10k: full-throttle sweep from idle to the top rpm.
+sweep 1520 3600 1 8

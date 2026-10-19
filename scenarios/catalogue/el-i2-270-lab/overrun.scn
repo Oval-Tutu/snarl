@@ -1,0 +1,5 @@
+# el-i2-270-lab: full throttle at the top rpm, then closed throttle held, then a
+# closed-throttle sweep down to idle.
+hold 10000 1 2
+hold 10000 0 2
+sweep 10000 1400 0 6

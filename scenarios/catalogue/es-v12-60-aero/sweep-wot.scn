@@ -1,0 +1,2 @@
+# es-v12-60-aero: full-throttle sweep from idle to the top rpm.
+sweep 600 3000 1 8

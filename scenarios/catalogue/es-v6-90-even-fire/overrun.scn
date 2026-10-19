@@ -1,0 +1,5 @@
+# es-v6-90-even-fire: full throttle at the top rpm, then closed throttle held, then a
+# closed-throttle sweep down to idle.
+hold 5500 1 2
+hold 5500 0 2
+sweep 5500 920 0 6

@@ -1,0 +1,5 @@
+# el-i4-dohc-cam-switch: full throttle at the top rpm, then closed throttle held, then a
+# closed-throttle sweep down to idle.
+hold 8600 1 2
+hold 8600 0 2
+sweep 8600 950 0 6
