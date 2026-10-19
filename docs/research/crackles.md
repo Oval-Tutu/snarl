@@ -320,3 +320,55 @@ Each kind renders as a train of sub-events in one of four event slots: a rounded
 Every value is inside the p10 to p90 range of its cluster, except the pop band shares. The pop keeps its tuned body: its 30 to 120 Hz share is 4 per cent against 19 to 60 per cent in the pack. The boom and the crackle now carry the deep energy. In tier 1, the expansion chamber moves the boom and crackle shares further below 120 Hz (98 and 94 per cent). `TestPopKinds` holds these values to the cluster ranges with stated tolerances.
 
 The pack levels are per file, so the level between kinds is a choice. The burble is 23 dB below the pop, as in the pack. The crackle peaks about 5 dB below the pop, because its length already makes it much louder than a pop (group A is 8.6 LU louder than group B at the same peak, section 3).
+
+## 11. Clicks inside the crackles
+
+Status: measured. Date: 2026-10-19. This section gives the small events inside the crackle trains, which the snarl crackle clicks follow. No audio from the pack is in the repository.
+
+### Method
+
+The files are the 19 long exterior files of group A (`crackle_long_1` to `_20` without `_3`, the dense crackle files), decoded to mono at 44.1 kHz. The short set and group B are measured the same way for comparison. The signal goes through a fourth-order Butterworth high pass at 1 kHz, so that the deep body under the clicks does not count. A click is a peak of a centred 1 ms RMS envelope that is the highest within 3 ms, within 30 dB of the highest peak of the file, and at least 6 dB above the lowest envelope since the click before. Per click:
+
+- Attack: the 10 to 90 per cent rise of a 0.25 ms RMS envelope, from the lowest value since the click before to the peak.
+- Decay: the time from the peak of the 1 ms envelope to -10 dB and to -20 dB. A decay that the next click cuts does not count. The next click cuts the -20 dB decay of 69 per cent of the clicks (median over the files), and the -10 dB decay of far fewer.
+- Crest factor: the sample peak over the RMS level of the high-passed signal, from the 10 per cent point to the -20 dB point.
+- Spectral centroid: from 1 to 16 kHz, over a 5.8 ms Hann window that starts 0.5 ms before the attack.
+- Spacing: the interval between two clicks less than 50 ms apart, pooled over the files. The spread is the standard deviation over the mean. The local variation, 3 times the mean of ((a - b) / (a + b))^2 over two intervals in a row, is 0 for a regular train and 1 for random clicks with no memory.
+
+The 1 kHz high pass, the 0.25 ms envelope and the microphone path set a floor near 1 ms on the attack, so a measured attack near 1 ms means a click that starts at once.
+
+### Results
+
+Medians over the files, with the p10 to p90 range over the files. The spacing is pooled over the clicks.
+
+| Measure | Group A, 19 files, 2,080 clicks | Short set, 30 files, 1,249 clicks | Group B, 10 files, 311 clicks |
+| --- | --- | --- | --- |
+| Attack, ms | 1.20 (1.09 to 1.34) | 1.16 (1.02 to 1.41) | 1.50 (1.36 to 1.88) |
+| Decay to -10 dB, ms | 3.36 (2.99 to 3.70) | 3.36 (2.79 to 4.10) | not measured |
+| Decay to -20 dB, ms | 10.25 (9.02 to 12.99) | 8.21 (6.85 to 13.76) | 17.10 (13.08 to 19.52) |
+| Crest factor, dB | 11.8 (11.0 to 12.8) | 10.3 (9.8 to 11.4) | 12.9 (12.7 to 13.4) |
+| Centroid, Hz | 2,523 (2,283 to 3,054) | 2,185 (2,002 to 2,343) | 4,435 (3,886 to 4,916) |
+| Spacing p10 / p50 / p90, ms | 5.0 / 9.8 / 24.5 | 4.8 / 8.5 / 17.1 | 4.7 / 10.6 / 29.2 |
+| Spacing spread | 0.74 | 0.61 | 0.73 |
+| Local variation | 0.38 (0.28 to 0.49) | 0.25 (0.19 to 0.36) | not measured |
+
+A crackle click is a short burst that starts at once, falls by 10 dB in about 3.4 ms and by 20 dB in about 10 ms, with its energy near 2.5 kHz. The spacing is irregular and heavy-tailed: a median near 10 ms, a long tail to 25 ms, a spread of 0.74, and a local variation of 0.38, which is between a regular train and random clicks. A log-normal spacing with a weak memory between neighbouring gaps gives these values.
+
+### Snarl crackle clicks against the pack
+
+`TestCrackleClicks` in `internal/model/pop_test.go` renders 48 crackles through the one-path test engine and measures them as above, at 48 kHz. Before the change, each sub-event added to one long noise crack: a 3.8 kHz high pass of noise with a 16 ms decay, at gaps of 0.65 to 1.55 times 12.5 ms. Now each sub-event is a click: a noise burst through a 1.5 kHz band pass with a Q of 1.2 that starts at once and decays to -20 dB in 9.5 ms, at log-normal gaps with a median of 6.5 ms, a spread of 0.95 in the log, and a correlation of 0.1 between neighbouring gaps. The deep body under the clicks does not change.
+
+| Measure | Pack, group A | Snarl before, 12 crackles | Snarl now, 48 crackles | Tolerance in the test |
+| --- | --- | --- | --- | --- |
+| Attack, ms | 1.20 | 0.71 | 1.02 | at most 1.25 times the pack |
+| Decay to -10 dB, ms | 3.36 | 7.42 | 3.40 | 30 per cent |
+| Decay to -20 dB, ms | 10.25 | 15.52 | 8.15 | 30 per cent |
+| Crest factor, dB | 11.8 | 13.1 | 11.7 | 1.5 dB |
+| Centroid, Hz | 2,523 | 9,289 | 2,683 | 30 per cent |
+| Spacing p10 / p50 / p90, ms | 5.0 / 9.8 / 24.5 | 9.4 / 14.5 / 18.8 | 5.5 / 10.6 / 25.2 | 30 per cent each |
+| Spacing spread | 0.74 | 0.32 | 0.65 | 0.15 |
+| Local variation | 0.38 | 0.10 | 0.35 | 0.15 |
+
+The old crack was a hiss: its energy sat near 9 kHz and it decayed twice as slowly as a pack click, at a regular spacing. The new clicks match the pack on every measure within the tolerances. The generator median gap of 6.5 ms measures as 10.6 ms, because the detector merges clicks less than 3 ms apart and misses weak clicks in the tail of a strong one, as it does for the pack.
+
+The level between the kinds now comes from the level of each kind over the engine (scoping.md, the Pops row), not from the pack. The peak levels at the end of section 10 are out of date: in the same test engine, the burble now peaks about 8 dB below the pop, and the crackle peaks at about the level of the pop.
