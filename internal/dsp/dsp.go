@@ -109,6 +109,11 @@ func (s *Shelf) Process(x float32) float32 {
 	return y
 }
 
+// Reset clears the filter state.
+func (s *Shelf) Reset() {
+	s.x1, s.y1 = 0, 0
+}
+
 // SoftClip maps any input into the range -1 to 1 with a cubic curve. The
 // curve is linear near zero and reaches 1 with a zero slope at 1.5.
 func SoftClip(x float32) float32 {

@@ -123,6 +123,7 @@ func TestTiers(t *testing.T) {
 }
 
 func TestFiringFrequency(t *testing.T) {
+	t.Parallel()
 	cyl := map[string]float64{"flat12": 12, "inline4": 4, "flat6": 6, "v8": 8}
 	for _, name := range Profiles() {
 		for _, rpm := range []float32{1500, 3000} {
@@ -166,6 +167,7 @@ func sweep(p Profile) func(float64) Snapshot {
 }
 
 func TestSweepBounded(t *testing.T) {
+	t.Parallel()
 	for _, name := range Profiles() {
 		t.Run(name, func(t *testing.T) {
 			p, err := LoadProfile(name)
@@ -252,6 +254,7 @@ func rms(x []float64) float64 {
 // The lower bound holds with pops. The upper bound holds without pops,
 // because a pop adds to the level.
 func TestOverrunLevel(t *testing.T) {
+	t.Parallel()
 	for _, name := range Profiles() {
 		t.Run(name, func(t *testing.T) {
 			p, err := LoadProfile(name)
@@ -285,6 +288,7 @@ func TestOverrunLevel(t *testing.T) {
 // 4 dB below throttle 1. The closed-throttle render has no pops, because a
 // pop adds to the level.
 func TestLoadLevelOrder(t *testing.T) {
+	t.Parallel()
 	for _, name := range Profiles() {
 		t.Run(name, func(t *testing.T) {
 			p, err := LoadProfile(name)
@@ -331,6 +335,7 @@ func withoutIdle(p Profile) Profile {
 // At 4000 RPM and at the redline, the output equals the output without
 // them.
 func TestIdleCharacter(t *testing.T) {
+	t.Parallel()
 	cycleCV := func(p Profile) float64 {
 		x := render(newEngine(t, p), 3, held(p.IdleRPM, 0))[testRate/2:]
 		y := make([]float64, len(x))
@@ -378,6 +383,7 @@ func TestIdleCharacter(t *testing.T) {
 // TestOutputCalibration checks that the full-throttle sweep-wot scenario
 // is within 1 LU of the calibration target of -16 LUFS.
 func TestOutputCalibration(t *testing.T) {
+	t.Parallel()
 	for _, name := range Profiles() {
 		t.Run(name, func(t *testing.T) {
 			p, err := LoadProfile(name)
@@ -396,6 +402,7 @@ func TestOutputCalibration(t *testing.T) {
 // TestOverrunPeak checks that the output limiter keeps the pops of the
 // overrun scenario below full scale.
 func TestOverrunPeak(t *testing.T) {
+	t.Parallel()
 	for _, name := range Profiles() {
 		t.Run(name, func(t *testing.T) {
 			p, err := LoadProfile(name)
@@ -417,6 +424,7 @@ func TestOverrunPeak(t *testing.T) {
 // closed-throttle hold with and without those layers. At the strongest
 // order, the layers must add less than 1 dB.
 func TestOverrunOrders(t *testing.T) {
+	t.Parallel()
 	for _, name := range Profiles() {
 		t.Run(name, func(t *testing.T) {
 			p, err := LoadProfile(name)
@@ -477,6 +485,7 @@ func TestSilentWhenNotRunning(t *testing.T) {
 }
 
 func TestDeterministic(t *testing.T) {
+	t.Parallel()
 	p, err := LoadProfile("flat12")
 	if err != nil {
 		t.Fatal(err)
@@ -787,6 +796,7 @@ var limiterByEar = map[string]bool{"v8": true}
 // throttle 150 RPM below the limiter. The output stays finite and below
 // full scale.
 func TestLimiterBounce(t *testing.T) {
+	t.Parallel()
 	for _, name := range Profiles() {
 		t.Run(name, func(t *testing.T) {
 			p, err := LoadProfile(name)
@@ -870,6 +880,7 @@ func TestLimiterBounce(t *testing.T) {
 // 5 Hz from the 10th to the 90th percentile, while the RPM dip would move
 // it by about 12 percent.
 func TestLimiterToneHolds(t *testing.T) {
+	t.Parallel()
 	const n, hop = 4096, 480
 	for _, name := range Profiles() {
 		t.Run(name, func(t *testing.T) {
@@ -965,6 +976,7 @@ func levelSteps(x []float32) (dip, rise float64) {
 // is at most 0.5 dB deeper than in the same hold 150 RPM below the limiter.
 // The output stays finite and below full scale.
 func TestFinalGearHolds(t *testing.T) {
+	t.Parallel()
 	always := func([]float32) bool { return true }
 	for _, name := range Profiles() {
 		p, err := LoadProfile(name)
@@ -1007,6 +1019,7 @@ func TestFinalGearHolds(t *testing.T) {
 // 150 RPM below the limiter. The firing gain returns from the notch at
 // 1 dB per 5 ms. A step from the -18 dB v8 notch would rise by about 13 dB.
 func TestFinalGearHandover(t *testing.T) {
+	t.Parallel()
 	const notchHops = 35 * testRate / 1000 / limiterHop
 	always := func([]float32) bool { return true }
 	for _, name := range Profiles() {
@@ -1046,21 +1059,9 @@ func TestFinalGearHandover(t *testing.T) {
 	}
 }
 
-// popOverEngine renders n pops of one kind on the profile and returns the
-// level of each in decibels over the engine: the RMS level of the pop
-// over the span from its start block that holds 90 per cent of its
-// energy, against the RMS level of the engine with no pop over the same
-// span. The pop is the difference from a twin engine with no pops. The
-// output gain is 20 dB lower, so that the output limiter, which guards the
-// peak, does not act. Own pops come from lift-offs to closed throttle at
-// 0.85 times the redline, every 4.5 to 4.7 s after 1.5 s of full
-// throttle. Only the first pop of each lift plays, and the profile weights
-// pick only the kind. The level of an own pop is brought to the median
-// own level with its level in the report. Requested pops play every 0.5
-// to 0.7 s at full throttle at 0.7 times the redline, with a strength that
-// gives the kind half of the time. The event times are random, so that a
-// span does not start at the same engine phase each time.
-func popOverEngine(t *testing.T, name string, kind PopKind, request bool, n int) []float64 {
+// popProfile returns the profile of popOverEngine: the pop density is 4,
+// only kind has a weight, and the output gain is 20 dB lower.
+func popProfile(t *testing.T, name string, kind PopKind) Profile {
 	t.Helper()
 	w := [4]string{"0", "0", "0", "0"}
 	w[kind-1] = "1"
@@ -1072,50 +1073,170 @@ func popOverEngine(t *testing.T, name string, kind PopKind, request bool, n int)
 	s := *p.spec
 	s.Voice.OutputDB -= 20
 	p.spec = &s
-	a, b := newEngine(t, p), newEngine(t, p)
-	strength := map[PopKind]float32{KindPop: 0.5, KindBoom: 0.9, KindCrackle: 0.9, KindBurble: 0.1}[kind]
-	cycle := 4.6
+	return p
+}
+
+// popSchedule gives the snapshots of popOverEngine block by block, from
+// the random event times. full is true for an own pop schedule from 1.5 s
+// before each event, when the throttle opens.
+type popSchedule struct {
+	rpm      float32
+	request  bool
+	strength float32
+	cycle    float64
+	at       float64
+	rnd      dsp.Noise
+	req      uint8
+}
+
+func newPopSchedule(p Profile, request bool, strength float32) popSchedule {
+	c := popSchedule{rpm: p.RedlineRPM, request: request, strength: strength, cycle: 4.6, at: 2.5, rnd: dsp.NewNoise(7)}
 	if request {
-		cycle = 0.6
+		c.cycle = 0.6
 	}
-	rnd := dsp.NewNoise(7)
-	at := 2.5
-	var xa, xb []float32
+	return c
+}
+
+// next returns the snapshot of block i. It must be called for each block
+// in order.
+func (c *popSchedule) next(i int) (s Snapshot, full bool) {
+	t0 := float64(i*256) / testRate
+	s = Snapshot{RPM: 0.7 * c.rpm, Throttle: 1, Load: 1, Flags: FlagRunning}
+	if t0 >= c.at {
+		c.at += c.cycle - 0.1 + 0.2*float64(c.rnd.Unipolar())
+		c.req++
+	}
+	if c.request {
+		s.PopRequest, s.PopStrength = c.req, c.strength
+		return s, false
+	}
+	s.RPM = 0.85 * c.rpm
+	if t0 >= c.at-1.5 {
+		return s, true
+	}
+	s.Throttle, s.Load, s.Flags = 0, 0, FlagRunning|FlagOverrun
+	return s, false
+}
+
+// popTwin is the twin engine of popOverEngine, with no pops. Its output
+// does not depend on the pop kind: the kind weights only pick the kind of
+// a pop, and the pop strength only acts with a request. So the pop kinds
+// of a profile share one twin. The twin renders in its own goroutine, up
+// to the longest length that a kind asks for, so that it runs alongside
+// the engines with pops. The twin is safe for concurrent use.
+type popTwin struct {
+	mu   sync.Mutex
+	more sync.Cond
+	want int
+	done bool
+	x    []float32
+}
+
+// newPopTwin starts the twin. The caller must call stop when no kind
+// needs it any more.
+func newPopTwin(t *testing.T, name string, request bool) *popTwin {
+	t.Helper()
+	p := popProfile(t, name, KindPop)
+	e := newEngine(t, p)
+	w := &popTwin{}
+	w.more.L = &w.mu
+	go w.run(e, newPopSchedule(p, request, 0))
+	return w
+}
+
+func (w *popTwin) run(e Engine, sched popSchedule) {
+	buf := make([]float32, 256)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for i := 0; ; i++ {
+		for len(w.x) >= w.want && !w.done {
+			w.more.Wait()
+		}
+		if len(w.x) >= w.want {
+			return
+		}
+		w.mu.Unlock()
+		s, _ := sched.next(i)
+		s.Flags |= FlagNoPops
+		s.PopRequest = 0
+		e.Set(s)
+		e.Render(buf)
+		w.mu.Lock()
+		w.x = append(w.x, buf...)
+		w.more.Broadcast()
+	}
+}
+
+// ask asks the twin to render at least n samples.
+func (w *popTwin) ask(n int) {
+	w.mu.Lock()
+	if n > w.want {
+		w.want = n
+		w.more.Broadcast()
+	}
+	w.mu.Unlock()
+}
+
+// output returns the first n samples of the twin output, where n is a
+// multiple of 256.
+func (w *popTwin) output(n int) []float32 {
+	w.ask(n)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for len(w.x) < n {
+		w.more.Wait()
+	}
+	return w.x[:n]
+}
+
+// stop ends the goroutine of the twin.
+func (w *popTwin) stop() {
+	w.mu.Lock()
+	w.done = true
+	w.more.Broadcast()
+	w.mu.Unlock()
+}
+
+// popOverEngine renders n pops of one kind on the profile and returns the
+// level of each in decibels over the engine: the RMS level of the pop
+// over the span from its start block that holds 90 per cent of its
+// energy, against the RMS level of the engine with no pop over the same
+// span. The pop is the difference from the twin engine with no pops. The
+// output gain is 20 dB lower, so that the output limiter, which guards the
+// peak, does not act. Own pops come from lift-offs to closed throttle at
+// 0.85 times the redline, every 4.5 to 4.7 s after 1.5 s of full
+// throttle. Only the first pop of each lift plays, and the profile weights
+// pick only the kind. The level of an own pop is brought to the median
+// own level with its level in the report. Requested pops play every 0.5
+// to 0.7 s at full throttle at 0.7 times the redline, with a strength that
+// gives the kind half of the time. The event times are random, so that a
+// span does not start at the same engine phase each time.
+func popOverEngine(t *testing.T, name string, kind PopKind, request bool, n int, twin *popTwin) []float64 {
+	t.Helper()
+	p := popProfile(t, name, kind)
+	a := newEngine(t, p)
+	strength := map[PopKind]float32{KindPop: 0.5, KindBoom: 0.9, KindCrackle: 0.9, KindBurble: 0.1}[kind]
+	sched := newPopSchedule(p, request, strength)
+	var xa []float32
 	var starts []int
 	var levels []float64
 	var count uint32
-	var req uint8
 	quiet, found := false, 0
 	buf := make([]float32, 256)
 	for i := 0; found <= n && i < 4000*testRate/256; i++ {
-		t0 := float64(i*256) / testRate
-		s := Snapshot{RPM: 0.7 * p.RedlineRPM, Throttle: 1, Load: 1, Flags: FlagRunning}
-		if t0 >= at {
-			at += cycle - 0.1 + 0.2*float64(rnd.Unipolar())
-			req++
+		s, full := sched.next(i)
+		if full {
+			quiet = false
 		}
-		if request {
-			s.PopRequest, s.PopStrength = req, strength
-		} else {
-			s.RPM = 0.85 * p.RedlineRPM
-			if t0 >= at-1.5 {
-				quiet = false
-			} else {
-				s.Throttle, s.Load, s.Flags = 0, 0, FlagRunning|FlagOverrun
-			}
-		}
-		sb := s
-		sb.Flags |= FlagNoPops
-		sb.PopRequest = 0
 		if quiet {
 			s.Flags |= FlagNoPops
 		}
 		a.Set(s)
-		b.Set(sb)
 		a.Render(buf)
 		xa = append(xa, buf...)
-		b.Render(buf)
-		xb = append(xb, buf...)
+		if i%64 == 0 {
+			twin.ask(len(xa) + 64*256)
+		}
 		if r := a.Pops(); r.Count != count {
 			count = r.Count
 			quiet = true
@@ -1128,6 +1249,7 @@ func popOverEngine(t *testing.T, name string, kind PopKind, request bool, n int)
 			}
 		}
 	}
+	xb := twin.output(len(xa))
 	var out []float64
 	for j, st := range starts[:len(starts)-1] {
 		if levels[j] < 0 {
@@ -1164,7 +1286,8 @@ func popOverEngine(t *testing.T, name string, kind PopKind, request bool, n int)
 // pop kind on each profile, for 41 own pops on overrun and 61 requested
 // pops at full throttle: pops and booms from 3 to 6 dB, crackles from 0
 // to 3 dB and burbles from -6 to -2 dB. No profile stands out: each median
-// is within 1.5 dB of the mean of the medians of the other profiles.
+// is within 1.5 dB of the mean of the medians of the other profiles. The
+// profile, source and kind cases run in parallel.
 func TestPopLevelOverEngine(t *testing.T) {
 	bands := map[PopKind][2]float64{KindPop: {3, 6}, KindBoom: {3, 6}, KindCrackle: {0, 3}, KindBurble: {-6, -2}}
 	names := Profiles()
@@ -1172,15 +1295,17 @@ func TestPopLevelOverEngine(t *testing.T) {
 	var mu sync.Mutex
 	t.Run("profiles", func(t *testing.T) {
 		for _, name := range names {
-			t.Run(name, func(t *testing.T) {
-				t.Parallel()
-				for r, request := range []bool{false, true} {
-					for k := KindPop; k <= KindBurble; k++ {
+			for r, request := range []bool{false, true} {
+				twin := newPopTwin(t, name, request)
+				t.Cleanup(twin.stop)
+				for k := KindPop; k <= KindBurble; k++ {
+					t.Run(fmt.Sprintf("%s/request-%t/%s", name, request, k), func(t *testing.T) {
+						t.Parallel()
 						n := 41
 						if request {
 							n = 61
 						}
-						v := popOverEngine(t, name, k, request, n)
+						v := popOverEngine(t, name, k, request, n, twin)
 						slices.Sort(v)
 						m, b := v[len(v)/2], bands[k]
 						msg := fmt.Sprintf("%s, request %t, %s: median %.1f dB over the engine, want %.0f to %.0f", name, request, k, m, b[0], b[1])
@@ -1192,9 +1317,9 @@ func TestPopLevelOverEngine(t *testing.T) {
 						mu.Lock()
 						med[r][k] = append(med[r][k], m)
 						mu.Unlock()
-					}
+					})
 				}
-			})
+			}
 		}
 	})
 	for r := range med {
@@ -1249,6 +1374,7 @@ func overrunOwnPops(t *testing.T, p Profile) int {
 // constant half of the redline for 20 s after a lift below the lift-off
 // RPM has none.
 func TestOverrunOwnPops(t *testing.T) {
+	t.Parallel()
 	for _, name := range Profiles() {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

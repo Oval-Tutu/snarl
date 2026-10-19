@@ -193,3 +193,21 @@ func BenchmarkPrimitives(b *testing.B) {
 		sink = acc
 	})
 }
+
+// BenchmarkNew measures New for each profile after the first call, which
+// takes the pop calibration from the cache.
+func BenchmarkNew(b *testing.B) {
+	for _, name := range Profiles() {
+		p, err := LoadProfile(name)
+		if err != nil {
+			b.Fatal(err)
+		}
+		newEngine(b, p)
+		b.Run(name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				newEngine(b, p)
+			}
+		})
+	}
+}

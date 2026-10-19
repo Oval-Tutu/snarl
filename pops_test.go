@@ -51,6 +51,7 @@ func quietProfile(t *testing.T, name string) Profile {
 // block in which the report count reaches k, and not before. Each report
 // names a requested pop of the kinds of the strength band.
 func TestPopReportMatchesRender(t *testing.T) {
+	t.Parallel()
 	p := quietProfile(t, "v8")
 	times := []float64{0.5, 0.52, 1.5, 2.5}
 	bands := [][2]PopKind{{KindPop, KindBurble}, {KindPop, KindBoom}, {KindBoom, KindCrackle}, {KindBoom, KindCrackle}}
@@ -87,6 +88,7 @@ func TestPopReportMatchesRender(t *testing.T) {
 // report while own pops play: 40 requests on a race flat12 that lifts off
 // and coasts at a high density. The model tests cover four busy slots.
 func TestPopRequestBusy(t *testing.T) {
+	t.Parallel()
 	p, err := LoadProfileWith("flat12", "pops.density=4", `pops.character="race"`)
 	if err != nil {
 		t.Fatal(err)
@@ -128,6 +130,7 @@ func TestPopRequestBusy(t *testing.T) {
 // and that a request still plays, and that a run-time race character
 // over the profile makes own pops where the stock character makes fewer.
 func TestFlagNoPops(t *testing.T) {
+	t.Parallel()
 	p, err := LoadProfileWith("flat12", "pops.density=4")
 	if err != nil {
 		t.Fatal(err)

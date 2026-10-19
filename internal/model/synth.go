@@ -131,6 +131,9 @@ type Synth struct {
 	jetGain, intakeGain, fanGain float32
 	tickGain, ka, kb, liveNorm   float32
 
+	// fanSine holds the fan sine of each sample of the chunk.
+	fanSine [chunk]float32
+
 	// Engine level for the pops. engS and engE sum the output and its
 	// square over the chunk, before the RPM gain and the output stage,
 	// which the pops also pass. engMean and engMS follow their means over
@@ -138,10 +141,6 @@ type Synth struct {
 	// pop sounds. The level is the RMS level with no DC, which the output
 	// stage removes.
 	engS, engE, engMean, engMS, kEng float32
-	// popTail is the samples left in which the paths run their pop
-	// stages. It is popTailLen after the last chunk with a pop, so that
-	// the pop stages ring out.
-	popTail, popTailLen int
 
 	// Rev limiter state. cut is the samples left of the cut, and cutLen is
 	// the length of the cut in samples. cutting is
@@ -234,7 +233,6 @@ func New(s *Spec, rate int) (*Synth, error) {
 		kLim:       dsp.TimeCoef(0.002, chunkHz),
 		kHand:      1 - dsp.TimeCoef(handover, chunkHz),
 		kEng:       dsp.TimeCoef(engLevelSec, chunkHz),
-		popTailLen: int(0.1 * fs),
 		jit:        dsp.OnePole{A: dsp.OnePoleCoef(2, chunkHz)},
 		amLP:       dsp.OnePole{A: dsp.OnePoleCoef(2000, fs)},
 		idleRPM:    float32(s.IdleRPM),
@@ -269,7 +267,7 @@ func New(s *Spec, rate int) (*Synth, error) {
 	y.idle = newIdle(s, seed, chunkHz)
 	y.initCylinders(s, fs)
 	y.initPaths(s, fs)
-	y.pops.calibrate(s, fs)
+	y.pops.calibrateCached(s, fs)
 	return y, nil
 }
 
@@ -677,14 +675,21 @@ func (y *Synth) pulses(bank *[MaxBanks]float32) {
 // process renders one chunk.
 func (y *Synth) process(dst []float32) {
 	np := len(y.paths)
-	// The pop stages of the paths run for the chunk while a pop sounds, or
-	// may start with a bang, and for popTailLen samples after.
-	if y.pops.active > 0 || y.cutting && y.bangAt >= 0 {
-		y.popTail = y.popTailLen
-	} else {
-		y.popTail = max(0, y.popTail-len(dst))
+	if y.fanGain > 0 {
+		// The fan sine runs for the chunk in its own loop, before the sample
+		// loop. In the sample loop, the conversion of the phase to a table
+		// index and the table read are a long chain of dependent steps, which
+		// a small processor cannot overlap with the rest of the sample.
+		ph, inc := y.fanPhase, y.fanInc
+		for i := range dst {
+			ph += inc
+			if ph >= 1 {
+				ph--
+			}
+			y.fanSine[i] = dsp.Sine(ph)
+		}
+		y.fanPhase = ph
 	}
-	popOn := y.popTail > 0
 	for i := range dst {
 		if cyl := y.crank.step(y.inc); cyl >= 0 {
 			y.fire(cyl)
@@ -705,10 +710,10 @@ func (y *Synth) process(dst []float32) {
 			for b := range np {
 				x += y.mix[p][b] * bank[b]
 			}
-			sum += y.paths[p].process(x*am, y.pops.jump[p], popOn)
+			sum += y.paths[p].process(x*am, y.pops.jump[p], y.pops.live[p])
 		}
 		sum += crack
-		sum += y.layers(&bank, np)
+		sum += y.layers(&bank, np, y.fanSine[i])
 		y.engS += sum
 		y.engE += sum * sum
 		y.rpmG += y.rpmStep
@@ -735,8 +740,9 @@ func (y *Synth) engineLevel(n int) {
 	}
 }
 
-// layers renders the intake, jet and mechanical layers.
-func (y *Synth) layers(bank *[MaxBanks]float32, np int) float32 {
+// layers renders the intake, jet and mechanical layers. fan is the fan
+// sine of the sample.
+func (y *Synth) layers(bank *[MaxBanks]float32, np int, fan float32) float32 {
 	var pulse float32
 	for b := range np {
 		pulse += bank[b]
@@ -751,11 +757,7 @@ func (y *Synth) layers(bank *[MaxBanks]float32, np int) float32 {
 		out += y.intakeBP.Process(n2) * pulse * y.intakeGain
 	}
 	if y.fanGain > 0 {
-		y.fanPhase += y.fanInc
-		if y.fanPhase >= 1 {
-			y.fanPhase--
-		}
-		out += dsp.Sine(y.fanPhase) * y.fanGain
+		out += fan * y.fanGain
 	}
 	if y.tickEnv > 1e-5 {
 		out += y.tickHP.Process(n2) * y.tickEnv

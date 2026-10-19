@@ -26,3 +26,8 @@ func (d *Delay) Write(x float32) {
 func (d *Delay) Read(n int) float32 {
 	return d.buf[(d.w-n)&d.mask]
 }
+
+// Reset clears the delay line.
+func (d *Delay) Reset() {
+	clear(d.buf)
+}

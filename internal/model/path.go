@@ -6,10 +6,14 @@ import (
 	"github.com/oval-tutu/snarl/internal/dsp"
 )
 
+// popTailSec is the time in seconds for which the pop stages of a path run
+// after the pop jump of the path ends, so that the linear stages ring out.
+const popTailSec = 0.1
+
 // path is one exhaust path from a bank collector to an outlet. The linear
-// stages run twice while a pop sounds: once for the engine and the pop,
-// and once for the pop alone, so that the steepening acts on the engine
-// wave only and the pop passes it unchanged.
+// stages run twice while a pop of the path sounds: once for the engine and
+// the pop, and once for the pop alone, so that the steepening acts on the
+// engine wave only and the pop passes it unchanged.
 type path struct {
 	eng, pop  linear
 	colD      int
@@ -17,6 +21,10 @@ type path struct {
 	chD       int
 	chR2, chT float32
 	steep     float32
+	// popLeft is the samples left in which the pop stages run. Each sample
+	// with a live pop jump sets it to popTail. When it reaches 0, the pop
+	// stages clear, so that the next pop starts from silence.
+	popLeft, popTail int
 
 	outlet       dsp.Biquad
 	direct, gain float32
@@ -38,10 +46,11 @@ func newPath(p PathSpec, e ExhaustSpec, rate float64) path {
 	c := e.SpeedOfSound
 	colD := max(1, int(math.Round(2*p.CollectorM/c*rate)))
 	q := path{
-		colD:   colD,
-		colG:   float32(p.Reflection),
-		direct: float32(e.OutletDirect),
-		gain:   float32(p.Gain),
+		colD:    colD,
+		colG:    float32(p.Reflection),
+		direct:  float32(e.OutletDirect),
+		gain:    float32(p.Gain),
+		popTail: max(1, int(popTailSec*rate)),
 	}
 	l := &q.eng
 	l.col = dsp.NewDelay(colD)
@@ -80,40 +89,49 @@ func newPath(p PathSpec, e ExhaustSpec, rate float64) path {
 	return q
 }
 
-// linear runs the linear stages of l for one sample: the collector
-// resonance, the wall-loss shelf, the low shelf, the expansion chamber and
-// the mode cutoff.
-func (p *path) linear(l *linear, x float32) float32 {
-	y := x + p.colG*l.colLP.Process(l.col.Read(p.colD-1))
-	l.col.Write(y)
-	y = l.low.Process(l.wall.Process(y))
+// reset clears the state of the linear stages.
+func (l *linear) reset() {
+	l.col.Reset()
+	l.colLP.Y = 0
+	l.low.Reset()
+	l.wall.Reset()
 	if l.ch != nil {
-		w := y + p.chR2*l.ch.Read(2*p.chD-1)
-		l.ch.Write(w)
-		y = p.chT * l.ch.Read(p.chD)
+		l.ch.Reset()
 	}
-	return l.mode2.Process(l.mode1.Process(y))
+	l.mode1.Reset()
+	l.mode2.Reset()
 }
 
 // process runs the path for one sample of the engine wave x and the pop
 // jump j: the linear stages, the wave steepening of the engine wave, the
-// outlet filter and the air delay to the listener. While pop is true, the
-// pop stages run, so that the steepening leaves out the pop.
-func (p *path) process(x, j float32, pop bool) float32 {
-	// The engine stages are written out here, so that they need no call.
-	l := &p.eng
-	y := x + j + p.colG*l.colLP.Process(l.col.Read(p.colD-1))
-	l.col.Write(y)
-	y = l.low.Process(l.wall.Process(y))
-	if l.ch != nil {
-		w := y + p.chR2*l.ch.Read(2*p.chD-1)
-		l.ch.Write(w)
-		y = p.chT * l.ch.Read(p.chD)
+// outlet filter and the air delay to the listener. live is true while the
+// pop jump of the path sounds. The pop stages run from then until popTail
+// samples after the last live sample, so that the steepening leaves out
+// the pop.
+func (p *path) process(x, j float32, live bool) float32 {
+	if live {
+		p.popLeft = p.popTail
 	}
-	y = l.mode2.Process(l.mode1.Process(y))
-	w := y
-	if pop {
-		w -= p.linear(&p.pop, j)
+	var y, w float32
+	if p.popLeft > 0 {
+		y, w = p.linear2(x+j, j)
+		p.popLeft--
+		if p.popLeft == 0 {
+			p.pop.reset()
+		}
+	} else {
+		// The engine stages are written out here, so that they need no call.
+		l := &p.eng
+		y = x + j + p.colG*l.colLP.Process(l.col.Read(p.colD-1))
+		l.col.Write(y)
+		y = l.low.Process(l.wall.Process(y))
+		if l.ch != nil {
+			v := y + p.chR2*l.ch.Read(2*p.chD-1)
+			l.ch.Write(v)
+			y = p.chT * l.ch.Read(p.chD)
+		}
+		y = l.mode2.Process(l.mode1.Process(y))
+		w = y
 	}
 	a := w
 	if a < 0 {
@@ -129,4 +147,30 @@ func (p *path) process(x, j float32, pop bool) float32 {
 	}
 	p.air.Write(y)
 	return p.air.Read(p.airD)
+}
+
+// linear2 runs the linear stages for one sample of the engine and the pop
+// x in the engine stages and of the pop j in the pop stages. It returns
+// the output y of the engine stages and the engine wave w, which is y
+// without the pop. The two sets of stages run side by side, so that the
+// processor can overlap them.
+func (p *path) linear2(x, j float32) (y, w float32) {
+	e, q := &p.eng, &p.pop
+	y = x + p.colG*e.colLP.Process(e.col.Read(p.colD-1))
+	v := j + p.colG*q.colLP.Process(q.col.Read(p.colD-1))
+	e.col.Write(y)
+	q.col.Write(v)
+	y = e.low.Process(e.wall.Process(y))
+	v = q.low.Process(q.wall.Process(v))
+	if e.ch != nil {
+		ye := y + p.chR2*e.ch.Read(2*p.chD-1)
+		yq := v + p.chR2*q.ch.Read(2*p.chD-1)
+		e.ch.Write(ye)
+		q.ch.Write(yq)
+		y = p.chT * e.ch.Read(p.chD)
+		v = p.chT * q.ch.Read(p.chD)
+	}
+	y = e.mode2.Process(e.mode1.Process(y))
+	v = q.mode2.Process(q.mode1.Process(v))
+	return y, y - v
 }

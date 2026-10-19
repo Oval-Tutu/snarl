@@ -199,14 +199,18 @@ type popEvent struct {
 	amp               float32
 	jumpLeft, jumpLen int
 	jumpAmp           float32
-	jumpLP            dsp.OnePole
-	body              dsp.Biquad
-	crackLvl          float32
-	crackEnv          float32
-	clickLvl          float32
-	gapZ              float32 // Normal value of the last click gap.
-	kind, src         int
-	start             int64 // Start time in samples.
+	// ring is the samples left in which the pop jump sounds: the jump of
+	// the last sub-event and six decays of the body to -120 dB. ringLen is
+	// its length from a sub-event.
+	ring, ringLen int
+	jumpLP        dsp.OnePole
+	body          dsp.Biquad
+	crackLvl      float32
+	crackEnv      float32
+	clickLvl      float32
+	gapZ          float32 // Normal value of the last click gap.
+	kind, src     int
+	start         int64 // Start time in samples.
 }
 
 // popInput is the engine state of one control block for the pops.
@@ -304,10 +308,12 @@ type pops struct {
 	lastStrength float32
 
 	// Events.
-	ev         [maxPopEvents]popEvent
-	active     int
-	count      [numKinds]int // Pops started, per kind.
-	jump       [MaxBanks]float32
+	ev     [maxPopEvents]popEvent
+	active int
+	count  [numKinds]int // Pops started, per kind.
+	jump   [MaxBanks]float32
+	// live is true for each path with a pop jump that sounds.
+	live       [MaxBanks]bool
 	busyLen    int
 	jumpLen    float64
 	jumpA      [numKinds]float32 // Jump rounding coefficient per kind.
@@ -419,7 +425,8 @@ func newPops(s *Spec, rate, chunkSeconds float64) pops {
 // sub-event count of the pops cover their spreads in even steps, and the
 // sub-events follow a low-discrepancy sequence. The render runs at half
 // the sample rate, which keeps the level of the body and the crack and
-// halves the cost. It runs once in New and allocates.
+// halves the cost. It allocates. New runs it through calibrateCached,
+// once per spec and sample rate.
 func (p *pops) calibrate(s *Spec, rate float64) {
 	rate /= 2
 	buf := make([]float32, int(calSec*rate))
@@ -837,6 +844,8 @@ func (p *pops) fire(paths, kind, src int, scale, level, strength float32) *popEv
 	e.jumpLP = dsp.OnePole{A: p.jumpA[kind]}
 	e.jumpLen = max(1, int(p.jumpLen*sh.jump))
 	e.jumpLeft = e.jumpLen
+	e.ringLen = e.jumpLen + int(6*ms*1e-3*float64(p.rate))
+	e.ring = e.ringLen
 	e.jumpAmp = a
 	e.amp = a
 	e.crackLvl = a * p.crackRatio * sh.crack
@@ -883,19 +892,23 @@ func (p *pops) subSpacing(e *popEvent) int {
 func (p *pops) bang(paths int) {
 	level := 1 - 0.65*p.noise.Unipolar()
 	if e := p.fire(paths, kindPop, srcLimiter, p.gain*bangGain*p.heatFactor()*p.level, level, level); e != nil {
+		e.ringLen -= e.jumpLen - max(1, e.jumpLen/3)
 		e.jumpLen = max(1, e.jumpLen/3)
 		e.jumpLeft = e.jumpLen
+		e.ring = e.ringLen
 	}
 }
 
 // tick runs once per sample. It sets the pressure jump of each path in
-// p.jump and returns the crack for the outlet.
+// p.jump, and in p.live whether it sounds, and returns the crack for the
+// outlet.
 func (p *pops) tick() (crack float32) {
 	if p.active == 0 {
 		return 0
 	}
 	p.sounded = true
 	p.jump = [MaxBanks]float32{}
+	p.live = [MaxBanks]bool{}
 	var env, clicks float32
 	for i := range p.ev {
 		e := &p.ev[i]
@@ -912,6 +925,7 @@ func (p *pops) tick() (crack float32) {
 				sh := &shapes[e.kind]
 				u := 0.3 + 0.7*p.subDraw()
 				e.jumpLeft = e.jumpLen
+				e.ring = e.ringLen
 				e.jumpAmp = e.amp * sh.subGain * u
 				if sh.click {
 					e.clickLvl = max(e.clickLvl, e.amp*p.crackRatio*sh.subCrack*u)
@@ -921,6 +935,10 @@ func (p *pops) tick() (crack float32) {
 				e.subs--
 				e.next = p.subSpacing(e)
 			}
+		}
+		if e.ring > 0 {
+			e.ring--
+			p.live[e.path] = true
 		}
 		var g float32
 		if e.jumpLeft > 0 {
@@ -939,6 +957,7 @@ func (p *pops) tick() (crack float32) {
 	crack = p.crackHP.Process(n)*env + p.clickBP.Process(n)*clicks
 	if p.active == 0 {
 		p.jump = [MaxBanks]float32{}
+		p.live = [MaxBanks]bool{}
 	}
 	return crack
 }
