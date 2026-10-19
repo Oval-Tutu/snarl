@@ -132,6 +132,8 @@ type replayer struct {
 	i    int
 	rate int
 	sets []string
+	// catalogue is the catalogue profile directory, or "".
+	catalogue string
 
 	eng     snarl.Engine
 	profile string
@@ -147,7 +149,7 @@ func (r *replayer) at(t float64) (snarl.Engine, snarl.Snapshot, error) {
 	}
 	row := r.rows[r.i]
 	if r.eng == nil || row.profile != r.profile || row.tier != r.tier {
-		p, err := snarl.LoadProfileWith(row.profile, r.sets...)
+		p, err := loadProfile(row.profile, r.catalogue, r.sets...)
 		if err != nil {
 			return nil, snarl.Snapshot{}, err
 		}

@@ -11,7 +11,7 @@ import (
 // the current gear count only, and that full throttle in the last gear
 // holds the RPM at the limiter RPM and not above it.
 func TestStepFinalGear(t *testing.T) {
-	ps, i, err := loadProfiles("v8")
+	ps, i, _, err := loadProfiles("v8", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestStepFinalGear(t *testing.T) {
 // TestShiftPops checks the shift pop conditions: an upshift requests a pop
 // above 12 m/s with the throttle above 0.3, and a downshift above 20 m/s.
 func TestShiftPops(t *testing.T) {
-	ps, i, err := loadProfiles("v8")
+	ps, i, _, err := loadProfiles("v8", "")
 	if err != nil {
 		t.Fatal(err)
 	}

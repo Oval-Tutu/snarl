@@ -2,6 +2,8 @@
 
 This directory holds every engine profile of the two upstream projects, [engine-sim](https://github.com/ange-yaghi/engine-sim) and [EngineLab](https://github.com/zolaski333/EngineLab), converted to snarl profiles. The tests in `catalogue_test.go` load them from disk. They are not embedded in the library and do not ship to the game. The four tuned profiles in `profiles/*.toml` are separate and do not change with this catalogue.
 
+To listen to a catalogue engine, run `just run-harness -profile es-v10-72`, then step through every profile with the Left and Right arrows or D-pad left and right. `snarl-render` takes a catalogue id as PROFILE and in `--replay` logs.
+
 `just import-profiles` writes every file in this directory, and the scenarios in `scenarios/catalogue/`. Do not edit the files by hand. Change `tools/import` and run the import again. The import does these steps:
 
 1. It builds the engine-sim renderer (`reference/engine-sim`) and runs `engine-sim-render --dump-json` on every engine script of the package. A script without a `main` node gets a wrapper with a default vehicle and a one-gear transmission (`tools/import/engine-sim-main.sh`). The dump holds the engine that the script builds, and the idle rpm of an 8 s free run at speed control 0.

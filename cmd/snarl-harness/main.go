@@ -6,8 +6,12 @@
 //
 // Usage:
 //
-//	snarl-harness [-profile NAME] [-record DIR]
-//	snarl-harness [-profile NAME] -script LOG.csv
+//	snarl-harness [-profile NAME] [-catalogue DIR] [-record DIR]
+//	snarl-harness [-profile NAME] [-catalogue DIR] -script LOG.csv
+//
+// The profile list is the tuned profiles, then the catalogue profiles in
+// DIR sorted by id. By default, DIR is profiles/catalogue in the working
+// directory or the nearest parent up to the repository root.
 package main
 
 import (
@@ -63,7 +67,7 @@ const (
 	padDown     = ebiten.StandardGamepadButtonLeftBottom
 	padSelect   = ebiten.StandardGamepadButtonCenterLeft
 	padStart    = ebiten.StandardGamepadButtonCenterRight
-	legend      = "Throttle RT/Up/W  Shift RB,A/E up  LB,X/Q down  Profile D-pad L,R/1-4,Left,Right  Gears Back/G\n" +
+	legend      = "Throttle RT/Up/W  Shift RB,A/E up  LB,X/Q down  Profile D-pad L,R/Left,Right (all), 1-4 (tuned)  Gears Back/G\n" +
 		"Ignition Start/Space  Buffer D-pad U,D/PgUp,PgDn  Record R  Own pops N  Pop character C"
 	keyboardName = "keyboard"
 )
@@ -80,6 +84,7 @@ type harness struct {
 
 	profiles []snarl.Profile
 	profile  int
+	note     string // Why the catalogue profiles are missing, or "".
 	eng      snarl.Engine
 	engErr   error
 	running  bool
@@ -101,28 +106,7 @@ type harness struct {
 	recMsg string // The result of the last recording.
 }
 
-// loadProfiles returns the embedded profiles and the index of the named
-// one.
-func loadProfiles(name string) ([]snarl.Profile, int, error) {
-	var ps []snarl.Profile
-	index := -1
-	for i, n := range snarl.Profiles() {
-		p, err := snarl.LoadProfile(n)
-		if err != nil {
-			return nil, 0, err
-		}
-		ps = append(ps, p)
-		if n == name {
-			index = i
-		}
-	}
-	if index < 0 {
-		return nil, 0, fmt.Errorf("%w: %q", snarl.ErrUnknownProfile, name)
-	}
-	return ps, index, nil
-}
-
-func newHarness(quit context.Context, profile, recDir string, recordNow bool) (*harness, error) {
+func newHarness(quit context.Context, profile, catalogue, recDir string, recordNow bool) (*harness, error) {
 	h := &harness{
 		pads:    pads.NewReader(),
 		drive:   drive.New(drive.DefaultGears),
@@ -133,7 +117,7 @@ func newHarness(quit context.Context, profile, recDir string, recordNow bool) (*
 		recDir:  recDir,
 	}
 	var err error
-	if h.profiles, h.profile, err = loadProfiles(profile); err != nil {
+	if h.profiles, h.profile, h.note, err = loadProfiles(profile, catalogue); err != nil {
 		return nil, err
 	}
 	h.ctx = audio.NewContext(stream.SampleRate)
@@ -334,10 +318,10 @@ func (h *harness) updateSwitches() {
 	n := len(h.profiles)
 	profile := h.profile
 	if p.JustPressed(padLeft) || keyJust(ebiten.KeyArrowLeft) {
-		profile = (profile + n - 1) % n
+		profile = stepProfile(profile, -1, n)
 	}
 	if p.JustPressed(padRight) || keyJust(ebiten.KeyArrowRight) {
-		profile = (profile + 1) % n
+		profile = stepProfile(profile, 1, n)
 	}
 	for i, k := range []ebiten.Key{ebiten.KeyDigit1, ebiten.KeyDigit2, ebiten.KeyDigit3, ebiten.KeyDigit4} {
 		if i < n && keyJust(k) {
@@ -420,12 +404,15 @@ func (h *harness) Draw(screen *ebiten.Image) {
 	if !h.running {
 		ignition = "off"
 	}
-	say(8, "Profile %s (%d of %d)   Ignition %s", pr.Name, h.profile+1, len(h.profiles), ignition)
+	say(8, "Profile %s (%d of %d, %s)   Ignition %s", pr.Name, h.profile+1, len(h.profiles),
+		profileSource(h.profiles, h.profile), ignition)
 	next()
 	say(8, "%s", pr.Description)
 	next()
 	if h.engErr != nil {
 		say(8, "Engine error: %v", h.engErr)
+	} else if h.note != "" {
+		say(8, "%s", h.note)
 	}
 	next()
 
@@ -565,16 +552,20 @@ func flags(s snarl.Snapshot, cut bool) string {
 func (h *harness) Layout(int, int) (int, int) { return screenW, screenH }
 
 func main() {
-	profile := flag.String("profile", snarl.Profiles()[0], "start `profile`")
+	profile := flag.String("profile", snarl.Profiles()[0], "start `profile`: a tuned profile or a catalogue id")
+	catalogue := flag.String("catalogue", "", "catalogue profile `dir` (default profiles/catalogue in the working directory or a parent)")
 	recDir := flag.String("record", "", "record from the start into `dir`; R starts and stops recordings in dir (default "+
 		filepath.Join(os.TempDir(), "snarl-record")+")")
 	script := flag.String("script", "", "write the snapshot log of the scripted drive, with shifts and lift-offs, to `file` and exit, with no window or audio")
 	flag.Parse()
+	if *catalogue == "" {
+		*catalogue = findCatalogue()
+	}
 	var err error
 	if *script != "" {
-		err = writeScript(*script, *profile)
+		err = writeScript(*script, *profile, *catalogue)
 	} else {
-		err = play(*profile, *recDir)
+		err = play(*profile, *catalogue, *recDir)
 	}
 	if err != nil {
 		log.Fatal(err)
@@ -583,14 +574,14 @@ func main() {
 
 // play runs the harness window. When recDir is not empty, it records from
 // the start. An interrupt signal ends the harness, and the recording.
-func play(profile, recDir string) error {
+func play(profile, catalogue, recDir string) error {
 	dir, recordNow := recDir, recDir != ""
 	if !recordNow {
 		dir = filepath.Join(os.TempDir(), "snarl-record")
 	}
 	quit, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	h, err := newHarness(quit, profile, dir, recordNow)
+	h, err := newHarness(quit, profile, catalogue, dir, recordNow)
 	if err != nil {
 		return err
 	}

@@ -43,9 +43,10 @@ var driveScript = []scriptStep{
 }
 
 // writeScript writes the snapshot log of driveScript for the profile to
-// path, as a recording would log it.
-func writeScript(path, profile string) error {
-	ps, i, err := loadProfiles(profile)
+// path, as a recording would log it. The profile is a tuned profile or a
+// profile of the catalogue directory.
+func writeScript(path, profile, catalogue string) error {
+	ps, i, _, err := loadProfiles(profile, catalogue)
 	if err != nil {
 		return err
 	}

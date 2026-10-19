@@ -5,6 +5,9 @@
 //
 //	snarl-render [flags] PROFILE SCENARIO
 //	snarl-render [flags] --replay LOG.csv
+//
+// PROFILE, and each profile of a log, is a tuned profile or the id of a
+// profile in the catalogue directory, for example es-v10-72.
 package main
 
 import (
@@ -51,6 +54,7 @@ func run(args []string, stderr io.Writer) error {
 	format := fs.String("format", "s16", "sample format: s16 or f32")
 	settle := fs.Float64("settle", 0, "pre-roll in `seconds` that is rendered but not written")
 	replay := fs.String("replay", "", "render the snapshot `log` of snarl-harness, which sets the profile and the tier")
+	catalogue := fs.String("catalogue", "", "catalogue profile `dir`, for PROFILE and --replay (default profiles/catalogue in the working directory or a parent)")
 	var sets []string
 	fs.Func("set", "override a profile value, as `section.key=value` (repeatable)", func(v string) error {
 		sets = append(sets, v)
@@ -68,6 +72,9 @@ func run(args []string, stderr io.Writer) error {
 		return errors.New("need PROFILE and SCENARIO")
 	}
 
+	if *catalogue == "" {
+		*catalogue = findCatalogue()
+	}
 	if *block <= 0 {
 		return fmt.Errorf("block size %d is not positive", *block)
 	}
@@ -92,7 +99,7 @@ func run(args []string, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		r := &replayer{rows: rows, rate: *rate, sets: sets}
+		r := &replayer{rows: rows, rate: *rate, sets: sets, catalogue: *catalogue}
 		src, duration = r.at, rows[len(rows)-1].t
 		if path == "" {
 			name := strings.TrimSuffix(filepath.Base(*replay), filepath.Ext(*replay))
@@ -100,7 +107,7 @@ func run(args []string, stderr io.Writer) error {
 		}
 	} else {
 		profileName, scenarioPath := fs.Arg(0), fs.Arg(1)
-		profile, err := snarl.LoadProfileWith(profileName, sets...)
+		profile, err := loadProfile(profileName, *catalogue, sets...)
 		if err != nil {
 			return err
 		}

@@ -203,3 +203,58 @@ func TestParseLogErrors(t *testing.T) {
 		t.Errorf("parseLog of a legacy log = %+v, %v", rows, err)
 	}
 }
+
+// TestCatalogueProfile checks that PROFILE, --set and --replay take a
+// catalogue id, with the catalogue that the default search finds, and
+// that a catalogue id fails without the catalogue.
+func TestCatalogueProfile(t *testing.T) {
+	dir := t.TempDir()
+	const text = "hold 2000 1 0.1\nsweep 2000 1000 0 0.1\n"
+	scn, err := scenario.Parse(strings.NewReader(text))
+	if err != nil {
+		t.Fatal(err)
+	}
+	scnPath := filepath.Join(dir, "s.scn")
+	logPath := filepath.Join(dir, "s.csv")
+	if err := os.WriteFile(scnPath, []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const id = "el-v12-60-aero"
+	if err := os.WriteFile(logPath, []byte(logText(scn, id, 8000, 64)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	read := func(args ...string) []byte {
+		t.Helper()
+		out := filepath.Join(dir, "out.wav")
+		args = append([]string{"--out", out, "--rate", "8000", "--block", "64", "--format", "f32"}, args...)
+		if err := run(args, io.Discard); err != nil {
+			t.Fatal(err)
+		}
+		b, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	want := read(id, scnPath)
+	if !bytes.Equal(read("--replay", logPath), want) {
+		t.Error("the replay of a catalogue log differs from the scenario render")
+	}
+	if !bytes.Equal(read("--catalogue", filepath.Join("..", "..", "profiles", "catalogue"), id, scnPath), want) {
+		t.Error("--catalogue differs from the default search")
+	}
+	if bytes.Equal(read("--set", "noise.jet=0", "--set", "pops.density=0", id, scnPath), want) {
+		t.Error("--set did not change a catalogue render")
+	}
+	out := filepath.Join(dir, "o.wav")
+	for _, args := range [][]string{
+		{"--out", out, "--catalogue", filepath.Join(dir, "missing"), id, scnPath},
+		{"--out", out, "--catalogue", filepath.Join(dir, "missing"), "--replay", logPath},
+		{"--out", out, "es-nope", scnPath},
+		{"--out", out, "--set", "noise.bogus=1", id, scnPath},
+	} {
+		if err := run(args, io.Discard); err == nil {
+			t.Errorf("run(%q) did not fail", args)
+		}
+	}
+}
