@@ -308,18 +308,18 @@ Pops follow pops, because group B holds only isolated pops. Booms and crackles a
 
 ### Snarl pop kinds against the clusters
 
-Each kind renders as a train of sub-events in one of four event slots: a rounded pressure jump into an exhaust path through a resonant body, plus a high-frequency crack at the outlet. Medians of 12 variations of one isolated pop through the one-path test engine in `internal/model/pop_test.go`, tier 0, measured as the pack was measured:
+Each kind renders as a train of sub-events in one of four event slots: a rounded pressure jump into an exhaust path through a resonant body, plus a high-frequency crack at the outlet. Medians of 12 variations of one isolated pop through the one-path test engine in `internal/model/pop_test.go`, tier 1 with the expansion chamber, measured as the pack was measured. The pop kind has unit gain, and the other kinds have their calibrated gains over it:
 
 | Kind | Duration ms | Decay ms | Centroid Hz | 30-120 Hz % | 120-500 Hz % | 0.5-2 kHz % | 2-8 kHz % | Peak dBFS |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Pop | 44 | 24 | 215 | 4.0 | 95.2 | 0.47 | 0.44 | -11.2 |
-| Boom | 112 | 31 | 114 | 93.3 | 5.4 | 0.62 | 0.62 | -8.1 |
-| Crackle | 221 | 29 | 217 | 76.7 | 18.3 | 3.99 | 1.79 | -15.8 |
-| Burble | 65 | 30 | 130 | 31.8 | 68.0 | 0.11 | 0.008 | -33.9 |
+| Pop | 43 | 21 | 203 | 5.9 | 93.1 | 0.74 | 0.22 | -13.9 |
+| Boom | 154 | 27 | 99 | 97.8 | 1.5 | 0.12 | 0.56 | -9.6 |
+| Crackle | 218 | 42 | 179 | 90.5 | 3.9 | 3.61 | 2.16 | -14.0 |
+| Burble | 74 | 20 | 122 | 41.9 | 58.1 | 0.07 | 0.004 | -21.5 |
 
-Every value is inside the p10 to p90 range of its cluster, except the pop band shares. The pop keeps its tuned body: its 30 to 120 Hz share is 4 per cent against 19 to 60 per cent in the pack. The boom and the crackle now carry the deep energy. In tier 1, the expansion chamber moves the boom and crackle shares further below 120 Hz (98 and 94 per cent). `TestPopKinds` holds these values to the cluster ranges with stated tolerances.
+Every duration, decay and centroid is inside the p10 to p90 range of its cluster. The pop keeps its tuned body: its 30 to 120 Hz share is 5.9 per cent against 19 to 60 per cent in the pack. The boom and the crackle carry the deep energy. The expansion chamber moves their shares below 120 Hz to 97.8 and 90.5 per cent, above the cluster ranges of 78 to 97 and 62 to 87 per cent, and takes their 120 to 500 Hz shares below the cluster ranges. The boom 0.5 to 2 kHz share of 0.12 per cent is below its range of 0.4 to 3.5 per cent. `TestPopKinds` holds these values to the cluster ranges with stated tolerances.
 
-The pack levels are per file, so the level between kinds is a choice. The burble is 23 dB below the pop, as in the pack. The crackle peaks about 5 dB below the pop, because its length already makes it much louder than a pop (group A is 8.6 LU louder than group B at the same peak, section 3).
+The pack levels are per file, so the level between kinds is a choice. Each kind has a level over the engine: +4.8 dB for a pop, +4.5 dB for a boom, +1.5 dB for a crackle and -4.3 dB for a burble, as an RMS level over the span that holds 90 per cent of the pop energy. `New` sets the gain of each kind from these levels, so the peaks follow from them. The boom peaks 4.3 dB above the pop, the crackle 0.1 dB below it and the burble 7.6 dB below it. In the pack, the burble is 23 dB below the pop. `TestPopKinds` holds the burble peak to within 4 dB of the 9.1 dB difference of the pop and burble levels over the engine.
 
 ## 11. Clicks inside the crackles
 
