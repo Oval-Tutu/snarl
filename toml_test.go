@@ -106,7 +106,6 @@ gain = 1
 		"bad bark":     strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nlimiter_bark_db = -1", 1),
 		"bad jitter":   strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nlimiter_jitter = 0.6", 1),
 		"bad waver":    strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nfinal_gear_waver = 0.1", 1),
-		"bad air":      strings.Replace(good, "[[cylinder]]", "[noise]\nair_cutoff_hz = 0\n[[cylinder]]", 1),
 		"bad crossing": strings.Replace(good, "[[cylinder]]", "[exhaust]\ncrossover = \"some\"\n[[cylinder]]", 1),
 		"bad shelf":    strings.Replace(good, "[[cylinder]]", "[exhaust]\nlow_shelf_db = 30\n[[cylinder]]", 1),
 		"bad overrun":  strings.Replace(good, "[[cylinder]]", "[overrun]\nlevel_db = 10\n[[cylinder]]", 1),
@@ -122,7 +121,7 @@ gain = 1
 		}
 	}
 	// The removed keys are unknown keys.
-	for _, kv := range []string{"[voice]\ntier1_db = 1", "[voice]\ntier1_idle_gain_db = 1"} {
+	for _, kv := range []string{"[noise]\nair = 0.03", "[noise]\nair_cutoff_hz = 1800", "[voice]\ntier1_db = 1", "[voice]\ntier1_idle_gain_db = 1"} {
 		_, err := parseProfile(strings.Replace(good, "[[cylinder]]", kv+"\n[[cylinder]]", 1))
 		if err == nil || !strings.Contains(err.Error(), "unknown key") {
 			t.Errorf("%q: got %v, want an unknown key error", kv, err)

@@ -12,7 +12,7 @@ func TestLoadProfileWith(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, err := LoadProfileWith("v8",
-		"noise.air=0",         // A key in the file.
+		"noise.jet=0",         // A key in the file.
 		"pops.gain = 0.5",     // A key that the file does not set.
 		"overrun.level_db=-3", // A table that the file does not have.
 		"limiter_rpm=6100",    // A top-level key.
@@ -22,18 +22,18 @@ func TestLoadProfileWith(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := p.spec
-	if s.Noise.Air != 0 || s.Pops.Gain != 0.5 || s.Overrun.LevelDB != -3 || p.LimiterRPM != 6100 ||
+	if s.Noise.Jet != 0 || s.Pops.Gain != 0.5 || s.Overrun.LevelDB != -3 || p.LimiterRPM != 6100 ||
 		s.Exhaust.Crossover != "full" {
 		t.Errorf("overrides not applied: %+v", *s)
 	}
-	if s.Noise.Jet != base.spec.Noise.Jet || s.Pops.Density != base.spec.Pops.Density || len(s.Cylinders) != 8 {
+	if s.Noise.AM != base.spec.Noise.AM || s.Pops.Density != base.spec.Pops.Density || len(s.Cylinders) != 8 {
 		t.Error("an override changed another key")
 	}
 	again, err := LoadProfile("v8")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if again.spec.Noise.Air != 0.03 || again.spec.Pops.Gain != 1 || again.LimiterRPM != 6250 {
+	if again.spec.Noise.Jet != 0.025 || again.spec.Pops.Gain != 1 || again.LimiterRPM != 6250 {
 		t.Error("the embedded profile changed")
 	}
 	same, err := LoadProfileWith("v8")
@@ -45,23 +45,24 @@ func TestLoadProfileWith(t *testing.T) {
 func TestLoadProfileWithErrors(t *testing.T) {
 	for _, o := range []string{
 		"noise.bogus=1",       // Unknown key.
-		"bogus.air=1",         // Unknown table.
+		"bogus.jet=1",         // Unknown table.
 		"bogus=1",             // Unknown top-level key.
 		"cylinder.bank=1",     // An array, not a table.
-		"noise.air",           // No value.
-		"noise.air=",          // Empty value.
-		"noise.air=loud",      // Bad value.
-		"noise.air=\"0\"",     // Wrong type.
+		"noise.air=0",         // A removed key.
+		"noise.jet",           // No value.
+		"noise.jet=",          // Empty value.
+		"noise.jet=loud",      // Bad value.
+		"noise.jet=\"0\"",     // Wrong type.
 		"a.b.c=1",             // Nested too deep.
-		".air=1",              // No table name.
+		".jet=1",              // No table name.
 		"voice.gain=0",        // Fails validation.
-		"noise.air=0\n[pops]", // Two lines.
+		"noise.jet=0\n[pops]", // Two lines.
 	} {
 		if _, err := LoadProfileWith("v8", o); err == nil {
 			t.Errorf("override %q did not fail", o)
 		}
 	}
-	if _, err := LoadProfileWith("nope", "noise.air=0"); !errors.Is(err, ErrUnknownProfile) {
+	if _, err := LoadProfileWith("nope", "noise.jet=0"); !errors.Is(err, ErrUnknownProfile) {
 		t.Errorf("unknown profile: %v", err)
 	}
 }

@@ -143,7 +143,7 @@ func TestReplayMatchesScenario(t *testing.T) {
 	if !bytes.Equal(read("--replay", logPath), first) {
 		t.Error("two replays of one log differ")
 	}
-	muted := read("--set", "noise.air=0", "--set", "pops.density=0", "--replay", logPath)
+	muted := read("--set", "noise.jet=0", "--set", "pops.density=0", "--replay", logPath)
 	if len(muted) != len(want) || bytes.Equal(muted, want) {
 		t.Error("--set did not change the replay")
 	}

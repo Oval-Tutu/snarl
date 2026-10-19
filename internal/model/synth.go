@@ -24,13 +24,6 @@ const (
 	notchLen = 0.07
 	// barkDecay is the time constant in seconds of the re-fire bark.
 	barkDecay = 0.01
-	// airSwell is the decay time constant in seconds of the air noise
-	// swell at a lift-off, and airSteady is the steady air level after it,
-	// relative to the swell peak.
-	airSwell  = 0.12
-	airSteady = 0.25
-	// airGain makes up the level that the air noise low passes take out.
-	airGain = 10
 	// handover is the time constant in seconds over which the pitch
 	// returns from the internal limiter RPM to the smoothed RPM.
 	handover = 0.017
@@ -93,7 +86,7 @@ type Synth struct {
 	redline, camRPM              float32
 	camGain, camAttack, attack   float32
 	decay                        float32
-	amCfg, airCfg, jetCfg        float32
+	amCfg, jetCfg                float32
 	intakeCfg, intakeCamGain     float32
 	intakeHz, intakeCamHz        float32
 	fanOrder, fanCfg, tickCfg    float32
@@ -109,9 +102,7 @@ type Synth struct {
 	kRPM, kCtl, kMaster, kCam    float32
 	kLim, kHand                  float32
 	jit                          dsp.OnePole
-	amLP, airLP1, airLP2         dsp.OnePole
-	swell, swellDecay            float32
-	wasOver                      bool
+	amLP                         dsp.OnePole
 	idleRPM, ovLevel, ovIdle     float32
 	partLoad                     float32
 	idleGain, knee               float32
@@ -124,7 +115,7 @@ type Synth struct {
 	rpm, throttle, load, master  float32
 	overrun, camMix              float32
 	camHigh                      bool
-	inc, step, amp, amDepth, air float32
+	inc, step, amp, amDepth      float32
 	jetGain, intakeGain, fanGain float32
 	tickGain, ka, kb, liveNorm   float32
 
@@ -186,7 +177,6 @@ func New(s *Spec, rate int) (*Synth, error) {
 		camAttack:  float32(s.Pulse.CamAttack),
 		decay:      float32(s.Pulse.Decay),
 		amCfg:      float32(s.Noise.AM),
-		airCfg:     float32(airGain * s.Noise.Air),
 		jetCfg:     float32(s.Noise.Jet),
 		intakeCfg:  float32(s.Noise.Intake),
 		intakeHz:   float32(s.Noise.IntakeHz),
@@ -222,9 +212,6 @@ func New(s *Spec, rate int) (*Synth, error) {
 		kHand:      1 - dsp.TimeCoef(handover, chunkHz),
 		jit:        dsp.OnePole{A: dsp.OnePoleCoef(2, chunkHz)},
 		amLP:       dsp.OnePole{A: dsp.OnePoleCoef(2000, fs)},
-		airLP1:     dsp.OnePole{A: dsp.OnePoleCoef(s.Noise.AirCutoffHz, fs)},
-		airLP2:     dsp.OnePole{A: dsp.OnePoleCoef(s.Noise.AirCutoffHz, fs)},
-		swellDecay: 1 - dsp.TimeCoef(airSwell, chunkHz),
 		idleRPM:    float32(s.IdleRPM),
 		ovLevel:    float32(math.Pow(10, s.Overrun.LevelDB/20)),
 		ovIdle:     float32(math.Pow(10, s.Overrun.IdleLevelDB/20)),
@@ -430,13 +417,6 @@ func (y *Synth) control(c *Control, n int) {
 		(1 + y.camGain*y.camMix) * (1 + 2*y.jitter*j) * y.idle.rock
 	gate := float32(math.Pow(math.Max(ld, 0.02), 0.7))
 	y.amDepth = y.amCfg * gate
-	// The air noise swells at a lift-off and falls to a low steady level.
-	if over && !y.wasOver {
-		y.swell = 1
-	}
-	y.wasOver = over
-	y.swell *= y.swellDecay
-	y.air = y.airCfg * y.overrun * y.master * (0.3 + rr) * (airSteady + (1-airSteady)*y.swell)
 
 	// The RPM gain ramps over the chunk. It starts at its first value.
 	g := rpmGain(y.rpm, y.knee, y.redline, y.idleGain)
@@ -670,10 +650,6 @@ func (y *Synth) process(dst []float32) {
 
 		nz := y.amLP.Process(y.noise.Bipolar()) * noiseScale
 		am := 1 + y.amDepth*nz
-		var airN float32
-		if y.air != 0 {
-			airN = y.air * y.airLP2.Process(y.airLP1.Process(nz))
-		}
 		crack := y.pops.tick(np)
 
 		var sum float32
@@ -682,7 +658,7 @@ func (y *Synth) process(dst []float32) {
 			for b := range np {
 				x += y.mix[p][b] * bank[b]
 			}
-			x = x*am + airN + y.pops.jump[p]*y.lift
+			x = x*am + y.pops.jump[p]*y.lift
 			sum += y.paths[p].process(x)
 		}
 		sum += crack * y.lift

@@ -194,8 +194,8 @@ func checkBounce(t *testing.T, name string, s *Spec, y *Synth) {
 			n, rot = y.limRot, y.limRot
 		}
 		y.Render(buf, c)
-		if i > 0 && (y.air != 0 || y.overrun > 1e-6 || y.pops.window) {
-			t.Fatalf("%s: overrun effect at the limiter: air %v, overrun %v, pop window %t", name, y.air, y.overrun, y.pops.window)
+		if i > 0 && (y.overrun > 1e-6 || y.pops.window) {
+			t.Fatalf("%s: overrun effect at the limiter: overrun %v, pop window %t", name, y.overrun, y.pops.window)
 		}
 		if i >= rate/5/chunk {
 			if y.limRot != rot {
@@ -353,8 +353,8 @@ func TestFinalGear(t *testing.T) {
 				if y.limRot != n || y.cutting || y.climb {
 					t.Fatalf("%s: cut in the final gear at %.0f RPM", name, rpm)
 				}
-				if y.air != 0 || y.overrun > 1e-6 || y.pops.window {
-					t.Fatalf("%s: overrun effect in the final gear: air %v, overrun %v, pop window %t", name, y.air, y.overrun, y.pops.window)
+				if y.overrun > 1e-6 || y.pops.window {
+					t.Fatalf("%s: overrun effect in the final gear: overrun %v, pop window %t", name, y.overrun, y.pops.window)
 				}
 				if p := y.PitchRPM(); i > rate/5/chunk && (p < lo-1 || p > lim) {
 					t.Fatalf("%s: pitch %.1f RPM in the final gear, want from %.1f to %.0f", name, p, lo, lim)

@@ -89,9 +89,9 @@ type PulseSpec struct {
 	CamAttack float64 `toml:"cam_attack"`
 	// CamGain is the extra pulse gain above the cam switch RPM.
 	CamGain float64 `toml:"cam_gain"`
-	// IdleFloor is the reference pulse gain for the overrun air noise and
-	// pops, as a fraction of full load. On overrun, both rise by the
-	// overrun level over this gain.
+	// IdleFloor is the reference pulse gain for the pops, as a fraction of
+	// full load. On overrun, the pops rise by the overrun level over this
+	// gain.
 	IdleFloor float64 `toml:"idle_floor"`
 	// PartLoadDB is the pulse level at load 0.5 in decibels, relative to
 	// full load at the same RPM. The pulse level rises smoothly with load
@@ -162,11 +162,7 @@ type PathSpec struct {
 
 // NoiseSpec holds the noise layer gains.
 type NoiseSpec struct {
-	AM  float64 `toml:"am"`
-	Air float64 `toml:"air"`
-	// AirCutoffHz is the cutoff of each of the two one-pole low passes on
-	// the overrun air noise.
-	AirCutoffHz   float64 `toml:"air_cutoff_hz"`
+	AM            float64 `toml:"am"`
 	Jet           float64 `toml:"jet"`
 	JetHz         float64 `toml:"jet_hz"`
 	Intake        float64 `toml:"intake"`
@@ -277,7 +273,7 @@ func DefaultSpec() Spec {
 			SpeedOfSound: 565, Crossover: "none", OutletDirect: 0.4,
 			Steepening: 0.3, LowShelfHz: 250,
 		},
-		Noise: NoiseSpec{AM: 0.35, Air: 0.03, AirCutoffHz: 900, Jet: 0.02, JetHz: 1500},
+		Noise: NoiseSpec{AM: 0.35, Jet: 0.02, JetHz: 1500},
 		Mechanical: MechanicalSpec{
 			TickHz: 3000,
 		},
@@ -342,8 +338,6 @@ func (s *Spec) validateEngine() error {
 		return errors.New("overrun level_db and idle_level_db must be from -40 to 6")
 	case s.Pulse.PartLoadDB >= 0 || s.Pulse.PartLoadDB < -20:
 		return errors.New("pulse part_load_db must be from -20 to below 0")
-	case s.Noise.AirCutoffHz < 20 || s.Noise.AirCutoffHz > 20000:
-		return errors.New("noise air_cutoff_hz must be from 20 to 20000")
 	}
 	return nil
 }

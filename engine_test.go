@@ -448,76 +448,6 @@ func TestOverrunOrders(t *testing.T) {
 	}
 }
 
-// liftOff returns the snapshots of a lift-off as the harness script drives
-// it: full throttle for 2 s with the RPM rising to 75 percent of the
-// redline, then closed throttle with the overrun flag and the RPM falling
-// at 1300 RPM per second to idle. The load comes from a LoadFilter.
-func liftOff(p Profile) func(float64) Snapshot {
-	var load LoadFilter
-	const dt = 256.0 / testRate
-	top := 0.75 * p.RedlineRPM
-	return func(t float64) Snapshot {
-		s := Snapshot{Flags: FlagRunning}
-		if t < 2 {
-			s.RPM = top - (top-p.IdleRPM)*0.4*float32(1-t/2)
-			s.Throttle = 1
-		} else {
-			s.RPM = max(p.IdleRPM, top-1300*float32(t-2))
-			s.Flags |= FlagOverrun
-		}
-		s.Load = load.Update(s.Throttle, 0, 0, dt, s.Flags&FlagOverrun != 0)
-		return s
-	}
-}
-
-// TestOverrunAirSubtle checks that the overrun air noise stays under the
-// exhaust and stays audible. In the first second after a lift-off, the band
-// from 3 to 8 kHz is at most 1.6 dB above the same render with no air
-// noise, and the band from 300 Hz to 2 kHz is at least 0.08 dB above it.
-// Half the profile air level with a 900 Hz cutoff adds at most 0.03 dB in
-// that band, so the lower limit catches an air noise that fades out.
-func TestOverrunAirSubtle(t *testing.T) {
-	for _, name := range Profiles() {
-		t.Run(name, func(t *testing.T) {
-			p, err := LoadProfile(name)
-			if err != nil {
-				t.Fatal(err)
-			}
-			q, err := LoadProfileWith(name, "noise.air=0")
-			if err != nil {
-				t.Fatal(err)
-			}
-			after := func(p Profile) []float64 {
-				x := render(newEngine(t, p), 3, liftOff(p))
-				y := make([]float64, len(x))
-				for i, v := range x {
-					y[i] = float64(v)
-				}
-				return y
-			}
-			on, off := after(p), after(q)
-			gain := func(lo, hi float64) float64 {
-				band := func(y []float64) float64 {
-					var e float64
-					for _, v := range analysis.BandPass(y, testRate, lo, hi)[2*testRate:] {
-						e += v * v
-					}
-					return e
-				}
-				return 10 * math.Log10(band(on)/band(off))
-			}
-			high, body := gain(3000, 8000), gain(300, 2000)
-			t.Logf("air adds %.2f dB from 3 to 8 kHz and %.2f dB from 300 Hz to 2 kHz after the lift-off", high, body)
-			if high > 1.6 {
-				t.Errorf("air adds %.1f dB from 3 to 8 kHz after the lift-off, want at most 1.6 dB", high)
-			}
-			if body < 0.08 {
-				t.Errorf("air adds %.2f dB from 300 Hz to 2 kHz after the lift-off, want at least 0.08 dB", body)
-			}
-		})
-	}
-}
-
 func TestBadInputBounded(t *testing.T) {
 	e := newTestEngine(t, "v8")
 	bad := []float32{float32(math.NaN()), float32(math.Inf(1)), -5000, 1e9}
@@ -830,7 +760,7 @@ var limiterByEar = map[string]bool{"v8": true}
 // than j plus 2 percent from the mean. The level shape of the
 // bounces with no pops is within 1.5 dB of the engine-sim reference for
 // the level in a cut and the re-fire bark, and within 3 dB for the notch.
-// No overrun air noise plays: the band above 3 kHz is not louder than full
+// No overrun effect plays: the band above 3 kHz is not louder than full
 // throttle 150 RPM below the limiter. The output stays finite and below
 // full scale.
 func TestLimiterBounce(t *testing.T) {
