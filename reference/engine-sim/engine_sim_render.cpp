@@ -3,7 +3,16 @@
 
 #include "scripting/include/compiler.h"
 
+#include "include/connecting_rod.h"
+#include "include/crankshaft.h"
+#include "include/cylinder_bank.h"
+#include "include/cylinder_head.h"
 #include "include/engine.h"
+#include "include/exhaust_system.h"
+#include "include/ignition_module.h"
+#include "include/impulse_response.h"
+#include "include/intake.h"
+#include "include/piston.h"
 #include "include/simulator.h"
 #include "include/units.h"
 
@@ -45,9 +54,11 @@ struct Options {
     std::string script;
     std::string out;
     std::string csv;
+    std::string dumpJson;
     std::string dataDir = ENGINE_SIM_DATA_DIR;
     std::vector<Segment> segments;
     double settle = 3.0;
+    double idleSeconds = 8.0;
     double volume = 1.0;
     int rate = 48000;
     int csvEvery = 1;
@@ -61,6 +72,7 @@ struct Options {
 void usage() {
     std::cerr <<
         "usage: engine-sim-render --script ENGINE.mr --out OUT.wav [segments] [options]\n"
+        "       engine-sim-render --script ENGINE.mr --dump-json OUT.json [--idle-seconds SECONDS]\n"
         "\n"
         "Segments run in order; at least one is required:\n"
         "  --hold RPM:THROTTLE:SECONDS          dyno holds RPM\n"
@@ -76,6 +88,9 @@ void usage() {
         "                     exhaust runner pressure and exhaust flow\n"
         "  --csv-every N      write every Nth simulation step to the CSV (default 1)\n"
         "  --data-dir DIR     directory that holds engine-sim es/ (default: build prefix)\n"
+        "  --dump-json PATH   write the engine that the script builds as JSON, with the idle rpm\n"
+        "                     of a free run at speed control 0, instead of a WAV\n"
+        "  --idle-seconds S   length of that free run (default 8); the last 2 s give the idle rpm\n"
         "\n"
         "THROTTLE is engine-sim speed control in 0..1, the value of the app's Q/W/E/R keys.\n";
 }
@@ -104,6 +119,8 @@ Options parseArgs(int argc, char **argv) {
         if (a == "--script") o.script = v;
         else if (a == "--out") o.out = v;
         else if (a == "--csv") o.csv = v;
+        else if (a == "--dump-json") o.dumpJson = v;
+        else if (a == "--idle-seconds") o.idleSeconds = parseNumbers(v, 1, a)[0];
         else if (a == "--data-dir") o.dataDir = v;
         else if (a == "--settle") o.settle = parseNumbers(v, 1, a)[0];
         else if (a == "--volume") o.volume = parseNumbers(v, 1, a)[0];
@@ -122,6 +139,14 @@ Options parseArgs(int argc, char **argv) {
             o.segments.push_back({ Mode::Free, 0, 0, n[0], n[1] });
         }
         else { usage(); die("unknown option " + a); }
+    }
+    if (!o.dumpJson.empty()) {
+        if (!o.out.empty() || !o.segments.empty() || !o.csv.empty()) die("--dump-json takes no --out, --csv or segments");
+        if (o.idleSeconds < 3) die("--idle-seconds must be at least 3");
+        // The idle run: no pre-roll, the starter cranks for 0.5 s, then the engine runs free at speed control 0.
+        o.out = o.dumpJson;
+        o.settle = 0;
+        o.segments.push_back({ Mode::Free, 0, 0, 0, o.idleSeconds });
     }
     if (o.script.empty() || o.out.empty() || o.segments.empty()) { usage(); std::exit(2); }
     for (const Segment &s : o.segments) {
@@ -224,6 +249,108 @@ Control controlAt(const std::vector<Segment> &segs, double t) {
     return { s.mode != Mode::Free, s.rpm1, s.throttle };
 }
 
+std::string jsonString(const std::string &s) {
+    std::string o = "\"";
+    for (const char c : s) {
+        if (c == '"' || c == '\\') o += '\\';
+        if (static_cast<unsigned char>(c) >= 0x20) o += c;
+    }
+    return o + "\"";
+}
+
+double deg(double rad) { return rad * 180.0 / M_PI; }
+
+// Writes the engine that the script built: geometry, firing, exhaust and
+// limiter values in SI units, angles in degrees and speeds in rpm.
+void writeDump(const fs::path &path, Engine *engine, double idleRpm, double idleSeconds) {
+    std::ofstream f(path);
+    if (!f) die("cannot write " + path.string());
+    f.precision(10);
+    IgnitionModule *ign = engine->getIgnitionModule();
+    f << "{\n  \"name\": " << jsonString(engine->getName())
+      << ",\n  \"simulation_frequency_hz\": " << engine->getSimulationFrequency()
+      << ",\n  \"redline_rpm\": " << units::toRpm(engine->getRedline())
+      << ",\n  \"rev_limit_rpm\": " << units::toRpm(ign->getRevLimit())
+      << ",\n  \"limiter_duration_s\": " << ign->getLimiterDuration()
+      << ",\n  \"starter_speed_rpm\": " << units::toRpm(engine->getStarterSpeed())
+      << ",\n  \"dyno_min_rpm\": " << units::toRpm(engine->getDynoMinSpeed())
+      << ",\n  \"dyno_max_rpm\": " << units::toRpm(engine->getDynoMaxSpeed())
+      << ",\n  \"hf_gain\": " << engine->getInitialHighFrequencyGain()
+      << ",\n  \"noise\": " << engine->getInitialNoise()
+      << ",\n  \"jitter\": " << engine->getInitialJitter()
+      << ",\n  \"idle\": { \"measured_rpm\": " << idleRpm << ", \"free_run_s\": " << idleSeconds << " }";
+
+    f << ",\n  \"crankshafts\": [";
+    for (int i = 0; i < engine->getCrankshaftCount(); ++i) {
+        Crankshaft *c = engine->getCrankshaft(i);
+        f << (i ? "," : "") << "\n    { \"throw_m\": " << c->getThrow() << ", \"tdc_deg\": " << deg(c->getTdc())
+          << ", \"journals_deg\": [";
+        for (int j = 0; j < c->getRodJournalCount(); ++j) f << (j ? ", " : "") << deg(c->getRodJournalAngle(j));
+        f << "] }";
+    }
+    f << "\n  ],\n  \"banks\": [";
+    for (int i = 0; i < engine->getCylinderBankCount(); ++i) {
+        CylinderBank *b = engine->getCylinderBank(i);
+        f << (i ? "," : "") << "\n    { \"angle_deg\": " << deg(b->getAngle()) << ", \"bore_m\": " << b->getBore()
+          << ", \"deck_height_m\": " << b->getDeckHeight() << ", \"cylinders\": " << b->getCylinderCount() << " }";
+    }
+    f << "\n  ],\n  \"intakes\": [";
+    for (int i = 0; i < engine->getIntakeCount(); ++i) {
+        Intake *in = engine->getIntake(i);
+        f << (i ? "," : "") << "\n    { \"runner_length_m\": " << in->getRunnerLength()
+          << ", \"plenum_area_m2\": " << in->getPlenumCrossSectionArea()
+          << ", \"idle_throttle_plate_position\": " << in->getIdleThrottlePlatePosition() << " }";
+    }
+    f << "\n  ],\n  \"exhaust_systems\": [";
+    for (int i = 0; i < engine->getExhaustSystemCount(); ++i) {
+        ExhaustSystem *e = engine->getExhaustSystem(i);
+        ImpulseResponse *ir = e->getImpulseResponse();
+        f << (i ? "," : "") << "\n    { \"length_m\": " << e->getLength()
+          << ", \"primary_tube_length_m\": " << e->getPrimaryTubeLength()
+          << ", \"collector_area_m2\": " << e->getCollectorCrossSectionArea()
+          << ", \"audio_volume\": " << e->getAudioVolume() << ", \"velocity_decay\": " << e->getVelocityDecay()
+          << ", \"impulse_response\": " << jsonString(fs::path(ir->getFilename()).filename().string())
+          << ", \"impulse_response_volume\": " << ir->getVolume() << " }";
+    }
+    f << "\n  ],\n  \"cylinders\": [";
+    for (int i = 0; i < engine->getCylinderCount(); ++i) {
+        Piston *p = engine->getChamber(i)->getPiston();
+        CylinderHead *h = engine->getChamber(i)->getCylinderHead();
+        ConnectingRod *r = p->getRod();
+        // A slave rod of a radial sits on a journal of its master rod, not of the crankshaft.
+        ConnectingRod *m = r->getMasterRod();
+        Crankshaft *rc = (m != nullptr ? m : r)->getCrankshaft();
+        const int local = p->getCylinderIndex();
+        int crank = 0;
+        for (int k = 0; k < engine->getCrankshaftCount(); ++k) {
+            if (engine->getCrankshaft(k) == rc) crank = k;
+        }
+        int intake = -1;
+        for (int k = 0; k < engine->getIntakeCount(); ++k) {
+            if (engine->getIntake(k) == h->getIntake(local)) intake = k;
+        }
+        const double bore = p->getCylinderBank()->getBore();
+        const double stroke = 2 * rc->getThrow();
+        const double swept = M_PI / 4 * bore * bore * stroke;
+        const double clearance = h->getCombustionChamberVolume();
+        f << (i ? "," : "") << "\n    { \"bank\": " << p->getCylinderBank()->getIndex() << ", \"bank_position\": " << local
+          << ", \"crankshaft\": " << crank << ", \"master_rod\": " << (m != nullptr ? "true" : "false")
+          << ", \"journal\": " << (m != nullptr ? m : r)->getJournal()
+          << ", \"journal_deg\": " << deg(rc->getRodJournalAngle((m != nullptr ? m : r)->getJournal()))
+          << ", \"spark_deg\": " << deg(ign->getSparkAngle(i)) << ", \"spark_enabled\": " << (ign->getSparkEnabled(i) ? "true" : "false")
+          << ", \"bore_m\": " << bore << ", \"stroke_m\": " << stroke << ", \"rod_m\": " << r->getLength()
+          << ", \"compression_ratio\": " << (clearance > 0 ? (swept + clearance) / clearance : 0.0)
+          << ", \"exhaust_system\": " << h->getExhaustSystem(local)->getIndex() << ", \"intake\": " << intake
+          << ", \"header_primary_length_m\": " << h->getHeaderPrimaryLength(local)
+          << ", \"sound_attenuation\": " << h->getSoundAttenuation(local)
+          << ", \"exhaust_runner_area_m2\": " << h->getExhaustRunnerCrossSectionArea()
+          << ", \"exhaust_runner_volume_m3\": " << h->getExhaustRunnerVolume()
+          << ", \"intake_runner_area_m2\": " << h->getIntakeRunnerCrossSectionArea() << " }";
+    }
+    f << "\n  ]\n}\n";
+    if (!f) die("write failed: " + path.string());
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -321,12 +448,21 @@ int main(int argc, char **argv) {
     size_t settleSamples = 0;
     long long step = 0;
     double t = 0;
+    double idleSum = 0;
+    bool caught = false;
+    long long idleSteps = 0;
 
     while (t < endTime) {
         const double segT = t - opt.settle;
         const Control c = controlAt(opt.segments, std::max(0.0, segT));
-        // The starter cranks for the first half second of the pre-roll.
-        sim->m_starterMotor.m_enabled = t < 0.5;
+        // The starter cranks for the first half second of the pre-roll. In
+        // the idle run it cranks until the engine runs at twice the starter
+        // speed, for at most 3 s, as a driver holds the key.
+        if (opt.dumpJson.empty()) sim->m_starterMotor.m_enabled = t < 0.5;
+        else {
+            caught = caught || engine->getRpm() > 2 * std::abs(units::toRpm(engine->getStarterSpeed())) || t >= 3.0;
+            sim->m_starterMotor.m_enabled = !caught;
+        }
         sim->m_dyno.m_enabled = c.dyno && t >= 0.5;
         sim->m_dyno.m_rotationSpeed = units::rpm(c.rpm);
         engine->setSpeedControl(c.throttle);
@@ -334,6 +470,10 @@ int main(int argc, char **argv) {
         sim->startFrame(frame);
         while (sim->simulateStep()) {
             ++step;
+            if (step * timestep > endTime - 2.0) {
+                idleSum += engine->getRpm();
+                ++idleSteps;
+            }
             if (csv.is_open() && step % opt.csvEvery == 0) {
                 csv << step * timestep - opt.settle << ',' << engine->getRpm() << ',' << c.throttle
                     << ',' << sim->m_dyno.getTorque();
@@ -355,6 +495,15 @@ int main(int argc, char **argv) {
 
         t = step * timestep;
         if (t <= opt.settle) settleSamples = rendered.size();
+    }
+
+    if (!opt.dumpJson.empty()) {
+        writeDump(out, engine, idleSteps > 0 ? idleSum / idleSteps : 0.0, opt.idleSeconds);
+        std::cerr << "engine-sim-render: " << engine->getName() << ", " << cylinders << " cylinders, idle "
+                  << std::lround(idleSteps > 0 ? idleSum / idleSteps : 0.0) << " rpm, wrote " << out.string() << "\n";
+        sim->releaseSimulation();
+        delete sim;
+        return 0;
     }
 
     const size_t want = static_cast<size_t>(std::llround(total * SynthRate));

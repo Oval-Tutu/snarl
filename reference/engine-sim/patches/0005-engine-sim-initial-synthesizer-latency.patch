@@ -1,0 +1,10 @@
+--- a/src/synthesizer.cpp
++++ b/src/synthesizer.cpp
+@@ -22,6 +22,7 @@
+     m_audioSampleRate = 0.0;
+ 
+     m_lastInputSampleOffset = 0.0;
++    m_latency = 0;
+ 
+     m_run = true;
+     m_thread = nullptr;

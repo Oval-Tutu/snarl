@@ -1,0 +1,24 @@
+--- a/include/ignition_module.h
++++ b/include/ignition_module.h
+@@ -39,6 +39,11 @@
+ 
+         double getTimingAdvance();
+ 
++        inline double getSparkAngle(int i) const { return m_plugs[i].angle; }
++        inline bool getSparkEnabled(int i) const { return m_plugs[i].enabled; }
++        inline double getRevLimit() const { return m_revLimit; }
++        inline double getLimiterDuration() const { return m_limiterDuration; }
++
+         bool m_enabled;
+ 
+     protected:
+--- a/include/intake.h
++++ b/include/intake.h
+@@ -50,6 +50,7 @@
+         inline double getRunnerLength() const { return m_runnerLength; }
+         inline double getPlenumCrossSectionArea() const { return m_crossSectionArea; }
+         inline double getVelocityDecay() const { return m_velocityDecay; }
++        inline double getIdleThrottlePlatePosition() const { return m_idleThrottlePlatePosition; }
+ 
+         GasSystem m_system;
+         double m_throttle;

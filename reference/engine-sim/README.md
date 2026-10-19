@@ -54,6 +54,12 @@ A scenario is a list of segments on the command line. The segments run in the gi
 | `--csv-every N` | 1 | Write every Nth simulation step to the CSV. |
 | `--data-dir DIR` | build output | Directory that contains `es/`. |
 
+### Engine dump
+
+`--dump-json PATH` writes the engine that the script builds as JSON instead of a WAV: the redline, rev limit and limiter duration, the simulation frequency, the crankshafts with their throws and journal angles, the banks with their angles and bores, the intakes with their runner lengths, the exhaust systems with their lengths, primary tube lengths, collector areas, audio volumes and impulse responses, and for each cylinder its bank, journal angle, spark plug angle in the 720 degree cycle, bore, stroke, rod length, compression ratio, exhaust system, intake, header primary length and sound attenuation. Lengths are in metres, angles in degrees and speeds in rpm.
+
+The dump also holds an idle rpm. The engine runs free at speed control 0 for 8 s (`--idle-seconds`), with the starter on until the engine runs at twice the starter speed, for at most 3 s. The idle rpm is the mean rpm of the last 2 s. It is near 0 for an engine that stalls. `--dump-json` takes no `--out`, `--csv` or segments. `just import-profiles` uses it for the profile catalogue (`profiles/catalogue/README.md`).
+
 ### Limiter reference
 
 `just ref-limiter [profile]` renders the limiter reference for one profile, or for all four profiles, into `out/reference/engine-sim/<profile>/limiter.wav` with a CSV beside it (every 10th step). It reads the start rpm and the limiter rpm from the first sweep in `scenarios/<profile>/limiter.scn`. The dynamometer holds the start rpm at full throttle for 0.5 s (`--hold START:1:0.5`). Then the engine runs free at full throttle for 5 s (`--free 1:5`). The engine reaches its limiter about 0.1 s into the free run and bounces off it for about 4.7 s.
@@ -80,6 +86,8 @@ Closest upstream scripts for the snarl profiles:
 - `0001`: removes the unused delta-studio include from the synthesiser, removes backslash include paths, makes the header constants `inline constexpr` (they were multiply defined), moves `GasSystem::Mix` out of the class for Clang, fixes a typo in `RingBuffer::overwrite` and a shadowed template parameter, adds missing standard includes. It also removes the unused `lastValveLift[8]` array in `PistonEngineSimulator::writeToSynthesizer`, which engines with more than eight cylinders wrote past.
 - `0002` (piranha): replaces `__int64`, and replaces `is_complete` that Boost removed.
 - `0003` (simple-2d-constraint-solver): adds missing includes.
+- `0004`: adds read accessors for the spark plug angles, the rev limit, the limiter duration and the idle throttle plate position, for `--dump-json`.
+- `0005`: sets the synthesiser latency to 0 in its constructor. Upstream reads it uninitialised in the first frame, so the first frame had a random step count, and an engine near a stall at idle could stall or run depending on the memory layout.
 
 The build uses Clang. Upstream uses explicit template specialisations inside class scope, which GCC rejects.
 
