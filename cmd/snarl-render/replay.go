@@ -17,8 +17,12 @@ import (
 // logHeader is the header row of the snapshot log that snarl-harness
 // writes (cmd/snarl-harness/internal/record). Each row is one Engine.Set
 // call. t is the time in seconds from the start of the recording. The last
-// row is at the stop time, so the log lasts until its last row.
-const logHeader = "t,profile,tier,rpm,throttle,load,speed,gear,flags,shift_up,shift_down,limiter"
+// row is at the stop time, so the log lasts until its last row. A log with
+// legacyHeader has no pop columns, and its rows request no pops.
+const (
+	logHeader    = legacyHeader + ",pop_request,pop_strength,pop_character"
+	legacyHeader = "t,profile,tier,rpm,throttle,load,speed,gear,flags,shift_up,shift_down,limiter"
+)
 
 // logRow is one row of a snapshot log.
 type logRow struct {
@@ -44,14 +48,14 @@ func readLog(path string) ([]logRow, error) {
 
 func parseLog(r io.Reader) ([]logRow, error) {
 	cr := csv.NewReader(r)
-	cr.FieldsPerRecord = len(strings.Split(logHeader, ","))
 	head, err := cr.Read()
 	if err != nil {
 		return nil, fmt.Errorf("header: %w", err)
 	}
-	if strings.Join(head, ",") != logHeader {
+	if h := strings.Join(head, ","); h != logHeader && h != legacyHeader {
 		return nil, fmt.Errorf("header is not %q", logHeader)
 	}
+	cr.FieldsPerRecord = len(head)
 	var rows []logRow
 	for {
 		rec, err := cr.Read()
@@ -78,9 +82,10 @@ func parseLog(r io.Reader) ([]logRow, error) {
 }
 
 // parseRow parses one row. The fields after the profile are numbers, and
-// the tier and the fields from gear on are bytes.
+// the tier, the fields from gear to limiter, pop_request and pop_character
+// are bytes.
 func parseRow(rec []string) (logRow, error) {
-	var nums [11]float64
+	var nums [14]float64
 	for i, f := range slices.Concat(rec[:1], rec[2:]) {
 		x, err := strconv.ParseFloat(f, 64)
 		if err != nil || math.IsNaN(x) || math.IsInf(x, 0) {
@@ -88,8 +93,8 @@ func parseRow(rec []string) (logRow, error) {
 		}
 		nums[i] = x
 	}
-	var b [6]uint8
-	for i, x := range slices.Concat(nums[1:2], nums[6:]) {
+	var b [8]uint8
+	for i, x := range slices.Concat(nums[1:2], nums[6:12], nums[13:]) {
 		if x < 0 || x > math.MaxUint8 || x != math.Trunc(x) {
 			return logRow{}, fmt.Errorf("%v is not a whole number from 0 to 255", x)
 		}
@@ -112,6 +117,10 @@ func parseRow(rec []string) (logRow, error) {
 			ShiftUp:   b[3],
 			ShiftDown: b[4],
 			Limiter:   b[5],
+
+			PopRequest:   b[6],
+			PopStrength:  float32(nums[12]),
+			PopCharacter: snarl.PopCharacter(b[7]),
 		},
 	}, nil
 }

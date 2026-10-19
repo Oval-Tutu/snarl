@@ -23,7 +23,7 @@ import (
 // Header is the header row of the snapshot log. snarl-render --replay
 // (cmd/snarl-render) reads the same columns. t is the time in seconds
 // from the start of the recording.
-const Header = "t,profile,tier,rpm,throttle,load,speed,gear,flags,shift_up,shift_down,limiter"
+const Header = "t,profile,tier,rpm,throttle,load,speed,gear,flags,shift_up,shift_down,limiter,pop_request,pop_strength,pop_character"
 
 // Log writes snapshot rows.
 type Log struct {
@@ -53,6 +53,7 @@ func (l *Log) Write(t time.Duration, profile string, tier snarl.Tier, s snarl.Sn
 		strconv.FormatFloat(t.Seconds(), 'g', -1, 64), profile, u(uint8(tier)),
 		f(s.RPM), f(s.Throttle), f(s.Load), f(s.Speed),
 		u(s.Gear), u(uint8(s.Flags)), u(s.ShiftUp), u(s.ShiftDown), u(s.Limiter),
+		u(s.PopRequest), f(s.PopStrength), u(uint8(s.PopCharacter)),
 	})
 }
 

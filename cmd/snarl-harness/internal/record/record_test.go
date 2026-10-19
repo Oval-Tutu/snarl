@@ -129,7 +129,7 @@ func TestRecorderWritesLogAndAudio(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(string(csv)), "\n")
-	if len(lines) != 3 || lines[0] != Header || !strings.HasSuffix(lines[1], ",v8,1,6000.5,1,0.25,30,1,1,0,0,3") ||
+	if len(lines) != 3 || lines[0] != Header || !strings.HasSuffix(lines[1], ",v8,1,6000.5,1,0.25,30,1,1,0,0,3,0,0,0") ||
 		after(lines[2]) != after(lines[1]) {
 		t.Errorf("log:\n%s", csv)
 	}

@@ -37,8 +37,10 @@ import (
 )
 
 const (
-	screenW, screenH = 960, 460
+	screenW, screenH = 960, 520
 	tps              = 60
+	// flashTicks is the length of the pop flash on screen.
+	flashTicks = tps / 4
 )
 
 // bufferBlocks are the player buffer sizes, in blocks, that the user can
@@ -50,18 +52,19 @@ const defaultBuffer = 5
 
 // Gamepad buttons in the standard layout.
 const (
-	padThrottle  = ebiten.StandardGamepadButtonFrontBottomRight
-	padR1        = ebiten.StandardGamepadButtonFrontTopRight
-	padL1        = ebiten.StandardGamepadButtonFrontTopLeft
-	padA         = ebiten.StandardGamepadButtonRightBottom
-	padX         = ebiten.StandardGamepadButtonRightLeft
-	padLeft      = ebiten.StandardGamepadButtonLeftLeft
-	padRight     = ebiten.StandardGamepadButtonLeftRight
-	padUp        = ebiten.StandardGamepadButtonLeftTop
-	padDown      = ebiten.StandardGamepadButtonLeftBottom
-	padSelect    = ebiten.StandardGamepadButtonCenterLeft
-	padStart     = ebiten.StandardGamepadButtonCenterRight
-	legend       = "Throttle RT/Up/W  Shift RB,A/E up  LB,X/Q down  Profile D-pad L,R/1-4,Left,Right  Gears Back/G  Ignition Start/Space  Buffer D-pad U,D/PgUp,PgDn  Record R"
+	padThrottle = ebiten.StandardGamepadButtonFrontBottomRight
+	padR1       = ebiten.StandardGamepadButtonFrontTopRight
+	padL1       = ebiten.StandardGamepadButtonFrontTopLeft
+	padA        = ebiten.StandardGamepadButtonRightBottom
+	padX        = ebiten.StandardGamepadButtonRightLeft
+	padLeft     = ebiten.StandardGamepadButtonLeftLeft
+	padRight    = ebiten.StandardGamepadButtonLeftRight
+	padUp       = ebiten.StandardGamepadButtonLeftTop
+	padDown     = ebiten.StandardGamepadButtonLeftBottom
+	padSelect   = ebiten.StandardGamepadButtonCenterLeft
+	padStart    = ebiten.StandardGamepadButtonCenterRight
+	legend      = "Throttle RT/Up/W  Shift RB,A/E up  LB,X/Q down  Profile D-pad L,R/1-4,Left,Right  Gears Back/G\n" +
+		"Ignition Start/Space  Buffer D-pad U,D/PgUp,PgDn  Record R  Own pops N  Pop character C"
 	keyboardName = "keyboard"
 )
 
@@ -82,6 +85,15 @@ type harness struct {
 	running  bool
 	buffer   int // Index in bufferBlocks.
 	snap     snarl.Snapshot
+	shifts   shiftPops
+
+	// noPops sets FlagNoPops, and character is the run-time pop
+	// character. pops is the latest pop report, and flash the ticks left
+	// of the pop flash.
+	noPops    bool
+	character snarl.PopCharacter
+	pops      snarl.PopReport
+	flash     int
 
 	quit   context.Context // Done on an interrupt signal.
 	rec    *record.Recorder
@@ -164,6 +176,7 @@ func (h *harness) swapEngine() {
 	}
 	e.Set(h.snap)
 	h.eng = e
+	h.pops = snarl.PopReport{}
 	h.src.SetEngine(e)
 }
 
@@ -226,9 +239,18 @@ func (h *harness) Update() error {
 	}
 
 	dt := 1.0 / float64(ebiten.TPS())
-	s := step(h.drive, &h.load, h.profiles[h.profile], throttle, h.running, dt)
+	s := step(h.drive, &h.load, &h.shifts, h.profiles[h.profile], throttle, h.running, dt)
+	if h.noPops {
+		s.Flags |= snarl.FlagNoPops
+	}
+	s.PopCharacter = h.character
 	h.snap = s
+	h.flash = max(0, h.flash-1)
 	if h.eng != nil {
+		if r := h.eng.Pops(); r.Count != h.pops.Count {
+			h.flash = flashTicks
+			h.pops = r
+		}
 		h.eng.Set(s)
 		if h.rec != nil {
 			h.rec.Snapshot(h.profiles[h.profile].Name, snarl.Tier1, s)
@@ -237,21 +259,58 @@ func (h *harness) Update() error {
 	return nil
 }
 
+// shiftPops makes the pop requests of the gear changes, with the
+// conditions of the exhaust effect of FiveHorizons: an upshift above
+// 12 m/s with the throttle above 0.3, and a downshift above 20 m/s.
+type shiftPops struct {
+	up, down uint8   // Shift counters of the last step.
+	rpm      float32 // RPM of the last step.
+	request  uint8
+	strength float32
+}
+
+// Speeds in metres per second and the throttle of the shift pop
+// conditions.
+const (
+	upshiftSpeed    = 12
+	upshiftThrottle = 0.3
+	downshiftSpeed  = 20
+)
+
+// update counts a request for a qualifying shift of d since the last step.
+// The strength of an upshift is the throttle times the RPM before the
+// shift over the redline. The strength of a downshift is the RPM after
+// the shift over the redline.
+func (q *shiftPops) update(d *drive.Model, pr snarl.Profile, throttle float64, rpm float32) {
+	if d.ShiftUp != q.up && d.Speed() > upshiftSpeed && throttle > upshiftThrottle {
+		q.request++
+		q.strength = min(1, float32(throttle)*q.rpm/pr.RedlineRPM)
+	}
+	if d.ShiftDown != q.down && d.Speed() > downshiftSpeed {
+		q.request++
+		q.strength = min(1, rpm/pr.RedlineRPM)
+	}
+	q.up, q.down, q.rpm = d.ShiftUp, d.ShiftDown, rpm
+}
+
 // step advances the drivetrain by dt seconds and returns the snapshot for
-// the engine of profile pr.
-func step(d *drive.Model, load *snarl.LoadFilter, pr snarl.Profile, throttle float64, running bool, dt float64) snarl.Snapshot {
+// the engine of profile pr, with the pop requests of the shifts.
+func step(d *drive.Model, load *snarl.LoadFilter, q *shiftPops, pr snarl.Profile, throttle float64, running bool, dt float64) snarl.Snapshot {
 	d.Step(throttle, running, dt)
 	rpm := d.RPM(pr.IdleRPM, pr.LimiterRPM)
 	overrun := d.Overrun()
+	q.update(d, pr, throttle, rpm)
 	s := snarl.Snapshot{
-		RPM:       rpm,
-		Throttle:  float32(throttle),
-		Load:      load.Update(float32(throttle), float32(d.Accel()), float32(d.PeakAccel()), float32(dt), overrun),
-		Speed:     float32(d.Speed()),
-		Gear:      uint8(d.Gear()), //nolint:gosec // The gear is below drive.MaxGears.
-		ShiftUp:   d.ShiftUp,
-		ShiftDown: d.ShiftDown,
-		Limiter:   d.Limiter,
+		RPM:         rpm,
+		Throttle:    float32(throttle),
+		Load:        load.Update(float32(throttle), float32(d.Accel()), float32(d.PeakAccel()), float32(dt), overrun),
+		Speed:       float32(d.Speed()),
+		Gear:        uint8(d.Gear()), //nolint:gosec // The gear is below drive.MaxGears.
+		ShiftUp:     d.ShiftUp,
+		ShiftDown:   d.ShiftDown,
+		Limiter:     d.Limiter,
+		PopRequest:  q.request,
+		PopStrength: q.strength,
 	}
 	if running {
 		s.Flags |= snarl.FlagRunning
@@ -294,6 +353,12 @@ func (h *harness) updateSwitches() {
 	}
 	if p.JustPressed(padStart) || keyJust(ebiten.KeySpace) {
 		h.running = !h.running
+	}
+	if keyJust(ebiten.KeyN) {
+		h.noPops = !h.noPops
+	}
+	if keyJust(ebiten.KeyC) {
+		h.character = (h.character + 1) % (snarl.CharacterRace + 1)
 	}
 	h.updateBuffer()
 }
@@ -389,6 +454,14 @@ func (h *harness) Draw(screen *ebiten.Image) {
 	next()
 	say(8, "Flags %s   Shifts up %d down %d   Limiter cuts %d", flags(s, h.drive.Cut()), s.ShiftUp, s.ShiftDown, s.Limiter)
 	next()
+	h.drawPops(screen, y)
+	next()
+	own := "on"
+	if h.noPops {
+		own = "off"
+	}
+	say(8, "Own pops %s   Pop character %s   Pop requests %d", own, characterName(h.character), s.PopRequest)
+	next()
 	next()
 
 	st := h.src.Stats()
@@ -435,6 +508,33 @@ func (h *harness) Draw(screen *ebiten.Image) {
 	say(8, "%s", legend)
 }
 
+// drawPops draws the pop report at row y, with a flash after each pop.
+func (h *harness) drawPops(screen *ebiten.Image, y int) {
+	r := h.pops
+	if h.flash > 0 {
+		vector.FillRect(screen, 4, float32(y), 50, lineH-2, popColour(r.Source), false)
+		ebitenutil.DebugPrintAt(screen, "POP", 18, y)
+	}
+	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Pops %d   latest %s from %s, strength %.2f",
+		r.Count, r.Kind, r.Source, r.Strength), barX, y)
+}
+
+// popColour is the flash colour of a pop source.
+func popColour(src snarl.PopSource) color.Color {
+	switch src {
+	case snarl.SourceRequest:
+		return barFill
+	case snarl.SourceLimiter:
+		return markCut
+	}
+	return markRed
+}
+
+// characterName names a pop character.
+func characterName(c snarl.PopCharacter) string {
+	return [...]string{"profile", "stock", "sport", "race"}[c]
+}
+
 func ms(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
 
 // flags names the set flags of s, and the limiter cut, which the final
@@ -468,7 +568,7 @@ func main() {
 	profile := flag.String("profile", snarl.Profiles()[0], "start `profile`")
 	recDir := flag.String("record", "", "record from the start into `dir`; R starts and stops recordings in dir (default "+
 		filepath.Join(os.TempDir(), "snarl-record")+")")
-	script := flag.String("script", "", "write the snapshot log of the scripted lift-off drive to `file` and exit, with no window or audio")
+	script := flag.String("script", "", "write the snapshot log of the scripted drive, with shifts and lift-offs, to `file` and exit, with no window or audio")
 	flag.Parse()
 	var err error
 	if *script != "" {

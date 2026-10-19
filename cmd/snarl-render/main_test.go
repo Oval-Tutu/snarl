@@ -95,9 +95,9 @@ func logText(scn *scenario.Scenario, profile string, rate, block int) string {
 	row := func(t float64) {
 		s := snapshot(scn, t)
 		f := func(v float32) string { return strconv.FormatFloat(float64(v), 'g', -1, 32) }
-		fmt.Fprintf(&b, "%s,%s,1,%s,%s,%s,%s,%d,%d,%d,%d,%d\n",
+		fmt.Fprintf(&b, "%s,%s,1,%s,%s,%s,%s,%d,%d,%d,%d,%d,%d,%s,%d\n",
 			strconv.FormatFloat(t, 'g', -1, 64), profile, f(s.RPM), f(s.Throttle), f(s.Load), f(s.Speed),
-			s.Gear, s.Flags, s.ShiftUp, s.ShiftDown, s.Limiter)
+			s.Gear, s.Flags, s.ShiftUp, s.ShiftDown, s.Limiter, s.PopRequest, f(s.PopStrength), s.PopCharacter)
 	}
 	frames := int(math.Round(scn.Duration() * float64(rate)))
 	for pos := 0; pos < frames; pos += block {
@@ -169,18 +169,20 @@ func TestReplayProfileChange(t *testing.T) {
 }
 
 func TestParseLogErrors(t *testing.T) {
-	const row = "0,v8,1,3000,1,1,10,1,1,0,0,0\n"
+	const row = "0,v8,1,3000,1,1,10,1,1,0,0,0,2,0.5,3\n"
 	for name, text := range map[string]string{
-		"empty":      "",
-		"bad header": "t,profile\n" + row,
-		"no rows":    logHeader + "\n",
-		"falling":    logHeader + "\n0.5,v8,1,3000,1,1,10,1,1,0,0,0\n" + row,
-		"tier 0":     logHeader + "\n0,v8,0,3000,1,1,10,1,1,0,0,0\n",
-		"bad tier":   logHeader + "\n0,v8,3,3000,1,1,10,1,1,0,0,0\n",
-		"bad number": logHeader + "\n0,v8,1,fast,1,1,10,1,1,0,0,0\n",
-		"bad byte":   logHeader + "\n0,v8,1,3000,1,1,10,1.5,1,0,0,0\n",
-		"short row":  logHeader + "\n0,v8,1\n",
-		"negative t": logHeader + "\n-1,v8,1,3000,1,1,10,1,1,0,0,0\n",
+		"short pop row": logHeader + "\n0,v8,1,3000,1,1,10,1,1,0,0,0\n",
+		"bad character": logHeader + "\n0,v8,1,3000,1,1,10,1,1,0,0,0,2,0.5,256\n",
+		"empty":         "",
+		"bad header":    "t,profile\n" + row,
+		"no rows":       logHeader + "\n",
+		"falling":       logHeader + "\n0.5,v8,1,3000,1,1,10,1,1,0,0,0,0,0,0\n" + row,
+		"tier 0":        logHeader + "\n0,v8,0,3000,1,1,10,1,1,0,0,0,0,0,0\n",
+		"bad tier":      logHeader + "\n0,v8,3,3000,1,1,10,1,1,0,0,0,0,0,0\n",
+		"bad number":    logHeader + "\n0,v8,1,fast,1,1,10,1,1,0,0,0,0,0,0\n",
+		"bad byte":      logHeader + "\n0,v8,1,3000,1,1,10,1.5,1,0,0,0,0,0,0\n",
+		"short row":     logHeader + "\n0,v8,1\n",
+		"negative t":    logHeader + "\n-1,v8,1,3000,1,1,10,1,1,0,0,0,0,0,0\n",
 	} {
 		if _, err := parseLog(strings.NewReader(text)); err == nil {
 			t.Errorf("%s: no error", name)
@@ -189,8 +191,15 @@ func TestParseLogErrors(t *testing.T) {
 	rows, err := parseLog(strings.NewReader(logHeader + "\n" + row))
 	want := logRow{t: 0, profile: "v8", tier: 1, snap: snarl.Snapshot{
 		RPM: 3000, Throttle: 1, Load: 1, Speed: 10, Gear: 1, Flags: snarl.FlagRunning,
+		PopRequest: 2, PopStrength: 0.5, PopCharacter: snarl.CharacterRace,
 	}}
 	if err != nil || len(rows) != 1 || rows[0] != want {
 		t.Errorf("parseLog = %+v, %v", rows, err)
+	}
+	// A log from before the pop columns has no pop requests.
+	rows, err = parseLog(strings.NewReader(legacyHeader + "\n0,v8,1,3000,1,1,10,1,1,0,0,0\n"))
+	want.snap.PopRequest, want.snap.PopStrength, want.snap.PopCharacter = 0, 0, 0
+	if err != nil || len(rows) != 1 || rows[0] != want {
+		t.Errorf("parseLog of a legacy log = %+v, %v", rows, err)
 	}
 }

@@ -18,21 +18,31 @@ type scriptStep struct {
 	throttle, seconds float64
 }
 
-// liftOffScript is the scripted drive: idle, then full throttle through
-// the gears and lift off in second gear, then the same to third gear.
-// Each lift-off lasts 3 seconds.
-var liftOffScript = []scriptStep{
+// driveScript is the scripted drive: idle, full throttle through first
+// gear to second, a lift-off and a downshift on the coast, full throttle
+// through the gears to third, a lift-off and two downshifts on the coast,
+// then part throttle with an upshift, full throttle and a last lift-off.
+// Each upshift at full or part throttle and each downshift on the coast
+// requests a pop.
+var driveScript = []scriptStep{
 	{0, 0, 1},
-	{0, 1, 2},
+	{0, 1, 2.5},
+	{1, 1, 2.5},
+	{1, 0, 1},
+	{0, 0, 1.5},
+	{0, 1, 1.5},
 	{1, 1, 2},
-	{1, 0, 3},
-	{0, 1, 2},
-	{1, 1, 2},
-	{2, 1, 2},
-	{2, 0, 3},
+	{2, 1, 2.5},
+	{2, 0, 1},
+	{1, 0, 1},
+	{0, 0, 1.5},
+	{0, 0.5, 2},
+	{1, 0.5, 2.5},
+	{1, 1, 1.5},
+	{1, 0, 3.5},
 }
 
-// writeScript writes the snapshot log of liftOffScript for the profile to
+// writeScript writes the snapshot log of driveScript for the profile to
 // path, as a recording would log it.
 func writeScript(path, profile string) error {
 	ps, i, err := loadProfiles(profile)
@@ -43,7 +53,7 @@ func writeScript(path, profile string) error {
 	if err != nil {
 		return err
 	}
-	return errors.Join(runScript(f, ps[i], liftOffScript), f.Close())
+	return errors.Join(runScript(f, ps[i], driveScript), f.Close())
 }
 
 // runScript drives the harness drivetrain through steps at tps ticks per
@@ -56,6 +66,7 @@ func runScript(w io.Writer, pr snarl.Profile, steps []scriptStep) error {
 	}
 	d := drive.New(drive.DefaultGears)
 	var load snarl.LoadFilter
+	var shifts shiftPops
 	const dt = 1.0 / tps
 	tick := 0
 	at := func() time.Duration { return time.Duration(tick) * time.Second / tps }
@@ -68,7 +79,7 @@ func runScript(w io.Writer, pr snarl.Profile, steps []scriptStep) error {
 			}
 		}
 		for range int(st.seconds * tps) {
-			s := step(d, &load, pr, st.throttle, true, dt)
+			s := step(d, &load, &shifts, pr, st.throttle, true, dt)
 			if err := l.Write(at(), pr.Name, snarl.Tier1, s); err != nil {
 				return err
 			}
