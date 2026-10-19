@@ -112,16 +112,16 @@ type pops struct {
 	crackDec   float32
 	crackAtt   float32
 	crackRatio float32
-	// crackTier scales the crack of the isolated pop. Tier 1 lowers it,
-	// because the expansion chamber takes energy out of the body band.
-	crackTier float32
-	crackHP   dsp.Biquad
+	crackHP    dsp.Biquad
 }
 
-// newPops returns the pop model. tier1 lowers the crack of the isolated
-// pop and raises the body, because the tier 1 expansion chamber takes
-// energy out of the body band.
-func newPops(s *Spec, rate, chunkSeconds float64, tier1 bool) pops {
+// popCrack scales the crack of the isolated pop. The expansion chamber
+// takes energy out of the body band, so the pop crack is lower and the
+// body gain is higher.
+const popCrack = 0.35
+
+// newPops returns the pop model.
+func newPops(s *Spec, rate, chunkSeconds float64) pops {
 	p := s.Pops
 	q := pops{
 		density:  float32(p.Density),
@@ -139,18 +139,13 @@ func newPops(s *Spec, rate, chunkSeconds float64, tier1 bool) pops {
 		busyLen:   int(0.3 * rate),
 		jumpLen:   p.JumpMS * 1e-3 * rate,
 		jumpMix:   0.6,
-		bodyGain:  4,
+		bodyGain:  6.4,
 		bodyHz:    p.BodyHz,
 		bodyMS:    p.BodyMS,
 		crackDec:  dsp.DecayCoef(20, p.CrackMS*1e-3, rate),
 		crackAtt:  dsp.TimeCoef(0.0001, rate),
 		// The crack level is a small share of the body, as measured.
 		crackRatio: float32(0.05 * p.Crack),
-		crackTier:  1,
-	}
-	if tier1 {
-		q.crackTier = 0.35
-		q.bodyGain *= 1.6
 	}
 	for k, sh := range shapes {
 		r := sh.roundMS
@@ -291,7 +286,7 @@ func (p *pops) fire(paths int, scale float32, kind int) *popEvent {
 	e.amp = a
 	e.crackLvl = a * p.crackRatio * sh.crack
 	if kind == kindPop {
-		e.crackLvl *= p.crackTier
+		e.crackLvl *= popCrack
 	}
 	e.kind = kind
 	e.subs = sh.subs + int(float32(sh.subsRange+1)*p.noise.Unipolar())

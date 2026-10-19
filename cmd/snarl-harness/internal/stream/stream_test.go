@@ -8,13 +8,13 @@ import (
 	"github.com/oval-tutu/snarl"
 )
 
-func newEngine(t *testing.T, name string, tier snarl.Tier) snarl.Engine {
+func newEngine(t *testing.T, name string) snarl.Engine {
 	t.Helper()
 	p, err := snarl.LoadProfile(name)
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, err := snarl.New(p, SampleRate, tier)
+	e, err := snarl.New(p, SampleRate, snarl.Tier1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestReadReturnsOneBlock(t *testing.T) {
 	if wantFinite(t, buf[:n]) != 0 {
 		t.Error("sound without an engine")
 	}
-	s.SetEngine(newEngine(t, "flat12", snarl.Tier1))
+	s.SetEngine(newEngine(t, "flat12"))
 	peak := 0.0
 	for range 200 {
 		n, err := s.Read(buf)
@@ -59,7 +59,7 @@ func TestReadReturnsOneBlock(t *testing.T) {
 	if peak == 0 {
 		t.Error("silence from a running engine")
 	}
-	s.SetEngine(newEngine(t, "v8", snarl.Tier0))
+	s.SetEngine(newEngine(t, "v8"))
 	for range 8 {
 		n, _ := s.Read(buf)
 		wantFinite(t, buf[:n])
@@ -79,7 +79,7 @@ func TestReadReturnsOneBlock(t *testing.T) {
 
 func TestReadShortSlices(t *testing.T) {
 	s := New()
-	s.SetEngine(newEngine(t, "inline4", snarl.Tier1))
+	s.SetEngine(newEngine(t, "inline4"))
 	small := make([]byte, 1000)
 	total := 0
 	for total < BlockBytes {
@@ -96,10 +96,10 @@ func TestReadShortSlices(t *testing.T) {
 
 func TestReadDoesNotAllocate(t *testing.T) {
 	s := New()
-	s.SetEngine(newEngine(t, "flat6", snarl.Tier1))
+	s.SetEngine(newEngine(t, "flat6"))
 	buf := make([]byte, BlockBytes)
 	_, _ = s.Read(buf)
-	s.SetEngine(newEngine(t, "flat12", snarl.Tier0)) // The first runs include the crossfade.
+	s.SetEngine(newEngine(t, "flat12")) // The first runs include the crossfade.
 	if a := testing.AllocsPerRun(100, func() {
 		if n, _ := s.Read(buf); n != BlockBytes {
 			t.Fatalf("Read = %d", n)
@@ -122,7 +122,7 @@ func (c *copyTap) Capture(mono []float32) {
 
 func TestTapGetsPlayedAudio(t *testing.T) {
 	s := New()
-	s.SetEngine(newEngine(t, "v8", snarl.Tier1))
+	s.SetEngine(newEngine(t, "v8"))
 	tap := &copyTap{}
 	s.SetTap(tap)
 	buf := make([]byte, BlockBytes)
@@ -145,7 +145,7 @@ func TestTapGetsPlayedAudio(t *testing.T) {
 
 func TestReadWithTapDoesNotAllocate(t *testing.T) {
 	s := New()
-	s.SetEngine(newEngine(t, "flat6", snarl.Tier1))
+	s.SetEngine(newEngine(t, "flat6"))
 	s.SetTap(&copyTap{})
 	buf := make([]byte, BlockBytes)
 	_, _ = s.Read(buf)

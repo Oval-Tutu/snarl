@@ -4,12 +4,10 @@ package snarl
 // docs/scoping.md section 3.
 type Tier uint8
 
-// Quality tiers, from the cheapest to the most detailed.
+// Quality tiers. The values start at 1.
 const (
-	// Tier0 is for the Nintendo Switch and old phones.
-	Tier0 Tier = iota
-	// Tier1 is for mid-range PCs and phones.
-	Tier1
+	// Tier1 is for all targets, from the Nintendo Switch to modern PCs.
+	Tier1 Tier = iota + 1
 	// Tier2 is for modern PCs.
 	Tier2
 )

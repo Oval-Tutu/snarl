@@ -95,8 +95,8 @@ func parseRow(rec []string) (logRow, error) {
 		}
 		b[i] = uint8(x)
 	}
-	if nums[0] < 0 || b[0] > uint8(snarl.Tier2) {
-		return logRow{}, errors.New("time is negative or tier is not 0, 1 or 2")
+	if nums[0] < 0 || (b[0] != uint8(snarl.Tier1) && b[0] != uint8(snarl.Tier2)) {
+		return logRow{}, errors.New("time is negative or tier is not 1 or 2")
 	}
 	return logRow{
 		t:       nums[0],

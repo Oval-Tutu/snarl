@@ -75,12 +75,13 @@ func parseProfile(data string) (Profile, error) {
 }
 
 // New returns an engine for the profile at the given sample rate and tier.
-// Tier2 renders the tier 1 model until tier 2 exists.
+// Tier2 renders the tier 1 model until tier 2 exists. Any other tier is an
+// error.
 func New(p Profile, sampleRate int, tier Tier) (Engine, error) {
 	if sampleRate <= 0 {
 		return nil, fmt.Errorf("sample rate %d is not positive", sampleRate)
 	}
-	if tier > Tier2 {
+	if tier != Tier1 && tier != Tier2 {
 		return nil, fmt.Errorf("tier %d is not known", tier)
 	}
 	if p.spec == nil {
@@ -90,7 +91,7 @@ func New(p Profile, sampleRate int, tier Tier) (Engine, error) {
 		}
 		p = q
 	}
-	s, err := model.New(p.spec, sampleRate, tier >= Tier1)
+	s, err := model.New(p.spec, sampleRate)
 	if err != nil {
 		return nil, err
 	}

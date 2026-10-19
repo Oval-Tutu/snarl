@@ -46,7 +46,7 @@ func run(args []string, stderr io.Writer) error {
 	}
 	out := fs.String("out", "", "output WAV `path` (default out/snarl/<profile>/<scenario>.wav)")
 	rate := fs.Int("rate", 48000, "sample rate in `Hz`")
-	tier := fs.Uint("tier", 1, "quality tier: 0, 1 or 2")
+	tier := fs.Uint("tier", 1, "quality tier: 1 or 2")
 	block := fs.Int("block", 256, "audio block size in frames")
 	format := fs.String("format", "s16", "sample format: s16 or f32")
 	settle := fs.Float64("settle", 0, "pre-roll in `seconds` that is rendered but not written")
@@ -74,8 +74,8 @@ func run(args []string, stderr io.Writer) error {
 	if *settle < 0 || math.IsNaN(*settle) || math.IsInf(*settle, 0) {
 		return fmt.Errorf("settle time %v is not valid", *settle)
 	}
-	if *tier > uint(snarl.Tier2) {
-		return fmt.Errorf("tier %d is not 0, 1 or 2", *tier)
+	if *tier < uint(snarl.Tier1) || *tier > uint(snarl.Tier2) {
+		return fmt.Errorf("tier %d is not 1 or 2", *tier)
 	}
 	f, err := wav.ParseFormat(*format)
 	if err != nil {

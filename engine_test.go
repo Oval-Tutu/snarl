@@ -16,20 +16,18 @@ import (
 
 const testRate = 48000
 
-var tiers = []Tier{Tier0, Tier1}
-
-func newTestEngine(t testing.TB, name string, tier Tier) Engine {
+func newTestEngine(t testing.TB, name string) Engine {
 	t.Helper()
 	p, err := LoadProfile(name)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return newEngine(t, p, tier)
+	return newEngine(t, p)
 }
 
-func newEngine(t testing.TB, p Profile, tier Tier) Engine {
+func newEngine(t testing.TB, p Profile) Engine {
 	t.Helper()
-	e, err := New(p, testRate, tier)
+	e, err := New(p, testRate, Tier1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,26 +91,49 @@ func TestLoadProfiles(t *testing.T) {
 	if _, err := LoadProfile("v12"); !errors.Is(err, ErrUnknownProfile) {
 		t.Errorf("unknown profile: got %v", err)
 	}
-	if _, err := New(Profile{Name: "v8"}, testRate, Tier0); err != nil {
+	if _, err := New(Profile{Name: "v8"}, testRate, Tier1); err != nil {
 		t.Errorf("profile by name only: %v", err)
+	}
+}
+
+// TestTiers checks that Tier2 renders the tier 1 model, and that New
+// rejects any other tier.
+func TestTiers(t *testing.T) {
+	p, err := LoadProfile("flat12")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := New(p, testRate, Tier2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := render(newEngine(t, p), 9, sweep(p))
+	b := render(e, 9, sweep(p))
+	for i := range a {
+		if a[i] != b[i] {
+			t.Fatalf("sample %d differs: %v in tier 1 and %v in tier 2", i, a[i], b[i])
+		}
+	}
+	for _, tier := range []Tier{0, Tier2 + 1} {
+		if _, err := New(p, testRate, tier); err == nil {
+			t.Errorf("tier %d: no error", tier)
+		}
 	}
 }
 
 func TestFiringFrequency(t *testing.T) {
 	cyl := map[string]float64{"flat12": 12, "inline4": 4, "flat6": 6, "v8": 8}
 	for _, name := range Profiles() {
-		for _, tier := range tiers {
-			for _, rpm := range []float32{1500, 3000} {
-				t.Run(fmt.Sprintf("%s/tier%d/%.0f", name, tier, rpm), func(t *testing.T) {
-					e := newTestEngine(t, name, tier)
-					x := render(e, 2, held(rpm, 0.5))[testRate:]
-					want := float64(rpm) / 60 * cyl[name] / 2
-					got, _ := lowPeak(x, 1.75*want)
-					if math.Abs(got-want) > 2 {
-						t.Errorf("strongest low-frequency peak at %.0f Hz, want %.0f Hz", got, want)
-					}
-				})
-			}
+		for _, rpm := range []float32{1500, 3000} {
+			t.Run(fmt.Sprintf("%s/%.0f", name, rpm), func(t *testing.T) {
+				e := newTestEngine(t, name)
+				x := render(e, 2, held(rpm, 0.5))[testRate:]
+				want := float64(rpm) / 60 * cyl[name] / 2
+				got, _ := lowPeak(x, 1.75*want)
+				if math.Abs(got-want) > 2 {
+					t.Errorf("strongest low-frequency peak at %.0f Hz, want %.0f Hz", got, want)
+				}
+			})
 		}
 	}
 }
@@ -145,36 +166,34 @@ func sweep(p Profile) func(float64) Snapshot {
 
 func TestSweepBounded(t *testing.T) {
 	for _, name := range Profiles() {
-		for _, tier := range tiers {
-			t.Run(fmt.Sprintf("%s/tier%d", name, tier), func(t *testing.T) {
-				p, err := LoadProfile(name)
-				if err != nil {
-					t.Fatal(err)
+		t.Run(name, func(t *testing.T) {
+			p, err := LoadProfile(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			e := newTestEngine(t, name)
+			x := render(e, 12, sweep(p))
+			var peak float64
+			for i, v := range x {
+				a := math.Abs(float64(v))
+				if math.IsNaN(a) || math.IsInf(a, 0) || a > 1 {
+					t.Fatalf("sample %d is %v", i, v)
 				}
-				e := newTestEngine(t, name, tier)
-				x := render(e, 12, sweep(p))
-				var peak float64
-				for i, v := range x {
-					a := math.Abs(float64(v))
-					if math.IsNaN(a) || math.IsInf(a, 0) || a > 1 {
-						t.Fatalf("sample %d is %v", i, v)
-					}
-					peak = math.Max(peak, a)
-				}
-				if peak < 0.05 {
-					t.Errorf("peak %.3f, want sound", peak)
-				}
-			})
-		}
+				peak = math.Max(peak, a)
+			}
+			if peak < 0.05 {
+				t.Errorf("peak %.3f, want sound", peak)
+			}
+		})
 	}
 }
 
-// renderScenario renders scenarios/<profile>/<name>.scn at the tier with
-// the snapshots that snarl-render sets: load equals throttle, and the
+// renderScenario renders scenarios/<profile>/<name>.scn with the
+// snapshots that snarl-render sets: load equals throttle, and the
 // overrun flag is set below a throttle of 0.05.
-func renderScenario(t *testing.T, p Profile, name string, tier Tier) ([]float64, *scenario.Scenario) {
+func renderScenario(t *testing.T, p Profile, name string) ([]float64, *scenario.Scenario) {
 	t.Helper()
-	return renderScenarioWith(t, p, name, tier, func(rpm, thr float64) Snapshot {
+	return renderScenarioWith(t, p, name, func(rpm, thr float64) Snapshot {
 		s := Snapshot{RPM: float32(rpm), Throttle: float32(thr), Load: float32(thr), Flags: FlagRunning}
 		if thr < 0.05 {
 			s.Flags |= FlagOverrun
@@ -183,21 +202,15 @@ func renderScenario(t *testing.T, p Profile, name string, tier Tier) ([]float64,
 	})
 }
 
-// renderScenarioWith renders scenarios/<profile>/<name>.scn at the tier
-// with the snapshots that snap returns for the scenario RPM and throttle.
-func renderScenarioWith(t *testing.T, p Profile, name string, tier Tier,
-	snap func(rpm, thr float64) Snapshot,
-) ([]float64, *scenario.Scenario) {
+// renderScenarioWith renders scenarios/<profile>/<name>.scn with the
+// snapshots that snap returns for the scenario RPM and throttle.
+func renderScenarioWith(t *testing.T, p Profile, name string, snap func(rpm, thr float64) Snapshot) ([]float64, *scenario.Scenario) {
 	t.Helper()
 	scn, err := scenario.ParseFile(filepath.Join("scenarios", p.Name, name+".scn"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, err := New(p, testRate, tier)
-	if err != nil {
-		t.Fatal(err)
-	}
-	x := render(e, scn.Duration(), func(t float64) Snapshot {
+	x := render(newEngine(t, p), scn.Duration(), func(t float64) Snapshot {
 		return snap(scn.At(t))
 	})
 	y := make([]float64, len(x))
@@ -239,30 +252,28 @@ func rms(x []float64) float64 {
 // because a pop adds to the level.
 func TestOverrunLevel(t *testing.T) {
 	for _, name := range Profiles() {
-		for _, tier := range tiers {
-			t.Run(fmt.Sprintf("%s/tier%d", name, tier), func(t *testing.T) {
-				p, err := LoadProfile(name)
-				if err != nil {
-					t.Fatal(err)
+		t.Run(name, func(t *testing.T) {
+			p, err := LoadProfile(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			q := p
+			s := *p.spec
+			s.Pops.Density = 0
+			q.spec = &s
+			x, scn := renderScenario(t, p, "overrun")
+			quiet, _ := renderScenario(t, q, "overrun")
+			ref := rms(x[testRate : 2*testRate])
+			for w := 10; float64(w+1)/5 <= scn.Duration(); w++ {
+				t0 := float64(w) / 5
+				lo, hi := windowDB(x, t0, ref), windowDB(quiet, t0, ref)
+				if lo < -3 || hi > 3 {
+					rpm, _ := scn.At(t0 + 0.1)
+					t.Errorf("window at %.1f s, %.0f RPM: %.1f dB, %.1f dB without pops, want within 3 dB",
+						t0, rpm, lo, hi)
 				}
-				q := p
-				s := *p.spec
-				s.Pops.Density = 0
-				q.spec = &s
-				x, scn := renderScenario(t, p, "overrun", tier)
-				quiet, _ := renderScenario(t, q, "overrun", tier)
-				ref := rms(x[testRate : 2*testRate])
-				for w := 10; float64(w+1)/5 <= scn.Duration(); w++ {
-					t0 := float64(w) / 5
-					lo, hi := windowDB(x, t0, ref), windowDB(quiet, t0, ref)
-					if lo < -3 || hi > 3 {
-						rpm, _ := scn.At(t0 + 0.1)
-						t.Errorf("window at %.1f s, %.0f RPM: %.1f dB, %.1f dB without pops, want within 3 dB",
-							t0, rpm, lo, hi)
-					}
-				}
-			})
-		}
+			}
+		})
 	}
 }
 
@@ -274,36 +285,34 @@ func TestOverrunLevel(t *testing.T) {
 // pop adds to the level.
 func TestLoadLevelOrder(t *testing.T) {
 	for _, name := range Profiles() {
-		for _, tier := range tiers {
-			t.Run(fmt.Sprintf("%s/tier%d", name, tier), func(t *testing.T) {
-				p, err := LoadProfile(name)
-				if err != nil {
-					t.Fatal(err)
-				}
-				q := p
-				s := *p.spec
-				s.Pops.Density = 0
-				q.spec = &s
-				over, scn := renderScenario(t, q, "holds-t000", tier)
-				part, _ := renderScenario(t, p, "holds-t050", tier)
-				full, _ := renderScenario(t, p, "holds-t100", tier)
-				level := func(x []float64, t0 float64) float64 {
-					return 20 * math.Log10(rms(x[int(t0*testRate):int((t0+1)*testRate)]))
-				}
-				start := 0.0
-				for _, seg := range scn.Segments {
-					if seg.Kind == scenario.Hold {
-						t0 := start + seg.Seconds/2 - 0.5
-						o, h, f := level(over, t0), level(part, t0), level(full, t0)
-						if o > h || h > f-0.5 || h < f-4 {
-							t.Errorf("%.0f RPM: overrun %.1f dB, part %.1f dB, relative to full throttle",
-								seg.RPM0, o-f, h-f)
-						}
+		t.Run(name, func(t *testing.T) {
+			p, err := LoadProfile(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			q := p
+			s := *p.spec
+			s.Pops.Density = 0
+			q.spec = &s
+			over, scn := renderScenario(t, q, "holds-t000")
+			part, _ := renderScenario(t, p, "holds-t050")
+			full, _ := renderScenario(t, p, "holds-t100")
+			level := func(x []float64, t0 float64) float64 {
+				return 20 * math.Log10(rms(x[int(t0*testRate):int((t0+1)*testRate)]))
+			}
+			start := 0.0
+			for _, seg := range scn.Segments {
+				if seg.Kind == scenario.Hold {
+					t0 := start + seg.Seconds/2 - 0.5
+					o, h, f := level(over, t0), level(part, t0), level(full, t0)
+					if o > h || h > f-0.5 || h < f-4 {
+						t.Errorf("%.0f RPM: overrun %.1f dB, part %.1f dB, relative to full throttle",
+							seg.RPM0, o-f, h-f)
 					}
-					start += seg.Seconds
 				}
-			})
-		}
+				start += seg.Seconds
+			}
+		})
 	}
 }
 
@@ -321,12 +330,8 @@ func withoutIdle(p Profile) Profile {
 // At 4000 RPM and at the redline, the output equals the output without
 // them.
 func TestIdleCharacter(t *testing.T) {
-	cycleCV := func(p Profile, tier Tier) float64 {
-		e, err := New(p, testRate, tier)
-		if err != nil {
-			t.Fatal(err)
-		}
-		x := render(e, 3, held(p.IdleRPM, 0))[testRate/2:]
+	cycleCV := func(p Profile) float64 {
+		x := render(newEngine(t, p), 3, held(p.IdleRPM, 0))[testRate/2:]
 		y := make([]float64, len(x))
 		for i, v := range x {
 			y[i] = float64(v)
@@ -339,35 +344,33 @@ func TestIdleCharacter(t *testing.T) {
 		return cv
 	}
 	for _, name := range Profiles() {
-		for _, tier := range tiers {
-			t.Run(fmt.Sprintf("%s/tier%d", name, tier), func(t *testing.T) {
-				p, err := LoadProfile(name)
-				if err != nil {
-					t.Fatal(err)
+		t.Run(name, func(t *testing.T) {
+			p, err := LoadProfile(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			q := withoutIdle(p)
+			if id := p.spec.Idle; id.Variation > 0 || id.TimingDeg > 0 {
+				on, off := cycleCV(p), cycleCV(q)
+				if on < 0.06 || on < 2*off {
+					t.Errorf("idle cycle energy CV %.3f, %.3f without [idle]", on, off)
 				}
-				q := withoutIdle(p)
-				if id := p.spec.Idle; id.Variation > 0 || id.TimingDeg > 0 {
-					on, off := cycleCV(p, tier), cycleCV(q, tier)
-					if on < 0.06 || on < 2*off {
-						t.Errorf("idle cycle energy CV %.3f, %.3f without [idle]", on, off)
+			}
+			for _, rpm := range []float32{4000, p.RedlineRPM} {
+				for _, thr := range []float32{0, 0.5, 1} {
+					a := render(newEngine(t, p), 1, held(rpm, thr))
+					b := render(newEngine(t, q), 1, held(rpm, thr))
+					var d, e float64
+					for i := range a {
+						d += float64(a[i]-b[i]) * float64(a[i]-b[i])
+						e += float64(b[i]) * float64(b[i])
+					}
+					if d > 1e-10*e {
+						t.Errorf("%.0f RPM, throttle %.1f: output differs by %.2g RMS relative", rpm, thr, math.Sqrt(d/e))
 					}
 				}
-				for _, rpm := range []float32{4000, p.RedlineRPM} {
-					for _, thr := range []float32{0, 0.5, 1} {
-						a := render(newEngine(t, p, tier), 1, held(rpm, thr))
-						b := render(newEngine(t, q, tier), 1, held(rpm, thr))
-						var d, e float64
-						for i := range a {
-							d += float64(a[i]-b[i]) * float64(a[i]-b[i])
-							e += float64(b[i]) * float64(b[i])
-						}
-						if d > 1e-10*e {
-							t.Errorf("%.0f RPM, throttle %.1f: output differs by %.2g RMS relative", rpm, thr, math.Sqrt(d/e))
-						}
-					}
-				}
-			})
-		}
+			}
+		})
 	}
 }
 
@@ -375,19 +378,17 @@ func TestIdleCharacter(t *testing.T) {
 // is within 1 LU of the calibration target of -16 LUFS.
 func TestOutputCalibration(t *testing.T) {
 	for _, name := range Profiles() {
-		for _, tier := range tiers {
-			t.Run(fmt.Sprintf("%s/tier%d", name, tier), func(t *testing.T) {
-				p, err := LoadProfile(name)
-				if err != nil {
-					t.Fatal(err)
-				}
-				x, scn := renderScenario(t, p, "sweep-wot", tier)
-				l := segmentLoudness(x, 0, scn.Duration())
-				if math.Abs(l+16) > 1 {
-					t.Errorf("sweep-wot at %.2f LUFS, want -16 within 1 LU", l)
-				}
-			})
-		}
+		t.Run(name, func(t *testing.T) {
+			p, err := LoadProfile(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			x, scn := renderScenario(t, p, "sweep-wot")
+			l := segmentLoudness(x, 0, scn.Duration())
+			if math.Abs(l+16) > 1 {
+				t.Errorf("sweep-wot at %.2f LUFS, want -16 within 1 LU", l)
+			}
+		})
 	}
 }
 
@@ -395,20 +396,18 @@ func TestOutputCalibration(t *testing.T) {
 // overrun scenario below full scale.
 func TestOverrunPeak(t *testing.T) {
 	for _, name := range Profiles() {
-		for _, tier := range tiers {
-			t.Run(fmt.Sprintf("%s/tier%d", name, tier), func(t *testing.T) {
-				p, err := LoadProfile(name)
-				if err != nil {
-					t.Fatal(err)
+		t.Run(name, func(t *testing.T) {
+			p, err := LoadProfile(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			x, _ := renderScenario(t, p, "overrun")
+			for i, v := range x {
+				if math.Abs(v) >= 0.99 {
+					t.Fatalf("sample %d is %.4f, want below 0.99", i, v)
 				}
-				x, _ := renderScenario(t, p, "overrun", tier)
-				for i, v := range x {
-					if math.Abs(v) >= 0.99 {
-						t.Fatalf("sample %d is %.4f, want below 0.99", i, v)
-					}
-				}
-			})
-		}
+			}
+		})
 	}
 }
 
@@ -429,7 +428,7 @@ func TestOverrunOrders(t *testing.T) {
 			q.spec = &s
 			orders := analysis.Orders(20)
 			spectrum := func(p Profile) []float64 {
-				x, scn := renderScenario(t, p, "overrun", Tier1)
+				x, scn := renderScenario(t, p, "overrun")
 				rpm, _ := scn.At(3)
 				lv, ok := analysis.OrderSpectrum(x[int(2.3*testRate):int(3.8*testRate)], testRate,
 					func(float64) float64 { return rpm }, orders)
@@ -479,50 +478,48 @@ func liftOff(p Profile) func(float64) Snapshot {
 // that band, so the lower limit catches an air noise that fades out.
 func TestOverrunAirSubtle(t *testing.T) {
 	for _, name := range Profiles() {
-		for _, tier := range tiers {
-			t.Run(fmt.Sprintf("%s/tier%d", name, tier), func(t *testing.T) {
-				p, err := LoadProfile(name)
-				if err != nil {
-					t.Fatal(err)
+		t.Run(name, func(t *testing.T) {
+			p, err := LoadProfile(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			q, err := LoadProfileWith(name, "noise.air=0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			after := func(p Profile) []float64 {
+				x := render(newEngine(t, p), 3, liftOff(p))
+				y := make([]float64, len(x))
+				for i, v := range x {
+					y[i] = float64(v)
 				}
-				q, err := LoadProfileWith(name, "noise.air=0")
-				if err != nil {
-					t.Fatal(err)
-				}
-				after := func(p Profile) []float64 {
-					x := render(newEngine(t, p, tier), 3, liftOff(p))
-					y := make([]float64, len(x))
-					for i, v := range x {
-						y[i] = float64(v)
+				return y
+			}
+			on, off := after(p), after(q)
+			gain := func(lo, hi float64) float64 {
+				band := func(y []float64) float64 {
+					var e float64
+					for _, v := range analysis.BandPass(y, testRate, lo, hi)[2*testRate:] {
+						e += v * v
 					}
-					return y
+					return e
 				}
-				on, off := after(p), after(q)
-				gain := func(lo, hi float64) float64 {
-					band := func(y []float64) float64 {
-						var e float64
-						for _, v := range analysis.BandPass(y, testRate, lo, hi)[2*testRate:] {
-							e += v * v
-						}
-						return e
-					}
-					return 10 * math.Log10(band(on)/band(off))
-				}
-				high, body := gain(3000, 8000), gain(300, 2000)
-				t.Logf("air adds %.2f dB from 3 to 8 kHz and %.2f dB from 300 Hz to 2 kHz after the lift-off", high, body)
-				if high > 1.6 {
-					t.Errorf("air adds %.1f dB from 3 to 8 kHz after the lift-off, want at most 1.6 dB", high)
-				}
-				if body < 0.08 {
-					t.Errorf("air adds %.2f dB from 300 Hz to 2 kHz after the lift-off, want at least 0.08 dB", body)
-				}
-			})
-		}
+				return 10 * math.Log10(band(on)/band(off))
+			}
+			high, body := gain(3000, 8000), gain(300, 2000)
+			t.Logf("air adds %.2f dB from 3 to 8 kHz and %.2f dB from 300 Hz to 2 kHz after the lift-off", high, body)
+			if high > 1.6 {
+				t.Errorf("air adds %.1f dB from 3 to 8 kHz after the lift-off, want at most 1.6 dB", high)
+			}
+			if body < 0.08 {
+				t.Errorf("air adds %.2f dB from 300 Hz to 2 kHz after the lift-off, want at least 0.08 dB", body)
+			}
+		})
 	}
 }
 
 func TestBadInputBounded(t *testing.T) {
-	e := newTestEngine(t, "v8", Tier1)
+	e := newTestEngine(t, "v8")
 	bad := []float32{float32(math.NaN()), float32(math.Inf(1)), -5000, 1e9}
 	buf := make([]float32, 256)
 	for _, v := range bad {
@@ -539,7 +536,7 @@ func TestBadInputBounded(t *testing.T) {
 }
 
 func TestSilentWhenNotRunning(t *testing.T) {
-	e := newTestEngine(t, "flat6", Tier1)
+	e := newTestEngine(t, "flat6")
 	x := render(e, 1, func(float64) Snapshot { return Snapshot{RPM: 3000, Throttle: 1, Load: 1} })
 	for i, v := range x {
 		if v != 0 {
@@ -553,8 +550,8 @@ func TestDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := render(newTestEngine(t, "flat12", Tier1), 9, sweep(p))
-	b := render(newTestEngine(t, "flat12", Tier1), 9, sweep(p))
+	a := render(newTestEngine(t, "flat12"), 9, sweep(p))
+	b := render(newTestEngine(t, "flat12"), 9, sweep(p))
 	for i := range a {
 		if a[i] != b[i] {
 			t.Fatalf("sample %d differs: %v and %v", i, a[i], b[i])
@@ -583,31 +580,29 @@ func TestPopsFire(t *testing.T) {
 		}
 		return e
 	}
-	on := render(newTestEngine(t, "flat12", Tier0), 12, sweep(p))[7*testRate:]
-	off := render(newEngine(t, q, Tier0), 12, sweep(q))[7*testRate:]
+	on := render(newTestEngine(t, "flat12"), 12, sweep(p))[7*testRate:]
+	off := render(newEngine(t, q), 12, sweep(q))[7*testRate:]
 	if hf(on) < 1.15*hf(off) {
 		t.Errorf("overrun high-frequency energy %.3g, without pops %.3g", hf(on), hf(off))
 	}
 }
 
 func TestRenderAllocs(t *testing.T) {
-	for _, tier := range tiers {
-		e := newTestEngine(t, "flat12", tier)
-		buf := make([]float32, 256)
-		s := Snapshot{RPM: 4000, Throttle: 1, Load: 1, Flags: FlagRunning}
-		n := testing.AllocsPerRun(200, func() {
-			s.Limiter++
-			e.Set(s)
-			e.Render(buf)
-		})
-		if n != 0 {
-			t.Errorf("tier %d: %v allocations per Render", tier, n)
-		}
+	e := newTestEngine(t, "flat12")
+	buf := make([]float32, 256)
+	s := Snapshot{RPM: 4000, Throttle: 1, Load: 1, Flags: FlagRunning}
+	n := testing.AllocsPerRun(200, func() {
+		s.Limiter++
+		e.Set(s)
+		e.Render(buf)
+	})
+	if n != 0 {
+		t.Errorf("%v allocations per Render", n)
 	}
 }
 
 func TestSetRenderConcurrent(t *testing.T) {
-	e := newTestEngine(t, "v8", Tier1)
+	e := newTestEngine(t, "v8")
 	var wg sync.WaitGroup
 	done := make(chan struct{})
 	wg.Add(2)
@@ -670,20 +665,18 @@ func TestLoadFilter(t *testing.T) {
 
 func BenchmarkRender(b *testing.B) {
 	for _, name := range Profiles() {
-		for _, tier := range tiers {
-			b.Run(fmt.Sprintf("%s/tier%d", name, tier), func(b *testing.B) {
-				e := newTestEngine(b, name, tier)
-				buf := make([]float32, 256)
-				e.Set(Snapshot{RPM: 4000, Throttle: 0.7, Load: 0.7, Flags: FlagRunning})
-				b.ReportAllocs()
-				for b.Loop() {
-					e.Render(buf)
-				}
-				blockNs := 256.0 / testRate * 1e9
-				nsPerBlock := float64(b.Elapsed().Nanoseconds()) / float64(b.N)
-				b.ReportMetric(100*nsPerBlock/blockNs, "%realtime")
-			})
-		}
+		b.Run(name, func(b *testing.B) {
+			e := newTestEngine(b, name)
+			buf := make([]float32, 256)
+			e.Set(Snapshot{RPM: 4000, Throttle: 0.7, Load: 0.7, Flags: FlagRunning})
+			b.ReportAllocs()
+			for b.Loop() {
+				e.Render(buf)
+			}
+			blockNs := 256.0 / testRate * 1e9
+			nsPerBlock := float64(b.Elapsed().Nanoseconds()) / float64(b.N)
+			b.ReportMetric(100*nsPerBlock/blockNs, "%realtime")
+		})
 	}
 }
 
@@ -694,9 +687,9 @@ const limiterHop = 32
 // throttle in third gear, with the overrun flag set as a careless game can
 // set it. It returns the output and the pitch RPM every limiterHop
 // samples.
-func limiterHold(t testing.TB, p Profile, tier Tier, rpm float32, seconds float64) (x, pitch []float32) {
+func limiterHold(t testing.TB, p Profile, rpm float32, seconds float64) (x, pitch []float32) {
 	t.Helper()
-	e := newEngine(t, p, tier)
+	e := newEngine(t, p)
 	s := Snapshot{RPM: rpm, Throttle: 1, Load: 1, Gear: 3, Flags: FlagRunning | FlagOverrun | FlagRedZone}
 	x = make([]float32, int(seconds*testRate)/256*256)
 	for i := 0; i < len(x); i += 256 {
@@ -842,79 +835,77 @@ var limiterByEar = map[string]bool{"v8": true}
 // full scale.
 func TestLimiterBounce(t *testing.T) {
 	for _, name := range Profiles() {
-		for _, tier := range tiers {
-			t.Run(fmt.Sprintf("%s/tier%d", name, tier), func(t *testing.T) {
-				p, err := LoadProfile(name)
-				if err != nil {
-					t.Fatal(err)
+		t.Run(name, func(t *testing.T) {
+			p, err := LoadProfile(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The level shape comes from a render with no pops, because an
+			// ignition cut bang at a random time in a cut changes the level
+			// of the cut.
+			q := p
+			noPops := *p.spec
+			noPops.Pops.Density = 0
+			q.spec = &noPops
+			skip := testRate / 2
+			x, pitch := limiterHold(t, p, p.LimiterRPM, 3)
+			ref, _ := limiterHold(t, p, p.LimiterRPM-150, 3)
+			clean, _ := limiterHold(t, q, p.LimiterRPM, 3)
+			x, ref, clean, pitch = x[skip:], ref[skip:], clean[skip:], pitch[skip/limiterHop:]
+			for i, v := range x {
+				if v != v || v > 0.99 || v < -0.99 {
+					t.Fatalf("sample %d is %v", i, v)
 				}
-				// The level shape comes from a render with no pops, because an
-				// ignition cut bang at a random time in a cut changes the level
-				// of the cut.
-				q := p
-				noPops := *p.spec
-				noPops.Pops.Density = 0
-				q.spec = &noPops
-				skip := testRate / 2
-				x, pitch := limiterHold(t, p, tier, p.LimiterRPM, 3)
-				ref, _ := limiterHold(t, p, tier, p.LimiterRPM-150, 3)
-				clean, _ := limiterHold(t, q, tier, p.LimiterRPM, 3)
-				x, ref, clean, pitch = x[skip:], ref[skip:], clean[skip:], pitch[skip/limiterHop:]
-				for i, v := range x {
-					if v != v || v > 0.99 || v < -0.99 {
-						t.Fatalf("sample %d is %v", i, v)
-					}
-				}
-				bs := bounces(pitch)
-				if len(bs) < 3 {
-					t.Fatalf("%d bounces in 2.5 s", len(bs))
-				}
-				rate := float64(len(bs)-1) * testRate / limiterHop / float64(bs[len(bs)-1].cut-bs[0].cut)
-				var dip, sum, sq float64
-				for _, b := range bs {
-					dip += float64(p.LimiterRPM - pitch[b.fire])
-					d := float64(b.next - b.cut)
-					sum += d
-					sq += d * d
-				}
-				nb := float64(len(bs))
-				dip /= nb
-				mean := sum / nb
-				cv := math.Sqrt(max(0, sq/nb-mean*mean)) / mean
-				var spread float64
-				for _, b := range bs {
-					spread = max(spread, math.Abs(float64(b.next-b.cut)/mean-1))
-				}
-				cut, notch, bark := limiterShape(clean, pitch)
-				hf := 10 * math.Log10(bandPower(x)/bandPower(ref))
-				sp := p.spec
-				wantRate := 1000 / (sp.LimiterMS * (1 + sp.LimiterFallRPMS/sp.LimiterRiseRPMS))
-				wantDip := sp.LimiterFallRPMS * sp.LimiterLoadScale * sp.LimiterMS / 1000
-				ref0 := limiterTargets[name]
-				t.Logf("%.2f cuts per second, mean RPM dip %.0f, interval variation %.3f and spread %.3f, cut %+.1f dB, notch %+.1f dB, bark %+.1f dB, band above 3 kHz %+.1f dB",
-					rate, dip, cv, spread, cut, notch, bark, hf)
-				if math.Abs(rate-wantRate) > 0.2*wantRate || math.Abs(dip-wantDip) > 0.2*wantDip {
-					t.Errorf("%.1f cuts per second with an RPM dip of %.0f, want %.1f and %.0f from the profile",
-						rate, dip, wantRate, wantDip)
-				}
-				j := sp.LimiterJitter
-				if j == 0 && cv > 0.03 || j > 0 && (cv < 0.5*j/math.Sqrt(3) || cv > 1.5*j/math.Sqrt(3) || spread > j+0.02) {
-					t.Errorf("interval variation %.3f and spread %.3f, want about %.3f and at most %.2f for a limiter jitter of %.2f",
-						cv, spread, j/math.Sqrt(3), j+0.02, j)
-				}
-				if sp.LimiterLoadScale == 1 && !limiterByEar[name] && (math.Abs(rate-ref0.rate) > 0.25*ref0.rate || math.Abs(dip-ref0.dip) > 0.25*ref0.dip) {
-					t.Errorf("%.1f cuts per second with an RPM dip of %.0f, want %.1f and %.0f from engine-sim",
-						rate, dip, ref0.rate, ref0.dip)
-				}
-				if !(math.Abs(cut-ref0.cut) <= 1.5 && math.Abs(notch-ref0.notch) <= 3 && math.Abs(bark-ref0.bark) <= 1.5) {
-					t.Errorf("cut %+.1f dB, notch %+.1f dB and bark %+.1f dB, want %+.1f, %+.1f and %+.1f from engine-sim",
-						cut, notch, bark, ref0.cut, ref0.notch, ref0.bark)
-				}
-				if hf > 1 {
-					t.Errorf("band above 3 kHz %.1f dB above full throttle below the limiter", hf)
-				}
-			})
-		}
+			}
+			bs := bounces(pitch)
+			if len(bs) < 3 {
+				t.Fatalf("%d bounces in 2.5 s", len(bs))
+			}
+			rate := float64(len(bs)-1) * testRate / limiterHop / float64(bs[len(bs)-1].cut-bs[0].cut)
+			var dip, sum, sq float64
+			for _, b := range bs {
+				dip += float64(p.LimiterRPM - pitch[b.fire])
+				d := float64(b.next - b.cut)
+				sum += d
+				sq += d * d
+			}
+			nb := float64(len(bs))
+			dip /= nb
+			mean := sum / nb
+			cv := math.Sqrt(max(0, sq/nb-mean*mean)) / mean
+			var spread float64
+			for _, b := range bs {
+				spread = max(spread, math.Abs(float64(b.next-b.cut)/mean-1))
+			}
+			cut, notch, bark := limiterShape(clean, pitch)
+			hf := 10 * math.Log10(bandPower(x)/bandPower(ref))
+			sp := p.spec
+			wantRate := 1000 / (sp.LimiterMS * (1 + sp.LimiterFallRPMS/sp.LimiterRiseRPMS))
+			wantDip := sp.LimiterFallRPMS * sp.LimiterLoadScale * sp.LimiterMS / 1000
+			ref0 := limiterTargets[name]
+			t.Logf("%.2f cuts per second, mean RPM dip %.0f, interval variation %.3f and spread %.3f, cut %+.1f dB, notch %+.1f dB, bark %+.1f dB, band above 3 kHz %+.1f dB",
+				rate, dip, cv, spread, cut, notch, bark, hf)
+			if math.Abs(rate-wantRate) > 0.2*wantRate || math.Abs(dip-wantDip) > 0.2*wantDip {
+				t.Errorf("%.1f cuts per second with an RPM dip of %.0f, want %.1f and %.0f from the profile",
+					rate, dip, wantRate, wantDip)
+			}
+			j := sp.LimiterJitter
+			if j == 0 && cv > 0.03 || j > 0 && (cv < 0.5*j/math.Sqrt(3) || cv > 1.5*j/math.Sqrt(3) || spread > j+0.02) {
+				t.Errorf("interval variation %.3f and spread %.3f, want about %.3f and at most %.2f for a limiter jitter of %.2f",
+					cv, spread, j/math.Sqrt(3), j+0.02, j)
+			}
+			if sp.LimiterLoadScale == 1 && !limiterByEar[name] && (math.Abs(rate-ref0.rate) > 0.25*ref0.rate || math.Abs(dip-ref0.dip) > 0.25*ref0.dip) {
+				t.Errorf("%.1f cuts per second with an RPM dip of %.0f, want %.1f and %.0f from engine-sim",
+					rate, dip, ref0.rate, ref0.dip)
+			}
+			if !(math.Abs(cut-ref0.cut) <= 1.5 && math.Abs(notch-ref0.notch) <= 3 && math.Abs(bark-ref0.bark) <= 1.5) {
+				t.Errorf("cut %+.1f dB, notch %+.1f dB and bark %+.1f dB, want %+.1f, %+.1f and %+.1f from engine-sim",
+					cut, notch, bark, ref0.cut, ref0.notch, ref0.bark)
+			}
+			if hf > 1 {
+				t.Errorf("band above 3 kHz %.1f dB above full throttle below the limiter", hf)
+			}
+		})
 	}
 }
 
@@ -928,53 +919,51 @@ func TestLimiterBounce(t *testing.T) {
 func TestLimiterToneHolds(t *testing.T) {
 	const n, hop = 4096, 480
 	for _, name := range Profiles() {
-		for _, tier := range tiers {
-			t.Run(fmt.Sprintf("%s/tier%d", name, tier), func(t *testing.T) {
-				p, err := LoadProfile(name)
-				if err != nil {
-					t.Fatal(err)
+		t.Run(name, func(t *testing.T) {
+			p, err := LoadProfile(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			q, err := LoadProfileWith(name, "mechanical.fan_gain=0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			x, _ := limiterHold(t, p, p.LimiterRPM, 2)
+			y, _ := limiterHold(t, q, p.LimiterRPM, 2)
+			d := make([]float64, len(x))
+			var e float64
+			for i := range x {
+				d[i] = float64(x[i] - y[i])
+				e += d[i] * d[i]
+			}
+			if e == 0 {
+				return
+			}
+			win := analysis.Hann(n)
+			buf := make([]complex128, n)
+			var track []float64
+			for i := testRate / 2; i+n <= len(d); i += hop {
+				for k := range buf {
+					buf[k] = complex(d[i+k]*win[k], 0)
 				}
-				q, err := LoadProfileWith(name, "mechanical.fan_gain=0")
-				if err != nil {
-					t.Fatal(err)
-				}
-				x, _ := limiterHold(t, p, tier, p.LimiterRPM, 2)
-				y, _ := limiterHold(t, q, tier, p.LimiterRPM, 2)
-				d := make([]float64, len(x))
-				var e float64
-				for i := range x {
-					d[i] = float64(x[i] - y[i])
-					e += d[i] * d[i]
-				}
-				if e == 0 {
-					return
-				}
-				win := analysis.Hann(n)
-				buf := make([]complex128, n)
-				var track []float64
-				for i := testRate / 2; i+n <= len(d); i += hop {
-					for k := range buf {
-						buf[k] = complex(d[i+k]*win[k], 0)
+				analysis.FFT(buf)
+				lo, hi := 100*n/testRate, 2000*n/testRate
+				k := lo
+				for j := lo; j <= hi; j++ {
+					if cmplx.Abs(buf[j]) > cmplx.Abs(buf[k]) {
+						k = j
 					}
-					analysis.FFT(buf)
-					lo, hi := 100*n/testRate, 2000*n/testRate
-					k := lo
-					for j := lo; j <= hi; j++ {
-						if cmplx.Abs(buf[j]) > cmplx.Abs(buf[k]) {
-							k = j
-						}
-					}
-					a, b, c := math.Log(cmplx.Abs(buf[k-1])), math.Log(cmplx.Abs(buf[k])), math.Log(cmplx.Abs(buf[k+1]))
-					track = append(track, (float64(k)+0.5*(a-c)/(a-2*b+c))*testRate/n)
 				}
-				slices.Sort(track)
-				swing := track[len(track)*9/10] - track[len(track)/10]
-				t.Logf("fan tone from %.0f to %.0f Hz", track[len(track)/10], track[len(track)*9/10])
-				if swing > 5 {
-					t.Errorf("fan tone moves by %.0f Hz in the limiter bounce, want at most 5 Hz", swing)
-				}
-			})
-		}
+				a, b, c := math.Log(cmplx.Abs(buf[k-1])), math.Log(cmplx.Abs(buf[k])), math.Log(cmplx.Abs(buf[k+1]))
+				track = append(track, (float64(k)+0.5*(a-c)/(a-2*b+c))*testRate/n)
+			}
+			slices.Sort(track)
+			swing := track[len(track)*9/10] - track[len(track)/10]
+			t.Logf("fan tone from %.0f to %.0f Hz", track[len(track)/10], track[len(track)*9/10])
+			if swing > 5 {
+				t.Errorf("fan tone moves by %.0f Hz in the limiter bounce, want at most 5 Hz", swing)
+			}
+		})
 	}
 }
 
@@ -983,9 +972,9 @@ func TestLimiterToneHolds(t *testing.T) {
 // and with a limiter event every 100 ms. Before each limiterHop block, it
 // sets FlagFinalGear when final returns true for the pitch so far. It
 // returns the output and the pitch RPM of each block.
-func finalHold(t testing.TB, p Profile, tier Tier, rpm float32, seconds float64, final func(pitch []float32) bool) (x, pitch []float32) {
+func finalHold(t testing.TB, p Profile, rpm float32, seconds float64, final func(pitch []float32) bool) (x, pitch []float32) {
 	t.Helper()
-	e := newEngine(t, p, tier)
+	e := newEngine(t, p)
 	s := Snapshot{RPM: rpm, Throttle: 1, Load: 1, Gear: 3}
 	x = make([]float32, int(seconds*testRate)/limiterHop*limiterHop)
 	for i := 0; i < len(x); i += limiterHop {
@@ -1025,35 +1014,33 @@ func levelSteps(x []float32) (dip, rise float64) {
 func TestFinalGearHolds(t *testing.T) {
 	always := func([]float32) bool { return true }
 	for _, name := range Profiles() {
-		for _, tier := range tiers {
-			p, err := LoadProfile(name)
-			if err != nil {
-				t.Fatal(err)
-			}
-			skip := testRate / 2
-			ref, _ := finalHold(t, p, tier, p.LimiterRPM-150, 2.5, always)
-			refDip, _ := levelSteps(ref[skip:])
-			for _, over := range []float32{0, 300} {
-				t.Run(fmt.Sprintf("%s/tier%d/+%.0f", name, tier, over), func(t *testing.T) {
-					x, pitch := finalHold(t, p, tier, p.LimiterRPM+over, 2.5, always)
-					x, pitch = x[skip:], pitch[skip/limiterHop:]
-					for i, v := range x {
-						if v != v || v > 0.99 || v < -0.99 {
-							t.Fatalf("sample %d is %v", i, v)
-						}
+		p, err := LoadProfile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		skip := testRate / 2
+		ref, _ := finalHold(t, p, p.LimiterRPM-150, 2.5, always)
+		refDip, _ := levelSteps(ref[skip:])
+		for _, over := range []float32{0, 300} {
+			t.Run(fmt.Sprintf("%s/+%.0f", name, over), func(t *testing.T) {
+				x, pitch := finalHold(t, p, p.LimiterRPM+over, 2.5, always)
+				x, pitch = x[skip:], pitch[skip/limiterHop:]
+				for i, v := range x {
+					if v != v || v > 0.99 || v < -0.99 {
+						t.Fatalf("sample %d is %v", i, v)
 					}
-					lo := p.LimiterRPM * float32(1-p.spec.FinalGearWaver)
-					pLo, pHi := slices.Min(pitch), slices.Max(pitch)
-					dip, _ := levelSteps(x)
-					t.Logf("pitch from %.1f to %.1f RPM, deepest dip %.2f dB, %.2f dB below the limiter", pLo, pHi, dip, refDip)
-					if pLo < lo-1 || pHi > p.LimiterRPM || pHi-pLo < 0.5*(p.LimiterRPM-lo) {
-						t.Errorf("pitch from %.0f to %.0f RPM, want a waver from %.0f to %.0f", pLo, pHi, lo, p.LimiterRPM)
-					}
-					if dip < refDip-0.5 {
-						t.Errorf("level dips %.1f dB below the median, %.1f dB below the limiter", dip, refDip)
-					}
-				})
-			}
+				}
+				lo := p.LimiterRPM * float32(1-p.spec.FinalGearWaver)
+				pLo, pHi := slices.Min(pitch), slices.Max(pitch)
+				dip, _ := levelSteps(x)
+				t.Logf("pitch from %.1f to %.1f RPM, deepest dip %.2f dB, %.2f dB below the limiter", pLo, pHi, dip, refDip)
+				if pLo < lo-1 || pHi > p.LimiterRPM || pHi-pLo < 0.5*(p.LimiterRPM-lo) {
+					t.Errorf("pitch from %.0f to %.0f RPM, want a waver from %.0f to %.0f", pLo, pHi, lo, p.LimiterRPM)
+				}
+				if dip < refDip-0.5 {
+					t.Errorf("level dips %.1f dB below the median, %.1f dB below the limiter", dip, refDip)
+				}
+			})
 		}
 	}
 }
@@ -1070,40 +1057,38 @@ func TestFinalGearHandover(t *testing.T) {
 	const notchHops = 35 * testRate / 1000 / limiterHop
 	always := func([]float32) bool { return true }
 	for _, name := range Profiles() {
-		for _, tier := range tiers {
-			t.Run(fmt.Sprintf("%s/tier%d", name, tier), func(t *testing.T) {
-				p, err := LoadProfile(name)
-				if err != nil {
-					t.Fatal(err)
+		t.Run(name, func(t *testing.T) {
+			p, err := LoadProfile(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ref, _ := finalHold(t, p, p.LimiterRPM-150, 2.5, always)
+			_, refRise := levelSteps(ref[testRate/2:])
+			at := -1
+			final := func(pitch []float32) bool {
+				n := len(pitch)
+				if at < 0 && n > testRate/2/limiterHop && pitch[n-1] < pitch[n-2] && pitch[n-2] >= pitch[n-3] {
+					at = n + notchHops
 				}
-				ref, _ := finalHold(t, p, tier, p.LimiterRPM-150, 2.5, always)
-				_, refRise := levelSteps(ref[testRate/2:])
-				at := -1
-				final := func(pitch []float32) bool {
-					n := len(pitch)
-					if at < 0 && n > testRate/2/limiterHop && pitch[n-1] < pitch[n-2] && pitch[n-2] >= pitch[n-3] {
-						at = n + notchHops
-					}
-					return at >= 0 && n >= at
-				}
-				x, pitch := finalHold(t, p, tier, p.LimiterRPM, 1.5, final)
-				if at < 0 || at >= len(pitch) {
-					t.Fatal("no cut to end")
-				}
-				// The windows start 20 ms before the switch, so that they span it.
-				i := at*limiterHop - 20*testRate/1000
-				_, rise := levelSteps(x[i : i+(20+150)*testRate/1000])
-				settle := at + 150*testRate/1000/limiterHop
-				lo := p.LimiterRPM * float32(1-p.spec.FinalGearWaver)
-				pLo, pHi := slices.Min(pitch[settle:]), slices.Max(pitch[settle:])
-				t.Logf("dip %.0f RPM at the switch, largest rise %.2f dB per 5 ms, %.2f dB below the limiter", p.LimiterRPM-pitch[at], rise, refRise)
-				if rise > refRise+2 {
-					t.Errorf("level rises %.1f dB in 5 ms after the switch, %.1f dB below the limiter", rise, refRise)
-				}
-				if pLo < lo-1 || pHi > p.LimiterRPM {
-					t.Errorf("pitch from %.0f to %.0f RPM 150 ms after the switch, want from %.0f to %.0f", pLo, pHi, lo, p.LimiterRPM)
-				}
-			})
-		}
+				return at >= 0 && n >= at
+			}
+			x, pitch := finalHold(t, p, p.LimiterRPM, 1.5, final)
+			if at < 0 || at >= len(pitch) {
+				t.Fatal("no cut to end")
+			}
+			// The windows start 20 ms before the switch, so that they span it.
+			i := at*limiterHop - 20*testRate/1000
+			_, rise := levelSteps(x[i : i+(20+150)*testRate/1000])
+			settle := at + 150*testRate/1000/limiterHop
+			lo := p.LimiterRPM * float32(1-p.spec.FinalGearWaver)
+			pLo, pHi := slices.Min(pitch[settle:]), slices.Max(pitch[settle:])
+			t.Logf("dip %.0f RPM at the switch, largest rise %.2f dB per 5 ms, %.2f dB below the limiter", p.LimiterRPM-pitch[at], rise, refRise)
+			if rise > refRise+2 {
+				t.Errorf("level rises %.1f dB in 5 ms after the switch, %.1f dB below the limiter", rise, refRise)
+			}
+			if pLo < lo-1 || pHi > p.LimiterRPM {
+				t.Errorf("pitch from %.0f to %.0f RPM 150 ms after the switch, want from %.0f to %.0f", pLo, pHi, lo, p.LimiterRPM)
+			}
+		})
 	}
 }

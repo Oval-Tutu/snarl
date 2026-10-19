@@ -55,14 +55,13 @@ const (
 	padL1        = ebiten.StandardGamepadButtonFrontTopLeft
 	padA         = ebiten.StandardGamepadButtonRightBottom
 	padX         = ebiten.StandardGamepadButtonRightLeft
-	padY         = ebiten.StandardGamepadButtonRightTop
 	padLeft      = ebiten.StandardGamepadButtonLeftLeft
 	padRight     = ebiten.StandardGamepadButtonLeftRight
 	padUp        = ebiten.StandardGamepadButtonLeftTop
 	padDown      = ebiten.StandardGamepadButtonLeftBottom
 	padSelect    = ebiten.StandardGamepadButtonCenterLeft
 	padStart     = ebiten.StandardGamepadButtonCenterRight
-	legend       = "Throttle RT/Up/W  Shift RB,A/E up  LB,X/Q down  Profile D-pad L,R/1-4,Left,Right  Tier Y/T  Gears Back/G  Ignition Start/Space  Buffer D-pad U,D/PgUp,PgDn  Record R"
+	legend       = "Throttle RT/Up/W  Shift RB,A/E up  LB,X/Q down  Profile D-pad L,R/1-4,Left,Right  Gears Back/G  Ignition Start/Space  Buffer D-pad U,D/PgUp,PgDn  Record R"
 	keyboardName = "keyboard"
 )
 
@@ -78,7 +77,6 @@ type harness struct {
 
 	profiles []snarl.Profile
 	profile  int
-	tier     snarl.Tier
 	eng      snarl.Engine
 	engErr   error
 	running  bool
@@ -117,7 +115,6 @@ func newHarness(quit context.Context, profile, recDir string, recordNow bool) (*
 		pads:    pads.NewReader(),
 		drive:   drive.New(drive.DefaultGears),
 		src:     stream.New(),
-		tier:    snarl.Tier1,
 		running: true,
 		buffer:  defaultBuffer,
 		quit:    quit,
@@ -144,7 +141,7 @@ func (h *harness) toggleRecord() {
 			return
 		}
 		h.rec = r
-		h.rec.Snapshot(h.profiles[h.profile].Name, h.tier, h.snap)
+		h.rec.Snapshot(h.profiles[h.profile].Name, snarl.Tier1, h.snap)
 		h.src.SetTap(r)
 		return
 	}
@@ -157,10 +154,10 @@ func (h *harness) toggleRecord() {
 	}
 }
 
-// swapEngine builds the engine of the selected profile and tier, and
+// swapEngine builds the engine of the selected profile, and
 // hands it to the audio source, which crossfades to it.
 func (h *harness) swapEngine() {
-	e, err := snarl.New(h.profiles[h.profile], stream.SampleRate, h.tier)
+	e, err := snarl.New(h.profiles[h.profile], stream.SampleRate, snarl.Tier1)
 	h.engErr = err
 	if err != nil {
 		return
@@ -234,7 +231,7 @@ func (h *harness) Update() error {
 	if h.eng != nil {
 		h.eng.Set(s)
 		if h.rec != nil {
-			h.rec.Snapshot(h.profiles[h.profile].Name, h.tier, s)
+			h.rec.Snapshot(h.profiles[h.profile].Name, snarl.Tier1, s)
 		}
 	}
 	return nil
@@ -271,7 +268,7 @@ func step(d *drive.Model, load *snarl.LoadFilter, pr snarl.Profile, throttle flo
 	return s
 }
 
-// updateSwitches reads the profile, tier, gear count, ignition, and
+// updateSwitches reads the profile, gear count, ignition, and
 // player buffer controls.
 func (h *harness) updateSwitches() {
 	p := h.pads
@@ -288,12 +285,8 @@ func (h *harness) updateSwitches() {
 			profile = i
 		}
 	}
-	tier := h.tier
-	if p.JustPressed(padY) || keyJust(ebiten.KeyT) {
-		tier = snarl.Tier1 - tier
-	}
-	if profile != h.profile || tier != h.tier {
-		h.profile, h.tier = profile, tier
+	if profile != h.profile {
+		h.profile = profile
 		h.swapEngine()
 	}
 	if p.JustPressed(padSelect) || keyJust(ebiten.KeyG) {
@@ -362,7 +355,7 @@ func (h *harness) Draw(screen *ebiten.Image) {
 	if !h.running {
 		ignition = "off"
 	}
-	say(8, "Profile %s (%d of %d)   Tier %d   Ignition %s", pr.Name, h.profile+1, len(h.profiles), h.tier, ignition)
+	say(8, "Profile %s (%d of %d)   Ignition %s", pr.Name, h.profile+1, len(h.profiles), ignition)
 	next()
 	say(8, "%s", pr.Description)
 	next()

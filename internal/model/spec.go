@@ -120,7 +120,7 @@ type ExhaustSpec struct {
 	// OutletDirect is the gain of the low-frequency pressure that passes
 	// the outlet next to the radiation filter.
 	OutletDirect float64 `toml:"outlet_direct"`
-	// Steepening is the load-dependent wave steepening (tier 1).
+	// Steepening is the load-dependent wave steepening.
 	Steepening float64 `toml:"steepening"`
 	// Overlap is the gain of the quadratic pressure term in each bank
 	// collector, before the crossover. Overlapping pulses of one bank add
@@ -175,7 +175,7 @@ type NoiseSpec struct {
 	IntakeCamHz   float64 `toml:"intake_cam_hz"`
 }
 
-// MechanicalSpec is the mechanical layer (tier 1).
+// MechanicalSpec is the mechanical layer.
 type MechanicalSpec struct {
 	FanRatio  float64 `toml:"fan_ratio"`
 	FanBlades float64 `toml:"fan_blades"`
@@ -245,20 +245,14 @@ type IdleSpec struct {
 type VoiceSpec struct {
 	Gain float64 `toml:"gain"`
 	// OutputDB is the fixed output gain in decibels. It calibrates the
-	// tier 0 full-throttle sweep-wot scenario to -16 LUFS.
+	// full-throttle sweep-wot scenario to -16 LUFS.
 	OutputDB float64 `toml:"output_db"`
-	// Tier1DB is the extra output gain of tier 1 in decibels. It
-	// calibrates the tier 1 full-throttle sweep-wot scenario to -16 LUFS.
-	Tier1DB float64 `toml:"tier1_db"`
 	// IdleGainDB is the extra output gain in decibels at and below
 	// IdleGainRPM, for all loads. Above IdleGainRPM, it falls along a
 	// smoothstep to 0 dB at the redline. A positive value makes the level
 	// fall less as the RPM falls. IdleGainRPM 0 selects the idle RPM.
 	IdleGainDB  float64 `toml:"idle_gain_db"`
 	IdleGainRPM float64 `toml:"idle_gain_rpm"`
-	// Tier1IdleGainDB is added to IdleGainDB in tier 1, because the two
-	// tiers change differently in level over RPM.
-	Tier1IdleGainDB float64 `toml:"tier1_idle_gain_db"`
 }
 
 // DefaultSpec returns the defaults that a profile file overrides.
@@ -338,11 +332,10 @@ func (s *Spec) validateEngine() error {
 	case min(s.Pops.WeightPop, s.Pops.WeightBoom, s.Pops.WeightCrackle, s.Pops.WeightBurble) < 0 ||
 		s.Pops.WeightPop+s.Pops.WeightBoom+s.Pops.WeightCrackle+s.Pops.WeightBurble <= 0:
 		return errors.New("pops weights must not be negative, and at least one must be positive")
-	case s.Voice.Gain <= 0 || math.Abs(s.Voice.OutputDB) > 40 || math.Abs(s.Voice.Tier1DB) > 20:
-		return errors.New("voice gain must be positive, output_db from -40 to 40 and tier1_db from -20 to 20")
-	case math.Abs(s.Voice.IdleGainDB) > 20 || math.Abs(s.Voice.IdleGainDB+s.Voice.Tier1IdleGainDB) > 20 ||
-		s.Voice.IdleGainRPM < 0 || s.Voice.IdleGainRPM >= s.RedlineRPM:
-		return errors.New("voice idle_gain_db must be from -20 to 20 in both tiers, and idle_gain_rpm from 0 to below redline_rpm")
+	case s.Voice.Gain <= 0 || math.Abs(s.Voice.OutputDB) > 40:
+		return errors.New("voice gain must be positive and output_db from -40 to 40")
+	case math.Abs(s.Voice.IdleGainDB) > 20 || s.Voice.IdleGainRPM < 0 || s.Voice.IdleGainRPM >= s.RedlineRPM:
+		return errors.New("voice idle_gain_db must be from -20 to 20, and idle_gain_rpm from 0 to below redline_rpm")
 	case math.Abs(s.Exhaust.LowShelfDB) > 20 || s.Exhaust.LowShelfHz <= 0:
 		return errors.New("exhaust low_shelf_db must be from -20 to 20 and low_shelf_hz positive")
 	case s.Overrun.LevelDB > 6 || s.Overrun.IdleLevelDB > 6 || s.Overrun.LevelDB < -40 || s.Overrun.IdleLevelDB < -40:

@@ -54,6 +54,7 @@ func TestRunErrors(t *testing.T) {
 	for _, args := range [][]string{
 		{"flat12"},
 		{"--out", out, "nope", scn},
+		{"--out", out, "--tier", "0", "flat12", scn},
 		{"--out", out, "--tier", "3", "flat12", scn},
 		{"--out", out, "--format", "s24", "flat12", scn},
 		{"--out", out, "--block", "0", "flat12", scn},
@@ -152,7 +153,7 @@ func TestReplayProfileChange(t *testing.T) {
 	r := &replayer{rate: 8000, rows: []logRow{
 		{t: 0, profile: "v8", tier: 1, snap: snarl.Snapshot{RPM: 3000, Flags: snarl.FlagRunning}},
 		{t: 0.1, profile: "v8", tier: 1, snap: snarl.Snapshot{RPM: 3100, Flags: snarl.FlagRunning}},
-		{t: 0.2, profile: "flat6", tier: 0, snap: snarl.Snapshot{RPM: 3200, Flags: snarl.FlagRunning}},
+		{t: 0.2, profile: "flat6", tier: 2, snap: snarl.Snapshot{RPM: 3200, Flags: snarl.FlagRunning}},
 	}}
 	e0, _, _ := r.at(0)
 	e1, s1, _ := r.at(0.15)
@@ -174,6 +175,7 @@ func TestParseLogErrors(t *testing.T) {
 		"bad header": "t,profile\n" + row,
 		"no rows":    logHeader + "\n",
 		"falling":    logHeader + "\n0.5,v8,1,3000,1,1,10,1,1,0,0,0\n" + row,
+		"tier 0":     logHeader + "\n0,v8,0,3000,1,1,10,1,1,0,0,0\n",
 		"bad tier":   logHeader + "\n0,v8,3,3000,1,1,10,1,1,0,0,0\n",
 		"bad number": logHeader + "\n0,v8,1,fast,1,1,10,1,1,0,0,0\n",
 		"bad byte":   logHeader + "\n0,v8,1,3000,1,1,10,1.5,1,0,0,0\n",

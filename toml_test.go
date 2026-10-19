@@ -121,4 +121,11 @@ gain = 1
 			t.Errorf("%s: no error", name)
 		}
 	}
+	// The removed keys are unknown keys.
+	for _, kv := range []string{"[voice]\ntier1_db = 1", "[voice]\ntier1_idle_gain_db = 1"} {
+		_, err := parseProfile(strings.Replace(good, "[[cylinder]]", kv+"\n[[cylinder]]", 1))
+		if err == nil || !strings.Contains(err.Error(), "unknown key") {
+			t.Errorf("%q: got %v, want an unknown key error", kv, err)
+		}
+	}
 }

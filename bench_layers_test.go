@@ -1,7 +1,6 @@
 package snarl
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/oval-tutu/snarl/internal/dsp"
@@ -53,24 +52,22 @@ func benchBlocks(b *testing.B, e Engine, s Snapshot) {
 	b.ReportMetric(100*nsPerBlock/blockNs, "%realtime")
 }
 
-// BenchmarkStates measures each profile and tier in each state.
+// BenchmarkStates measures each profile in each state.
 func BenchmarkStates(b *testing.B) {
 	for _, name := range Profiles() {
 		p, err := LoadProfile(name)
 		if err != nil {
 			b.Fatal(err)
 		}
-		for _, tier := range tiers {
-			for _, st := range benchStates {
-				b.Run(fmt.Sprintf("%s/tier%d/%s", name, tier, st.name), func(b *testing.B) {
-					benchBlocks(b, newEngine(b, p, tier), st.snap(p))
-				})
-			}
+		for _, st := range benchStates {
+			b.Run(name+"/"+st.name, func(b *testing.B) {
+				benchBlocks(b, newEngine(b, p), st.snap(p))
+			})
 		}
 	}
 }
 
-// layerVariant mutes one or more tier 1 layers with profile overrides.
+// layerVariant mutes one or more layers with profile overrides.
 type layerVariant struct {
 	name      string
 	overrides []string
@@ -78,7 +75,7 @@ type layerVariant struct {
 	fan bool
 }
 
-// layerVariants are the tier 1 layers that a profile key can mute. The
+// layerVariants are the layers that a profile key can mute. The
 // intake, fan and tick layers skip their work at zero gain. The jet, AM
 // and steepening keys set a gain of zero, but the model still runs their
 // filters and arithmetic, so their variants measure no saving. The
@@ -96,19 +93,16 @@ var layerVariants = []layerVariant{
 	{name: "no-gated", overrides: []string{"noise.intake=0", "mechanical.fan_gain=0", "mechanical.tick_gain=0"}},
 }
 
-// BenchmarkTier1Layers measures tier 1 at full throttle at 4000 RPM with
-// each layer variant, and tier 0 as the floor. The cost of a layer is the
-// full time minus the time of its variant.
-func BenchmarkTier1Layers(b *testing.B) {
+// BenchmarkLayers measures full throttle at 4000 RPM with each layer
+// variant. The cost of a layer is the full time minus the time of its
+// variant.
+func BenchmarkLayers(b *testing.B) {
 	st := benchStates[0]
 	for _, name := range Profiles() {
 		base, err := LoadProfile(name)
 		if err != nil {
 			b.Fatal(err)
 		}
-		b.Run(name+"/tier0", func(b *testing.B) {
-			benchBlocks(b, newEngine(b, base, Tier0), st.snap(base))
-		})
 		for _, v := range layerVariants {
 			if v.fan && base.spec.Mechanical.FanGain == 0 {
 				continue
@@ -118,7 +112,7 @@ func BenchmarkTier1Layers(b *testing.B) {
 				b.Fatal(err)
 			}
 			b.Run(name+"/"+v.name, func(b *testing.B) {
-				benchBlocks(b, newEngine(b, p, Tier1), st.snap(p))
+				benchBlocks(b, newEngine(b, p), st.snap(p))
 			})
 		}
 	}
@@ -127,9 +121,9 @@ func BenchmarkTier1Layers(b *testing.B) {
 // sink keeps the primitive results live.
 var sink float32
 
-// BenchmarkPrimitives measures the DSP parts of the tier 1 layers that no
-// override can mute, for one instance over one 256-frame block. A tier 1
-// path runs one wall-loss shelf, one expansion chamber (one delay write
+// BenchmarkPrimitives measures the DSP parts of the layers that no
+// override can mute, for one instance over one 256-frame block. A path
+// runs one wall-loss shelf, one expansion chamber (one delay write
 // and two reads) and a mode cutoff of two biquads per sample. The jet runs
 // one band-pass biquad and one noise draw per sample for the engine. The
 // fan-sine case is the fan layer, for comparison with its mute variant.

@@ -77,11 +77,9 @@ hunt = 0.005
 rock = 0.02
 
 [voice]
-output_db = -4.1
-tier1_db = 9.8
-idle_gain_db = 5.5
+output_db = 5.7
+idle_gain_db = 3.5
 idle_gain_rpm = 5600
-tier1_idle_gain_db = -2.0
 
 [[cylinder]] # 1
 crank_deg = 0

@@ -44,7 +44,7 @@ func TestPopTiming(t *testing.T) {
 	s.IdleRPM = 800
 	s.RedlineRPM = 6800
 	s.Pops.Density = 0.8
-	p := newPops(&s, rate, chunk/float64(rate), false)
+	p := newPops(&s, rate, chunk/float64(rate))
 	p.heat = 1
 	p.control(4000, 1, false, false, 1) // Arm at full throttle.
 	var fires []int
@@ -87,7 +87,7 @@ func TestPopNeedsHeatAndArming(t *testing.T) {
 	s.IdleRPM = 800
 	s.RedlineRPM = 6800
 	s.Pops.Density = 1
-	p := newPops(&s, rate, chunk/float64(rate), false)
+	p := newPops(&s, rate, chunk/float64(rate))
 	// Never armed: overrun alone does not pop.
 	for i := range 5 * rate {
 		if i%chunk == 0 {
@@ -157,21 +157,19 @@ func limiterSpec(kind string) Spec {
 // overrun effects within a few milliseconds.
 func TestLimiterCuts(t *testing.T) {
 	for _, kind := range []string{"fuel", "ignition"} {
-		for _, tier1 := range []bool{false, true} {
-			for _, scale := range []float64{1, 2} {
-				for _, jitter := range []float64{0, 0.15} {
-					s := limiterSpec(kind)
-					s.LimiterLoadScale = scale
-					s.LimiterJitter = jitter
-					y, err := New(&s, rate, tier1)
-					if err != nil {
-						t.Fatal(err)
-					}
-					name := fmt.Sprintf("%s/tier1 %t/scale %v/jitter %v", kind, tier1, scale, jitter)
-					checkBounce(t, name, &s, y)
-					checkHandover(t, name, &s, y)
-					checkEvent(t, name, y)
+		for _, scale := range []float64{1, 2} {
+			for _, jitter := range []float64{0, 0.15} {
+				s := limiterSpec(kind)
+				s.LimiterLoadScale = scale
+				s.LimiterJitter = jitter
+				y, err := New(&s, rate)
+				if err != nil {
+					t.Fatal(err)
 				}
+				name := fmt.Sprintf("%s/scale %v/jitter %v", kind, scale, jitter)
+				checkBounce(t, name, &s, y)
+				checkHandover(t, name, &s, y)
+				checkEvent(t, name, y)
 			}
 		}
 	}
@@ -337,56 +335,54 @@ func checkEvent(t *testing.T, name string, y *Synth) {
 // second, and the pitch returns to the smoothed RPM within 150 ms.
 func TestFinalGear(t *testing.T) {
 	for _, kind := range []string{"fuel", "ignition"} {
-		for _, tier1 := range []bool{false, true} {
-			s := limiterSpec(kind)
-			s.LimiterNotchDB = -18
-			y, err := New(&s, rate, tier1)
-			if err != nil {
-				t.Fatal(err)
-			}
-			name := fmt.Sprintf("%s/tier1 %t", kind, tier1)
-			buf := make([]float32, chunk)
-			lim := float32(s.LimiterRPM)
-			lo := lim * float32(1-s.FinalGearWaver)
-			for _, rpm := range []float32{lim, lim + 300} {
-				c := Control{RPM: rpm, Throttle: 1, Load: 1, Running: true, Overrun: true, Final: true, Gear: 1, LimiterEvents: 1}
-				n := y.limRot
-				for i := range 2 * rate / chunk {
-					y.Render(buf, c)
-					if y.limRot != n || y.cutting || y.climb {
-						t.Fatalf("%s: cut in the final gear at %.0f RPM", name, rpm)
-					}
-					if y.air != 0 || y.overrun > 1e-6 || y.pops.window {
-						t.Fatalf("%s: overrun effect in the final gear: air %v, overrun %v, pop window %t", name, y.air, y.overrun, y.pops.window)
-					}
-					if p := y.PitchRPM(); i > rate/5/chunk && (p < lo-1 || p > lim) {
-						t.Fatalf("%s: pitch %.1f RPM in the final gear, want from %.1f to %.0f", name, p, lo, lim)
-					}
+		s := limiterSpec(kind)
+		s.LimiterNotchDB = -18
+		y, err := New(&s, rate)
+		if err != nil {
+			t.Fatal(err)
+		}
+		name := kind
+		buf := make([]float32, chunk)
+		lim := float32(s.LimiterRPM)
+		lo := lim * float32(1-s.FinalGearWaver)
+		for _, rpm := range []float32{lim, lim + 300} {
+			c := Control{RPM: rpm, Throttle: 1, Load: 1, Running: true, Overrun: true, Final: true, Gear: 1, LimiterEvents: 1}
+			n := y.limRot
+			for i := range 2 * rate / chunk {
+				y.Render(buf, c)
+				if y.limRot != n || y.cutting || y.climb {
+					t.Fatalf("%s: cut in the final gear at %.0f RPM", name, rpm)
+				}
+				if y.air != 0 || y.overrun > 1e-6 || y.pops.window {
+					t.Fatalf("%s: overrun effect in the final gear: air %v, overrun %v, pop window %t", name, y.air, y.overrun, y.pops.window)
+				}
+				if p := y.PitchRPM(); i > rate/5/chunk && (p < lo-1 || p > lim) {
+					t.Fatalf("%s: pitch %.1f RPM in the final gear, want from %.1f to %.0f", name, p, lo, lim)
 				}
 			}
-			c := Control{RPM: lim, Throttle: 1, Load: 1, Running: true, Gear: 1}
-			for range rate / 2 / chunk {
-				y.Render(buf, c)
-			}
-			for !y.cutting || y.cut > y.cutLen/2 {
-				y.Render(buf, c)
-			}
-			c.Final = true
+		}
+		c := Control{RPM: lim, Throttle: 1, Load: 1, Running: true, Gear: 1}
+		for range rate / 2 / chunk {
 			y.Render(buf, c)
-			if y.cutting || y.climb || y.bark != 0 || y.fade >= 1 {
-				t.Fatalf("%s: after the final gear mid-cut: cutting %t, climb %t, bark %v, fade %v", name, y.cutting, y.climb, y.bark, y.fade)
+		}
+		for !y.cutting || y.cut > y.cutLen/2 {
+			y.Render(buf, c)
+		}
+		c.Final = true
+		y.Render(buf, c)
+		if y.cutting || y.climb || y.bark != 0 || y.fade >= 1 {
+			t.Fatalf("%s: after the final gear mid-cut: cutting %t, climb %t, bark %v, fade %v", name, y.cutting, y.climb, y.bark, y.fade)
+		}
+		maxStep := math.Pow(10, float64(fadeDB)/20*chunk/rate) * 1.0001
+		for range rate * 3 / 20 / chunk {
+			prev := y.fade
+			y.Render(buf, c)
+			if y.fade < prev || float64(y.fade/prev) > maxStep {
+				t.Fatalf("%s: firing gain from %v to %v in one chunk", name, prev, y.fade)
 			}
-			maxStep := math.Pow(10, float64(fadeDB)/20*chunk/rate) * 1.0001
-			for range rate * 3 / 20 / chunk {
-				prev := y.fade
-				y.Render(buf, c)
-				if y.fade < prev || float64(y.fade/prev) > maxStep {
-					t.Fatalf("%s: firing gain from %v to %v in one chunk", name, prev, y.fade)
-				}
-			}
-			if y.fade != 1 || y.dip != 0 {
-				t.Errorf("%s: 150 ms after the final gear: firing gain %v, pitch %.0f RPM below the smoothed RPM", name, y.fade, y.dip)
-			}
+		}
+		if y.fade != 1 || y.dip != 0 {
+			t.Errorf("%s: 150 ms after the final gear: firing gain %v, pitch %.0f RPM below the smoothed RPM", name, y.fade, y.dip)
 		}
 	}
 }

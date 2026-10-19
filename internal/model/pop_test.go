@@ -20,64 +20,61 @@ func TestPopShape(t *testing.T) {
 	s.Paths = []PathSpec{{CollectorM: 1.3, Reflection: -0.4, DampingHz: 3000, PipeRadiusM: 0.025, OutletM: 0.025, WallLossDB: 2, WallLossHz: 2500, ChamberM: 0.4, ChamberArea: 8, Gain: 1}}
 	s.Exhaust.OutletDirect = 0.3
 	s.Pops.Density = 0.4
-	for _, tier1 := range []bool{false, true} {
-		y, err := New(&s, rate, tier1)
-		if err != nil {
-			t.Fatal(err)
+	y, err := New(&s, rate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	y.voiceGain = 0
+	y.pops.heat = 1
+	buf := make([]float32, 64)
+	c := Control{Running: true}
+	for range 200 {
+		y.Render(buf, c)
+	}
+	y.pops.fire(1, 1, kindPop)
+	x := make([]float32, rate*3/10)
+	y.Render(x, c)
+	var e [4]float64
+	edges := []float64{20, 120, 500, 2000, 8000}
+	for f := 20.0; f < 8000; f += 5 {
+		var re, im float64
+		for i, v := range x {
+			w := 2 * math.Pi * f * float64(i) / rate
+			re += float64(v) * math.Cos(w)
+			im += float64(v) * math.Sin(w)
 		}
-		y.voiceGain = 0
-		y.pops.heat = 1
-		buf := make([]float32, 64)
-		c := Control{Running: true}
-		for range 200 {
-			y.Render(buf, c)
-		}
-		y.pops.fire(1, 1, kindPop)
-		x := make([]float32, rate*3/10)
-		y.Render(x, c)
-		var e [4]float64
-		edges := []float64{20, 120, 500, 2000, 8000}
-		for f := 20.0; f < 8000; f += 5 {
-			var re, im float64
-			for i, v := range x {
-				w := 2 * math.Pi * f * float64(i) / rate
-				re += float64(v) * math.Cos(w)
-				im += float64(v) * math.Sin(w)
-			}
-			for b := range 4 {
-				if f >= edges[b] && f < edges[b+1] {
-					e[b] += re*re + im*im
-				}
+		for b := range 4 {
+			if f >= edges[b] && f < edges[b+1] {
+				e[b] += re*re + im*im
 			}
 		}
-		tot := e[0] + e[1] + e[2] + e[3]
-		// Envelope: 1 ms RMS, peak and time to -20 dB.
-		var env []float64
-		for i := 0; i+48 <= len(x); i += 48 {
-			var s float64
-			for _, v := range x[i : i+48] {
-				s += float64(v * v)
-			}
-			env = append(env, math.Sqrt(s/48))
+	}
+	tot := e[0] + e[1] + e[2] + e[3]
+	// Envelope: 1 ms RMS, peak and time to -20 dB.
+	var env []float64
+	for i := 0; i+48 <= len(x); i += 48 {
+		var s float64
+		for _, v := range x[i : i+48] {
+			s += float64(v * v)
 		}
-		pk, pi := 0.0, 0
-		for i, v := range env {
-			if v > pk {
-				pk, pi = v, i
-			}
+		env = append(env, math.Sqrt(s/48))
+	}
+	pk, pi := 0.0, 0
+	for i, v := range env {
+		if v > pk {
+			pk, pi = v, i
 		}
-		d := 0
-		for i := len(env) - 1; i > pi; i-- {
-			if env[i] > pk/10 {
-				d = i - pi
-				break
-			}
+	}
+	d := 0
+	for i := len(env) - 1; i > pi; i-- {
+		if env[i] > pk/10 {
+			d = i - pi
+			break
 		}
-		body, crack := 100*e[1]/tot, 100*e[3]/tot
-		if body < 45 || crack < 0.3 || crack > 3 || d < 15 || d > 60 {
-			t.Errorf("tier1 %v: 120 to 500 Hz %.0f%%, 2 to 8 kHz %.1f%%, -20 dB after %d ms",
-				tier1, body, crack, d)
-		}
+	}
+	body, crack := 100*e[1]/tot, 100*e[3]/tot
+	if body < 45 || crack < 0.3 || crack > 3 || d < 15 || d > 60 {
+		t.Errorf("120 to 500 Hz %.0f%%, 2 to 8 kHz %.1f%%, -20 dB after %d ms", body, crack, d)
 	}
 }
 
@@ -86,31 +83,29 @@ func TestPopShape(t *testing.T) {
 // stay at 1 on overrun at full pop density.
 func BenchmarkPops(b *testing.B) {
 	for _, dense := range []bool{false, true} {
-		for _, tier1 := range []bool{false, true} {
-			b.Run(fmt.Sprintf("dense %t/tier1 %t", dense, tier1), func(b *testing.B) {
-				s := limiterSpec("fuel")
-				s.Pops.Density = 1
-				y, err := New(&s, rate, tier1)
-				if err != nil {
-					b.Fatal(err)
-				}
-				buf := make([]float32, 256)
-				c := Control{RPM: 4000, Throttle: 0.7, Load: 0.7, Running: true, Gear: 3}
+		b.Run(fmt.Sprintf("dense %t", dense), func(b *testing.B) {
+			s := limiterSpec("fuel")
+			s.Pops.Density = 1
+			y, err := New(&s, rate)
+			if err != nil {
+				b.Fatal(err)
+			}
+			buf := make([]float32, 256)
+			c := Control{RPM: 4000, Throttle: 0.7, Load: 0.7, Running: true, Gear: 3}
+			y.Render(buf, c)
+			if dense {
+				c = Control{RPM: 6000, Throttle: 1, Load: 1, Running: true, Gear: 3}
 				y.Render(buf, c)
+				c = Control{RPM: 6000, Running: true, Overrun: true, Gear: 3}
+			}
+			b.ReportAllocs()
+			for b.Loop() {
 				if dense {
-					c = Control{RPM: 6000, Throttle: 1, Load: 1, Running: true, Gear: 3}
-					y.Render(buf, c)
-					c = Control{RPM: 6000, Running: true, Overrun: true, Gear: 3}
+					y.pops.heat, y.pops.prob = 1, 1
 				}
-				b.ReportAllocs()
-				for b.Loop() {
-					if dense {
-						y.pops.heat, y.pops.prob = 1, 1
-					}
-					y.Render(buf, c)
-				}
-			})
-		}
+				y.Render(buf, c)
+			}
+		})
 	}
 }
 
@@ -137,9 +132,9 @@ func popSpec() Spec {
 
 // renderPop renders one isolated pop of a kind for 0.8 s. draws advances
 // the noise first, so that each value gives another variation.
-func renderPop(t testing.TB, s *Spec, tier1 bool, kind, draws int) []float32 {
+func renderPop(t testing.TB, s *Spec, kind, draws int) []float32 {
 	t.Helper()
-	y, err := New(s, rate, tier1)
+	y, err := New(s, rate)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,11 +248,11 @@ func measurePop(x []float32) popMeasure {
 // cluster in the crackle pack (docs/research/crackles.md).
 type popRange struct{ lo, hi float64 }
 
-// TestPopKinds renders 12 variations of each pop kind in both tiers and
+// TestPopKinds renders 12 variations of each pop kind and
 // checks the median of each measure against the cluster of the crackle
 // pack. Times and the centroid may miss the range by 20 per cent. A band
 // share may miss it by 8 percentage points or by a factor of 3, whichever
-// is wider, for the tier 1 chamber and the exhaust path. The pop keeps its
+// is wider, for the expansion chamber and the exhaust path. The pop keeps its
 // tuned body: its 30 to 120 Hz share is below the cluster, so its band
 // limits are those of TestPopShape. The burble is 14 to 30 dB below the
 // pop, as in the pack.
@@ -280,46 +275,44 @@ func TestPopKinds(t *testing.T) {
 		}
 		return v >= min(r.lo-8, r.lo/3) && v <= max(r.hi+8, 3*r.hi)
 	}
-	for _, tier1 := range []bool{false, true} {
-		var pop float64
-		for k := range numKinds {
-			w := want[k]
-			var dur, dec, cen, pk []float64
-			var bands [4][]float64
-			for v := range 12 {
-				m := measurePop(renderPop(t, &s, tier1, k, v*7))
-				dur = append(dur, m.durMS)
-				dec = append(dec, m.decayMS)
-				cen = append(cen, m.centroid)
-				pk = append(pk, m.peakDB)
-				for b := range 4 {
-					bands[b] = append(bands[b], 100*m.bands[b])
-				}
-			}
-			med := func(x []float64) float64 {
-				slices.Sort(x)
-				return (x[5] + x[6]) / 2
-			}
-			md, mdc, mc, mp := med(dur), med(dec), med(cen), med(pk)
-			var mb [4]float64
-			ok := in(md, w.dur, false) && in(mdc, w.decay, false) && in(mc, w.cen, false)
+	var pop float64
+	for k := range numKinds {
+		w := want[k]
+		var dur, dec, cen, pk []float64
+		var bands [4][]float64
+		for v := range 12 {
+			m := measurePop(renderPop(t, &s, k, v*7))
+			dur = append(dur, m.durMS)
+			dec = append(dec, m.decayMS)
+			cen = append(cen, m.centroid)
+			pk = append(pk, m.peakDB)
 			for b := range 4 {
-				mb[b] = med(bands[b])
-				ok = ok && in(mb[b], w.bands[b], true)
+				bands[b] = append(bands[b], 100*m.bands[b])
 			}
-			if k == kindPop {
-				pop = mp
-			}
-			if k == kindBurble && (pop-mp < 14 || pop-mp > 30) {
-				ok = false
-			}
-			msg := fmt.Sprintf("tier1 %v %s: %.0f ms, decay %.0f ms, centroid %.0f Hz, bands %.1f/%.1f/%.2f/%.3f%%, peak %.1f dBFS",
-				tier1, w.name, md, mdc, mc, mb[0], mb[1], mb[2], mb[3], mp)
-			if !ok {
-				t.Error(msg)
-			} else {
-				t.Log(msg)
-			}
+		}
+		med := func(x []float64) float64 {
+			slices.Sort(x)
+			return (x[5] + x[6]) / 2
+		}
+		md, mdc, mc, mp := med(dur), med(dec), med(cen), med(pk)
+		var mb [4]float64
+		ok := in(md, w.dur, false) && in(mdc, w.decay, false) && in(mc, w.cen, false)
+		for b := range 4 {
+			mb[b] = med(bands[b])
+			ok = ok && in(mb[b], w.bands[b], true)
+		}
+		if k == kindPop {
+			pop = mp
+		}
+		if k == kindBurble && (pop-mp < 14 || pop-mp > 30) {
+			ok = false
+		}
+		msg := fmt.Sprintf("%s: %.0f ms, decay %.0f ms, centroid %.0f Hz, bands %.1f/%.1f/%.2f/%.3f%%, peak %.1f dBFS",
+			w.name, md, mdc, mc, mb[0], mb[1], mb[2], mb[3], mp)
+		if !ok {
+			t.Error(msg)
+		} else {
+			t.Log(msg)
 		}
 	}
 }
@@ -333,7 +326,7 @@ func TestPopMix(t *testing.T) {
 		s.IdleRPM, s.RedlineRPM = 800, 6800
 		s.Pops.Density = 1
 		s.Pops.WeightPop, s.Pops.WeightBoom, s.Pops.WeightCrackle, s.Pops.WeightBurble = w[0], w[1], w[2], w[3]
-		p := newPops(&s, rate, chunk/float64(rate), false)
+		p := newPops(&s, rate, chunk/float64(rate))
 		var picks [numKinds]int
 		for range 20000 {
 			picks[p.pick()]++
@@ -370,7 +363,7 @@ func TestPopMix(t *testing.T) {
 // to zero when the last pop ends.
 func TestPopCap(t *testing.T) {
 	s := DefaultSpec()
-	p := newPops(&s, rate, chunk/float64(rate), false)
+	p := newPops(&s, rate, chunk/float64(rate))
 	p.heat = 1
 	for i := range maxPopEvents + 3 {
 		e := p.fire(2, 1, kindCrackle)

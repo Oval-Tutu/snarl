@@ -11,8 +11,8 @@ const (
 	// chunk is the control period in samples. Smoothed controls and
 	// block-rate coefficients update once per chunk.
 	chunk = 32
-	// tableSize is the length of the pulse table.
-	tableSize = 512
+	// pulseLen is the length of one pulse in envelope steps.
+	pulseLen = 512
 	// maxRPM bounds the input RPM.
 	maxRPM = 20000
 	// noiseScale brings the 2 kHz low-passed noise to about unit range.
@@ -69,8 +69,7 @@ type voice struct {
 
 // Synth renders one engine. It allocates nothing after New.
 type Synth struct {
-	tier1 bool
-	rate  float64
+	rate float64
 
 	noise, noise2 dsp.Noise
 	idle          idle
@@ -79,8 +78,6 @@ type Synth struct {
 	delay         []float32
 	cylGain       []float32
 	cylDev        []float32
-	tabLow        []float32
-	tabHigh       []float32
 	stepPerCycle  float32
 	maxInc        float32
 	invRate120    float32
@@ -162,9 +159,8 @@ type Synth struct {
 	wavInc1, wavInc2   float32
 }
 
-// New returns a synth for the spec at the sample rate. tier1 selects the
-// tier 1 model. Otherwise the synth runs tier 0.
-func New(s *Spec, rate int, tier1 bool) (*Synth, error) {
+// New returns a synth for the spec at the sample rate.
+func New(s *Spec, rate int) (*Synth, error) {
 	if err := s.Validate(); err != nil {
 		return nil, err
 	}
@@ -175,7 +171,6 @@ func New(s *Spec, rate int, tier1 bool) (*Synth, error) {
 	chunkHz := fs / chunk
 	seed := uint32(s.Seed & math.MaxUint16)
 	y := &Synth{
-		tier1:      tier1,
 		rate:       fs,
 		noise:      dsp.NewNoise(seed),
 		noise2:     dsp.NewNoise(seed + 0x51ed),
@@ -236,18 +231,11 @@ func New(s *Spec, rate int, tier1 bool) (*Synth, error) {
 		partLoad:   float32(math.Pow(10, s.Pulse.PartLoadDB/20)),
 		rpmG:       -1,
 		tickDec:    dsp.DecayCoef(40, 0.004, fs),
-		pops:       newPops(s, fs, chunk/fs, tier1),
+		pops:       newPops(s, fs, chunk/fs),
+		out:        newOutput(s.Voice.OutputDB, fs),
+		idleGain:   float32(s.Voice.IdleGainDB),
 	}
-	outDB := s.Voice.OutputDB
-	if tier1 {
-		outDB += s.Voice.Tier1DB
-	}
-	y.out = newOutput(outDB, fs)
 	y.knee = float32(max(s.Voice.IdleGainRPM, s.IdleRPM))
-	y.idleGain = float32(s.Voice.IdleGainDB)
-	if tier1 {
-		y.idleGain += float32(s.Voice.Tier1IdleGainDB)
-	}
 	if y.camAttack <= 0 {
 		y.camAttack = y.attack
 	}
@@ -298,12 +286,7 @@ func (y *Synth) initCylinders(s *Spec, fs float64) {
 	y.maxInc = 0.9 * gap
 
 	width := s.Pulse.WidthDeg / 720
-	y.stepPerCycle = float32(tableSize / width)
-	y.tabLow = pulseTable(s.Pulse.Attack, s.Pulse.Decay)
-	y.tabHigh = y.tabLow
-	if s.CamSwitchRPM > 0 && s.Pulse.CamAttack > 0 {
-		y.tabHigh = pulseTable(s.Pulse.CamAttack, s.Pulse.Decay)
-	}
+	y.stepPerCycle = float32(pulseLen / width)
 }
 
 func (y *Synth) initPaths(s *Spec, fs float64) {
@@ -331,26 +314,6 @@ func (y *Synth) initPaths(s *Spec, fs float64) {
 	for i, ps := range s.Paths {
 		y.paths[i] = newPath(ps, s.Exhaust, fs)
 	}
-}
-
-// pulseTable returns the envelope (1-exp(-a x))exp(-b x) over x from 0 to
-// 1, with a peak of 1 and a short fade to zero at the end.
-func pulseTable(a, b float64) []float32 {
-	t := make([]float32, tableSize+1)
-	var peak float64
-	v := make([]float64, tableSize)
-	for i := range v {
-		x := float64(i) / tableSize
-		v[i] = (1 - math.Exp(-a*x)) * math.Exp(-b*x)
-		if x > 0.9 {
-			v[i] *= (1 - x) / 0.1
-		}
-		peak = math.Max(peak, v[i])
-	}
-	for i := range v {
-		t[i] = float32(v[i] / peak)
-	}
-	return t
 }
 
 // envelopePeak returns the peak of (1-exp(-a x))exp(-b x) for x >= 0.
@@ -484,12 +447,9 @@ func (y *Synth) control(c *Control, n int) {
 
 	heat := b2f(y.throttle > 0.2) * y.load * min(rr, 1)
 	y.pops.control(y.rpm, y.throttle, over && y.master > 0.5, limiting, heat)
-
-	if y.tier1 {
-		// The exhaust flow layers follow the pulse gain, so that the level
-		// order over load holds in tier 1 as in tier 0.
-		y.controlTier1(y.shape, rr)
-	}
+	// The exhaust flow layers follow the pulse gain, so that they keep the
+	// level order over load.
+	y.controlLayers(y.shape, rr)
 }
 
 // limit runs the rev limiter for a chunk of n samples, from the input RPM,
@@ -615,10 +575,12 @@ func (y *Synth) waverStep(top bool) {
 	y.wav = y.waver * y.wavMix * (w - 1) * 0.5
 }
 
-func (y *Synth) controlTier1(flow, rr float32) {
+// controlLayers sets the pulse envelope coefficients, the wave steepening
+// and the gains of the jet, intake and mechanical layers for one chunk.
+func (y *Synth) controlLayers(flow, rr float32) {
 	a := float64(y.attack + (y.camAttack-y.attack)*y.camMix)
 	b := float64(y.decay)
-	dx := float64(y.step) / tableSize
+	dx := float64(y.step) / pulseLen
 	y.ka = float32(math.Exp(-a * dx))
 	y.kb = float32(math.Exp(-b * dx))
 	y.liveNorm = float32(1 / envelopePeak(a, b))
@@ -668,8 +630,6 @@ func (y *Synth) fire(cyl int) {
 // bank.
 func (y *Synth) pulses(bank *[MaxBanks]float32) {
 	step := y.step
-	lo, hi := y.tabLow, y.tabHigh
-	cam := y.camMix
 	for k := range y.voices {
 		v := &y.voices[k]
 		if !v.active {
@@ -679,29 +639,17 @@ func (y *Synth) pulses(bank *[MaxBanks]float32) {
 			v.pos += step
 			continue
 		}
-		i := int(v.pos)
-		if i >= tableSize {
+		if int(v.pos) >= pulseLen {
 			v.active = false
 			continue
 		}
-		var e float32
-		if y.tier1 {
-			if !v.started {
-				v.started = true
-				v.e1, v.e2 = 1, 1
-			}
-			e = (1 - v.e1) * v.e2 * y.liveNorm
-			v.e1 *= y.ka
-			v.e2 *= y.kb
-		} else {
-			f := v.pos - float32(i)
-			a := lo[i]
-			e = a + f*(lo[i+1]-a)
-			if cam > 0.001 {
-				b := hi[i]
-				e += cam * (b + f*(hi[i+1]-b) - e)
-			}
+		if !v.started {
+			v.started = true
+			v.e1, v.e2 = 1, 1
 		}
+		e := (1 - v.e1) * v.e2 * y.liveNorm
+		v.e1 *= y.ka
+		v.e2 *= y.kb
 		bank[v.bank] += e * v.gain
 		v.pos += step
 	}
@@ -735,22 +683,16 @@ func (y *Synth) process(dst []float32) {
 				x += y.mix[p][b] * bank[b]
 			}
 			x = x*am + airN + y.pops.jump[p]*y.lift
-			if y.tier1 {
-				sum += y.paths[p].process1(x)
-			} else {
-				sum += y.paths[p].process0(x)
-			}
+			sum += y.paths[p].process(x)
 		}
 		sum += crack * y.lift
-		if y.tier1 {
-			sum += y.layers(&bank, np)
-		}
+		sum += y.layers(&bank, np)
 		y.rpmG += y.rpmStep
 		dst[i] = y.out.process(sum * y.rpmG)
 	}
 }
 
-// layers renders the tier 1 intake, jet and mechanical layers.
+// layers renders the intake, jet and mechanical layers.
 func (y *Synth) layers(bank *[MaxBanks]float32, np int) float32 {
 	var pulse float32
 	for b := range np {

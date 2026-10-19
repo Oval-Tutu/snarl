@@ -13,9 +13,7 @@ type path struct {
 	colG  float32
 	colLP dsp.OnePole
 
-	low dsp.Shelf
-
-	// Tier 1 parts.
+	low          dsp.Shelf
 	wall         dsp.Shelf
 	ch           *dsp.Delay
 	chD          int
@@ -69,27 +67,11 @@ func newPath(p PathSpec, e ExhaustSpec, rate float64) path {
 	return q
 }
 
-// process0 runs the tier 0 path: collector resonance, low shelf and
-// outlet.
-func (p *path) process0(x float32) float32 {
-	y := x + p.colG*p.colLP.Process(p.col.Read(p.colD-1))
-	p.col.Write(y)
-	return p.radiate(p.low.Process(y))
-}
-
-// radiate runs the outlet filter and the air delay to the listener.
-func (p *path) radiate(y float32) float32 {
-	y = p.gain * (p.direct*y + p.outlet.Process(y))
-	if p.air == nil {
-		return y
-	}
-	p.air.Write(y)
-	return p.air.Read(p.airD)
-}
-
-// process1 runs the tier 1 path. It adds the wall-loss shelf, the low
-// shelf, the expansion chamber, the mode cutoff and the wave steepening.
-func (p *path) process1(x float32) float32 {
+// process runs the path for one sample: the collector resonance, the
+// wall-loss shelf, the low shelf, the expansion chamber, the mode cutoff,
+// the wave steepening, the outlet filter and the air delay to the
+// listener.
+func (p *path) process(x float32) float32 {
 	y := x + p.colG*p.colLP.Process(p.col.Read(p.colD-1))
 	p.col.Write(y)
 	y = p.low.Process(p.wall.Process(y))
@@ -107,5 +89,10 @@ func (p *path) process1(x float32) float32 {
 		a = 4
 	}
 	y += p.steep * y * a
-	return p.radiate(y)
+	y = p.gain * (p.direct*y + p.outlet.Process(y))
+	if p.air == nil {
+		return y
+	}
+	p.air.Write(y)
+	return p.air.Read(p.airD)
 }
