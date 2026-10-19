@@ -6,20 +6,17 @@ import (
 	"github.com/oval-tutu/snarl/internal/dsp"
 )
 
-// path is one exhaust path from a bank collector to an outlet.
+// path is one exhaust path from a bank collector to an outlet. The linear
+// stages run twice while a pop sounds: once for the engine and the pop,
+// and once for the pop alone, so that the steepening acts on the engine
+// wave only and the pop passes it unchanged.
 type path struct {
-	col   *dsp.Delay
-	colD  int
-	colG  float32
-	colLP dsp.OnePole
-
-	low          dsp.Shelf
-	wall         dsp.Shelf
-	ch           *dsp.Delay
-	chD          int
-	chR2, chT    float32
-	mode1, mode2 dsp.Biquad
-	steep        float32
+	eng, pop  linear
+	colD      int
+	colG      float32
+	chD       int
+	chR2, chT float32
+	steep     float32
 
 	outlet       dsp.Biquad
 	direct, gain float32
@@ -27,19 +24,30 @@ type path struct {
 	airD         int
 }
 
+// linear holds the state of the linear stages of a path: the collector,
+// the wall-loss and low shelves, the expansion chamber and the mode cutoff.
+type linear struct {
+	col          *dsp.Delay
+	colLP        dsp.OnePole
+	low, wall    dsp.Shelf
+	ch           *dsp.Delay
+	mode1, mode2 dsp.Biquad
+}
+
 func newPath(p PathSpec, e ExhaustSpec, rate float64) path {
 	c := e.SpeedOfSound
 	colD := max(1, int(math.Round(2*p.CollectorM/c*rate)))
 	q := path{
-		col:    dsp.NewDelay(colD),
 		colD:   colD,
 		colG:   float32(p.Reflection),
-		colLP:  dsp.OnePole{A: dsp.OnePoleCoef(p.DampingHz, rate)},
 		direct: float32(e.OutletDirect),
 		gain:   float32(p.Gain),
 	}
+	l := &q.eng
+	l.col = dsp.NewDelay(colD)
+	l.colLP = dsp.OnePole{A: dsp.OnePoleCoef(p.DampingHz, rate)}
 	if p.DampingHz <= 0 {
-		q.colLP.A = 1
+		l.colLP.A = 1
 	}
 	q.outlet.SetOutlet(p.OutletM, c, rate)
 	if d := int(math.Round(p.ListenerM / 343 * rate)); d > 0 {
@@ -51,44 +59,70 @@ func newPath(p PathSpec, e ExhaustSpec, rate float64) path {
 	if wallHz <= 0 {
 		wallHz = 1500
 	}
-	q.wall = dsp.NewHighShelf(wallHz, math.Pow(10, -p.WallLossDB/20), rate)
-	q.low = dsp.NewLowShelf(e.LowShelfHz, math.Pow(10, e.LowShelfDB/20), rate)
+	l.wall = dsp.NewHighShelf(wallHz, math.Pow(10, -p.WallLossDB/20), rate)
+	l.low = dsp.NewLowShelf(e.LowShelfHz, math.Pow(10, e.LowShelfDB/20), rate)
 	if p.ChamberM > 0 && p.ChamberArea > 1 {
 		q.chD = max(1, int(math.Round(p.ChamberM/c*rate)))
-		q.ch = dsp.NewDelay(2 * q.chD)
+		l.ch = dsp.NewDelay(2 * q.chD)
 		r := (p.ChamberArea - 1) / (p.ChamberArea + 1)
 		q.chR2 = float32(r * r * 0.97)
 		q.chT = float32(1 - r*r)
 	}
 	// Plane-mode cutoff, a fourth-order Butterworth low pass.
 	fc := 1.8412 * c / (2 * math.Pi * p.PipeRadiusM)
-	q.mode1.SetLowPass(fc, 0.5412, rate)
-	q.mode2.SetLowPass(fc, 1.3066, rate)
+	l.mode1.SetLowPass(fc, 0.5412, rate)
+	l.mode2.SetLowPass(fc, 1.3066, rate)
+	q.pop = *l
+	q.pop.col = dsp.NewDelay(colD)
+	if l.ch != nil {
+		q.pop.ch = dsp.NewDelay(2 * q.chD)
+	}
 	return q
 }
 
-// process runs the path for one sample: the collector resonance, the
-// wall-loss shelf, the low shelf, the expansion chamber, the mode cutoff,
-// the wave steepening, the outlet filter and the air delay to the
-// listener.
-func (p *path) process(x float32) float32 {
-	y := x + p.colG*p.colLP.Process(p.col.Read(p.colD-1))
-	p.col.Write(y)
-	y = p.low.Process(p.wall.Process(y))
-	if p.ch != nil {
-		w := y + p.chR2*p.ch.Read(2*p.chD-1)
-		p.ch.Write(w)
-		y = p.chT * p.ch.Read(p.chD)
+// linear runs the linear stages of l for one sample: the collector
+// resonance, the wall-loss shelf, the low shelf, the expansion chamber and
+// the mode cutoff.
+func (p *path) linear(l *linear, x float32) float32 {
+	y := x + p.colG*l.colLP.Process(l.col.Read(p.colD-1))
+	l.col.Write(y)
+	y = l.low.Process(l.wall.Process(y))
+	if l.ch != nil {
+		w := y + p.chR2*l.ch.Read(2*p.chD-1)
+		l.ch.Write(w)
+		y = p.chT * l.ch.Read(p.chD)
 	}
-	y = p.mode2.Process(p.mode1.Process(y))
-	a := y
+	return l.mode2.Process(l.mode1.Process(y))
+}
+
+// process runs the path for one sample of the engine wave x and the pop
+// jump j: the linear stages, the wave steepening of the engine wave, the
+// outlet filter and the air delay to the listener. While pop is true, the
+// pop stages run, so that the steepening leaves out the pop.
+func (p *path) process(x, j float32, pop bool) float32 {
+	// The engine stages are written out here, so that they need no call.
+	l := &p.eng
+	y := x + j + p.colG*l.colLP.Process(l.col.Read(p.colD-1))
+	l.col.Write(y)
+	y = l.low.Process(l.wall.Process(y))
+	if l.ch != nil {
+		w := y + p.chR2*l.ch.Read(2*p.chD-1)
+		l.ch.Write(w)
+		y = p.chT * l.ch.Read(p.chD)
+	}
+	y = l.mode2.Process(l.mode1.Process(y))
+	w := y
+	if pop {
+		w -= p.linear(&p.pop, j)
+	}
+	a := w
 	if a < 0 {
 		a = -a
 	}
 	if a > 4 {
 		a = 4
 	}
-	y += p.steep * y * a
+	y += p.steep * w * a
 	y = p.gain * (p.direct*y + p.outlet.Process(y))
 	if p.air == nil {
 		return y

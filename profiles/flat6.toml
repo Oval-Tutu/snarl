@@ -25,7 +25,6 @@ limiter_bark_db = 2
 width_deg = 150
 attack = 24
 decay = 7
-idle_floor = 0.2
 cycle_variation = 0.03
 jitter = 0.003
 gain_variation = 0.02
@@ -53,7 +52,7 @@ tick_gain = 0.05
 tick_hz = 2500
 
 [pops]
-density = 0.15
+density = 0.2
 character = "sport"
 body_hz = 190
 body_ms = 35

@@ -31,7 +31,7 @@ func TestPopShape(t *testing.T) {
 	for range 200 {
 		y.Render(buf, c)
 	}
-	y.pops.fire(1, kindPop, srcOwn, 1, 1, 1)
+	y.pops.fire(1, kindPop, srcOwn, 1/y.pops.kindGain[0][0][kindPop], 1, 1)
 	x := make([]float32, rate*3/10)
 	y.Render(x, c)
 	var e [4]float64
@@ -140,7 +140,9 @@ func renderPop(t testing.TB, s *Spec, kind, draws int) []float32 {
 	for range draws {
 		y.pops.noise.Next()
 	}
-	y.pops.fire(1, kind, srcOwn, 1, 1, 1)
+	// The scale gives the pop kind a unit gain, and the other kinds their
+	// gains over it.
+	y.pops.fire(1, kind, srcOwn, 1/y.pops.kindGain[0][0][kindPop], 1, 1)
 	x := make([]float32, rate*8/10)
 	y.Render(x, c)
 	return x
@@ -246,8 +248,9 @@ type popRange struct{ lo, hi float64 }
 // share may miss it by 8 percentage points or by a factor of 3, whichever
 // is wider, for the expansion chamber and the exhaust path. The pop keeps its
 // tuned body: its 30 to 120 Hz share is below the cluster, so its band
-// limits are those of TestPopShape. The burble is 14 to 30 dB below the
-// pop, as in the pack.
+// limits are those of TestPopShape. The level between the kinds comes
+// from their levels over the engine, so the peak of the burble is within
+// 4 dB of the difference of the pop and burble targets below the pop.
 func TestPopKinds(t *testing.T) {
 	s := popSpec()
 	none := popRange{0, 100}
@@ -296,7 +299,7 @@ func TestPopKinds(t *testing.T) {
 		if k == kindPop {
 			pop = mp
 		}
-		if k == kindBurble && (pop-mp < 14 || pop-mp > 30) {
+		if gap := overDB[kindPop] - overDB[kindBurble]; k == kindBurble && math.Abs(pop-mp-gap) > 4 {
 			ok = false
 		}
 		msg := fmt.Sprintf("%s: %.0f ms, decay %.0f ms, centroid %.0f Hz, bands %.1f/%.1f/%.2f/%.3f%%, peak %.1f dBFS",
@@ -307,4 +310,255 @@ func TestPopKinds(t *testing.T) {
 			t.Log(msg)
 		}
 	}
+}
+
+// TestCrackleClicks renders 48 variations of the crackle and checks its
+// clicks against the clicks of the crackle trains in the muffler crackle
+// pack (docs/research/crackles.md section 11), with the same measure. The
+// pack values are the medians over its files. The attack must be at most
+// 1.25 times the pack attack, because a click starts at once. The decays,
+// the centroid and the gap quantiles may miss the pack by 30 per cent, the
+// crest factor by 1.5 dB, and the gap spread and local variation by 0.15.
+func TestCrackleClicks(t *testing.T) {
+	s := popSpec()
+	var x []float64
+	for v := range 48 {
+		for _, f := range renderPop(t, &s, kindCrackle, v*7) {
+			x = append(x, float64(f))
+		}
+	}
+	st := measureClicks(x, rate)
+	near := func(got, want, tol float64) bool { return math.Abs(got-want) <= tol*want }
+	ok := st.attackMS <= 1.25*1.20 && near(st.decay10MS, 3.36, 0.3) && near(st.decayMS, 10.25, 0.3) &&
+		math.Abs(st.crestDB-11.8) <= 1.5 && near(st.centroid, 2523, 0.3) &&
+		near(st.gapP10, 5.0, 0.3) && near(st.gapP50, 9.8, 0.3) && near(st.gapP90, 24.5, 0.3) &&
+		math.Abs(st.gapCV-0.74) <= 0.15 && math.Abs(st.lv-0.38) <= 0.15
+	msg := fmt.Sprintf("%d clicks: attack %.2f ms, decay to -10 dB %.2f ms, to -20 dB %.2f ms, crest %.1f dB, centroid %.0f Hz, gaps %.1f/%.1f/%.1f ms, spread %.2f, local variation %.2f",
+		st.n, st.attackMS, st.decay10MS, st.decayMS, st.crestDB, st.centroid, st.gapP10, st.gapP50, st.gapP90, st.gapCV, st.lv)
+	if !ok {
+		t.Error(msg)
+	} else {
+		t.Log(msg)
+	}
+}
+
+// clickStats are the medians of the clicks in a signal, measured on the
+// signal above 1 kHz.
+type clickStats struct {
+	n                 int
+	attackMS, decayMS float64 // 10 to 90 per cent rise, and peak to -20 dB.
+	censored          float64 // Share of clicks whose decay the next click cuts.
+	crestDB           float64
+	centroid          float64 // 1 to 16 kHz.
+	gaps              []float64
+	gapP10, gapP50    float64
+	gapP90, gapCV     float64
+	burst             float64 // (sd - mean) / (sd + mean) of the intervals.
+	lv                float64 // Local variation of the intervals: 0 regular, 1 random.
+	decay10MS         float64 // Peak to -10 dB.
+	censored10        float64
+}
+
+// hp4 is a fourth-order Butterworth high pass in float64.
+type hp4 struct {
+	b [2][5]float64
+	z [2][2]float64
+}
+
+// newHP returns the high pass at f hertz.
+func newHP(f, rate float64) hp4 {
+	var h hp4
+	for i, q := range []float64{0.5412, 1.3066} {
+		w := 2 * math.Pi * f / rate
+		c, a := math.Cos(w), math.Sin(w)/(2*q)
+		a0 := 1 + a
+		h.b[i] = [5]float64{(1 + c) / 2 / a0, -(1 + c) / a0, (1 + c) / 2 / a0, -2 * c / a0, (1 - a) / a0}
+	}
+	return h
+}
+
+func (h *hp4) process(x float64) float64 {
+	for i := range 2 {
+		b, z := &h.b[i], &h.z[i]
+		y := b[0]*x + z[0]
+		z[0] = b[1]*x - b[3]*y + z[1]
+		z[1] = b[2]*x - b[4]*y
+		x = y
+	}
+	return x
+}
+
+// pct returns the p quantile of x.
+func pct(x []float64, p float64) float64 {
+	if len(x) == 0 {
+		return math.NaN()
+	}
+	s := slices.Clone(x)
+	slices.Sort(s)
+	return s[min(len(s)-1, int(p*float64(len(s))))]
+}
+
+// measureClicks finds the clicks of x in the signal above 1 kHz. A click
+// is a peak of a centred 1 ms RMS envelope that is the highest within
+// 3 ms, within 30 dB of the highest peak, and 6 dB above the lowest
+// envelope since the click before. The attack is the 10 to 90 per cent
+// rise of a 0.25 ms RMS envelope from that lowest value to the peak, and
+// the decay the time from the peak of the 1 ms envelope to -20 dB.
+func measureClicks(x []float64, rate float64) clickStats {
+	h := newHP(1000, rate)
+	y := make([]float64, len(x))
+	for i, v := range x {
+		y[i] = h.process(v)
+	}
+	rmsEnv := func(w int) []float64 {
+		env := make([]float64, len(y))
+		var s float64
+		for i := -w / 2; i < len(y); i++ {
+			if j := i + w/2; j < len(y) {
+				s += y[j] * y[j]
+			}
+			if j := i - w/2 - 1; j >= 0 {
+				s -= y[j] * y[j]
+			}
+			if i >= 0 {
+				env[i] = math.Sqrt(max(s, 0) / float64(w))
+			}
+		}
+		return env
+	}
+	envF := rmsEnv(max(1, int(math.Round(0.00025*rate))))
+	env := rmsEnv(int(math.Round(0.001 * rate)))
+	top := slices.Max(env)
+	ms := int(0.001 * rate)
+	var peaks []int
+	low := math.Inf(1)
+	for i := range env {
+		low = min(low, env[i])
+		if env[i] < top*0.0316 || env[i] != slices.Max(env[max(0, i-3*ms):min(len(env), i+3*ms+1)]) {
+			continue
+		}
+		if len(peaks) > 0 && low > env[i]*0.5 {
+			continue
+		}
+		peaks = append(peaks, i)
+		low = env[i]
+	}
+	var st clickStats
+	var last, lvSum float64
+	lvN := 0
+	var att, dec, crest, cen []float64
+	cut, cut10 := 0, 0
+	var dec10 []float64
+	for k, p := range peaks {
+		pk := env[p]
+		prev := 0
+		if k > 0 {
+			prev = peaks[k-1]
+		}
+		q := p
+		for i := max(prev, p-ms); i < min(len(envF), p+ms); i++ {
+			if envF[i] > envF[q] {
+				q = i
+			}
+		}
+		lo := slices.Min(envF[max(prev, q-5*ms) : q+1])
+		i90 := q
+		for i90 > 0 && envF[i90] >= lo+0.9*(envF[q]-lo) {
+			i90--
+		}
+		i10 := i90
+		for i10 > 0 && envF[i10] >= lo+0.1*(envF[q]-lo) {
+			i10--
+		}
+		att = append(att, float64(i90-i10)/rate*1000)
+		next := len(env)
+		if k+1 < len(peaks) {
+			next = peaks[k+1]
+		}
+		d := p
+		for d < next && env[d] >= 0.1*pk {
+			d++
+		}
+		if d >= next {
+			cut++
+		} else {
+			dec = append(dec, float64(d-p)/rate*1000)
+		}
+		d10 := p
+		for d10 < next && env[d10] >= 0.316*pk {
+			d10++
+		}
+		if d10 >= next {
+			cut10++
+		} else {
+			dec10 = append(dec10, float64(d10-p)/rate*1000)
+		}
+		var e, m float64
+		for i := i10; i < d; i++ {
+			e += y[i] * y[i]
+			m = max(m, math.Abs(y[i]))
+		}
+		if d > i10 {
+			crest = append(crest, 20*math.Log10(m/math.Sqrt(e/float64(d-i10))))
+		}
+		n := 256
+		for float64(n) < 0.006*rate {
+			n <<= 1
+		}
+		a := max(0, i10-ms/2)
+		if a+n <= len(y) {
+			z := make([]complex128, n)
+			for i := range n {
+				z[i] = complex(y[a+i]*(0.5-0.5*math.Cos(2*math.Pi*float64(i)/float64(n))), 0)
+			}
+			analysis.FFT(z)
+			var tot, c float64
+			for b := 1; b < n/2; b++ {
+				f := float64(b) * rate / float64(n)
+				if f < 1000 || f > 16000 {
+					continue
+				}
+				q := real(z[b])*real(z[b]) + imag(z[b])*imag(z[b])
+				tot += q
+				c += f * q
+			}
+			if tot > 0 {
+				cen = append(cen, c/tot)
+			}
+		}
+		if k > 0 {
+			if g := float64(p-peaks[k-1]) / rate * 1000; g < 50 {
+				st.gaps = append(st.gaps, g)
+				if last > 0 {
+					r := (last - g) / (last + g)
+					lvSum += r * r
+					lvN++
+				}
+				last = g
+			} else {
+				last = 0
+			}
+		}
+	}
+	st.n = len(peaks)
+	st.decay10MS = pct(dec10, 0.5)
+	st.attackMS, st.decayMS, st.crestDB, st.centroid = pct(att, 0.5), pct(dec, 0.5), pct(crest, 0.5), pct(cen, 0.5)
+	if st.n > 0 {
+		st.censored = float64(cut) / float64(st.n)
+		st.censored10 = float64(cut10) / float64(st.n)
+	}
+	st.gapP10, st.gapP50, st.gapP90 = pct(st.gaps, 0.1), pct(st.gaps, 0.5), pct(st.gaps, 0.9)
+	var mu, sd float64
+	for _, g := range st.gaps {
+		mu += g
+	}
+	mu /= float64(len(st.gaps))
+	for _, g := range st.gaps {
+		sd += (g - mu) * (g - mu)
+	}
+	sd = math.Sqrt(sd / float64(len(st.gaps)))
+	st.gapCV = sd / mu
+	st.lv = 3 * lvSum / float64(max(1, lvN))
+	st.burst = (sd - mu) / (sd + mu)
+	return st
 }

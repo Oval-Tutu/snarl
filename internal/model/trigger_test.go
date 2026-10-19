@@ -31,14 +31,14 @@ func newPopRig(t testing.TB, seed uint32, mod func(*Spec)) *popRig {
 	s := DefaultSpec()
 	s.Name = "p"
 	s.IdleRPM, s.RedlineRPM = 800, 6800
-	s.Pops.Density = 0.4
+	s.Pops.Density = 0.2
 	if mod != nil {
 		mod(&s)
 	}
 	p := newPops(&s, rate, chunk/float64(rate))
 	p.noise = dsp.NewNoise(seed)
 	p.heat = 1
-	return &popRig{t: t, p: &p, in: popInput{rpm: 6000, heat: 1, lift: 1, liftFull: 1, paths: 2, n: chunk}}
+	return &popRig{t: t, p: &p, in: popInput{rpm: 6000, heat: 1, level: 1, paths: 2, n: chunk}}
 }
 
 // run runs the rig for seconds. set changes the input before each block,
@@ -230,7 +230,7 @@ func liftStats(t *testing.T, lifts int, mod func(*Spec), set func(in *popInput))
 		if set != nil {
 			set(&r.in)
 		}
-		r.lift(coastSec - 0.1)
+		r.lift(2.4)
 		own := r.from(srcOwn)
 		if len(own) > liftMaxPops {
 			t.Fatalf("lift %d: %d pops", i, len(own))
@@ -297,46 +297,67 @@ func TestPopSlowLift(t *testing.T) {
 	}
 }
 
-// TestPopCoast checks the long coast: no pop in the first 2.5 s or below
-// 1.65 times idle, then one burble at a chance of 0.1 per second and a 3 s
-// rest, which gives a burble every 12 s on average.
-func TestPopCoast(t *testing.T) {
-	for _, c := range []struct {
-		character string
-		interval  float64
-	}{{"sport", 3 + 1/coastChance - 1}, {"stock", 3 + 1/(0.5*coastChance) - 1}} {
-		r := newPopRig(t, 21, func(s *Spec) { s.Pops.Character = c.character })
-		r.in.rpm = 4000
-		r.run(1800, func(_ float64, in *popInput) { in.throttle, in.overrun = 0, true })
+// TestPopWindDown checks the wind-down bands on a closed-throttle sweep
+// from 6000 RPM to idle with a chance of 1. The rig has a redline of 6800
+// and an idle of 800 RPM, so 3 bands split 4080 down to 1040 RPM. Each
+// band plays one pop or burble as the RPM falls into it, with more pops at
+// high RPM, and nothing plays below 1040 RPM. A coast at a constant RPM and
+// an RPM that wavers by less than the hysteresis around a band top play
+// nothing.
+func TestPopWindDown(t *testing.T) {
+	hard := func(s *Spec) { s.Pops.Density = 1 }
+	var kinds [3][numKinds]int
+	for i := range 400 {
+		r := newPopRig(t, uint32(100+i), hard)
+		r.run(8, func(t float64, in *popInput) {
+			in.overrun = true
+			in.rpm = float32(max(800, 6000-700*t))
+		})
 		own := r.from(srcOwn)
-		perMin := float64(len(own)) / 30
-		want := 60 / c.interval
-		if math.Abs(perMin-want) > 0.15*want || own[0].at < coastSec {
-			t.Errorf("%s: %.2f burbles per minute, want %.2f, first at %.1f s", c.character, perMin, want, own[0].at)
+		if len(own) != 3 {
+			t.Fatalf("seed %d: %d wind-down pops, want 3: %v", i, len(own), own)
 		}
-		t.Logf("%s coast: %.2f burbles per minute, want %.2f", c.character, perMin, want)
-		for i, g := range own {
-			if g.kind != kindBurble || i > 0 && g.at-own[i-1].at < coastRestSec {
-				t.Fatalf("coast pop %d: kind %d at %.2f s", i, g.kind, g.at)
+		for j, g := range own {
+			rpm := 6000 - 700*g.at
+			top := 4080 - float64(j)*(4080-1040)/3
+			if g.trig != trigWind || rpm > top || rpm < top-80 || (g.kind != kindPop && g.kind != kindBurble) {
+				t.Fatalf("seed %d: pop %d %+v at %.0f RPM, band top %.0f RPM", i, j, g, rpm, top)
 			}
+			kinds[j][g.kind]++
 		}
 	}
-	low := newPopRig(t, 22, nil)
-	low.in.rpm = coastIdle*800 - 10
-	low.run(120, func(_ float64, in *popInput) { in.throttle, in.overrun = 0, true })
-	if len(low.got) > 0 {
-		t.Errorf("%d pops below 1.65 times idle", len(low.got))
+	for j, k := range kinds {
+		want := 0.8 - 0.3*float64(j)
+		if got := float64(k[kindPop]) / 400; math.Abs(got-want) > 0.06 {
+			t.Errorf("band %d: pop share %.2f, want %.2f", j+1, got, want)
+		}
+	}
+	steady := newPopRig(t, 22, hard)
+	steady.in.rpm = 3000
+	steady.run(0.1, nil)
+	steady.run(120, func(_ float64, in *popInput) { in.overrun = true })
+	waver := newPopRig(t, 23, hard)
+	waver.in.rpm = 3160
+	waver.run(0.1, nil)
+	waver.run(120, func(t float64, in *popInput) {
+		in.overrun = true
+		in.rpm = float32(3060 + 100*math.Cos(t))
+	})
+	if n, m := len(steady.got), len(waver.got); n > 0 || m > 1 {
+		t.Errorf("constant RPM: %d pops, RPM wavering around a band top: %d pops, want none and one", n, m)
 	}
 }
 
 // TestPopLimits checks the limits of the own pops with lift-offs and
-// coasts at a chance of 1: at most 6 in any 10 s, and at least 0.7 s
+// wind-downs at a chance of 1: at most 6 in any 10 s, and at least 0.7 s
 // between pops of two triggers. The 6 per 10 s limit is reached.
 func TestPopLimits(t *testing.T) {
-	r := newPopRig(t, 31, func(s *Spec) { s.Pops.Density, s.Pops.Character = 8, "race" })
+	r := newPopRig(t, 31, func(s *Spec) { s.Pops.Density, s.Pops.Character = 4, "race" })
 	for range 60 {
-		r.run(0.2, func(_ float64, in *popInput) { in.throttle, in.overrun = 1, false })
-		r.run(3.6, func(_ float64, in *popInput) { in.throttle, in.overrun = 0, true })
+		r.run(0.2, func(_ float64, in *popInput) { in.rpm, in.throttle, in.overrun = 6000, 1, false })
+		r.run(3.6, func(t float64, in *popInput) {
+			in.rpm, in.throttle, in.overrun = float32(6000-1200*t), 0, true
+		})
 	}
 	own := r.from(srcOwn)
 	most, mixed := 0, 0
@@ -362,12 +383,16 @@ func TestPopLimits(t *testing.T) {
 }
 
 // TestPopsOff checks that the off input stops the own pops of lift-offs
-// and coasts, and that requests still play.
+// and wind-downs, and that requests still play.
 func TestPopsOff(t *testing.T) {
-	r := newPopRig(t, 41, func(s *Spec) { s.Pops.Density, s.Pops.Character = 8, "race" })
+	r := newPopRig(t, 41, func(s *Spec) { s.Pops.Density, s.Pops.Character = 4, "race" })
 	r.in.off = true
 	for range 10 {
-		r.lift(3.5)
+		r.in.rpm = 6000
+		r.run(0.5, func(_ float64, in *popInput) { in.throttle, in.overrun = 1, false })
+		r.run(3.5, func(t float64, in *popInput) {
+			in.rpm, in.throttle, in.overrun = float32(6000-1500*t), 0, true
+		})
 		r.p.request(1, 0.5)
 	}
 	r.run(0.1, nil)
@@ -389,7 +414,8 @@ func TestPopCharacters(t *testing.T) {
 		} else {
 			r.p.own(&r.in, ch, kindPop, trigLift, 0)
 		}
-		return r.p.ev[0].amp / shapes[r.p.ev[0].kind].gain
+		e := &r.p.ev[0]
+		return e.amp / r.p.kindGain[e.path][b2i(e.src == srcRequest)][e.kind]
 	}
 	for ch, c := range characters {
 		name := characterNames[ch]
@@ -496,5 +522,5 @@ func TestPopBangWithPopsOff(t *testing.T) {
 // armed reports whether an own pop can start: a lift-off run or a coast
 // is in progress.
 func (p *pops) armed() bool {
-	return p.runLeft > 0 || p.coastFor > 0
+	return p.runLeft > 0
 }

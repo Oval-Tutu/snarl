@@ -89,10 +89,6 @@ type PulseSpec struct {
 	CamAttack float64 `toml:"cam_attack"`
 	// CamGain is the extra pulse gain above the cam switch RPM.
 	CamGain float64 `toml:"cam_gain"`
-	// IdleFloor is the reference pulse gain for the pops, as a fraction of
-	// full load. On overrun, the pops rise by the overrun level over this
-	// gain.
-	IdleFloor float64 `toml:"idle_floor"`
 	// PartLoadDB is the pulse level at load 0.5 in decibels, relative to
 	// full load at the same RPM. The pulse level rises smoothly with load
 	// from the overrun level at load 0 to full load at load 1.
@@ -183,21 +179,23 @@ type MechanicalSpec struct {
 // PopSpec is the pop model.
 type PopSpec struct {
 	// Density scales the chances of the own pops of a lift-off and a
-	// coast: 2.5 times the density multiplies each chance. Zero stops the
-	// own pops and the ignition cut bangs, which have a chance of twice
-	// the density. Requested pops do not depend on it.
+	// wind-down: 5 times the density multiplies each chance. Zero stops
+	// the own pops and the ignition cut bangs, which have a chance of
+	// twice the density. Requested pops do not depend on it.
 	Density float64 `toml:"density"`
 	// Character is "stock", "sport" or "race". It scales the own pops:
 	// their chances by 0.5, 1 or 1.8 and their gain by -6, 0 or +3 dB. A
 	// stock first pop of a lift-off run can be any kind, and a race later
 	// pop can be any kind. The requested pops change by -2, 0 or +1 dB.
-	Character string  `toml:"character"`
-	Gain      float64 `toml:"gain"`
-	BodyHz    float64 `toml:"body_hz"`
-	BodyMS    float64 `toml:"body_ms"`
-	JumpMS    float64 `toml:"jump_ms"`
-	Crack     float64 `toml:"crack"`
-	CrackMS   float64 `toml:"crack_ms"`
+	Character string `toml:"character"`
+	// Gain multiplies every pop. At 1, each kind has its level over the
+	// engine level.
+	Gain    float64 `toml:"gain"`
+	BodyHz  float64 `toml:"body_hz"`
+	BodyMS  float64 `toml:"body_ms"`
+	JumpMS  float64 `toml:"jump_ms"`
+	Crack   float64 `toml:"crack"`
+	CrackMS float64 `toml:"crack_ms"`
 	// The weights of the pop kinds. Each pop picks a kind at random in
 	// proportion to its weight.
 	WeightPop     float64 `toml:"weight_pop"`
@@ -272,7 +270,7 @@ func DefaultSpec() Spec {
 		LimiterBarkDB:    1,
 		FinalGearWaver:   0.003,
 		Pulse: PulseSpec{
-			WidthDeg: 160, Attack: 25, Decay: 7, IdleFloor: 0.2, PartLoadDB: -0.6,
+			WidthDeg: 160, Attack: 25, Decay: 7, PartLoadDB: -0.6,
 			CycleVariation: 0.08, Jitter: 0.003,
 			GainVariation: 0.06, TimingVariationDeg: 1.5,
 		},

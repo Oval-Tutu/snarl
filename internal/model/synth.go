@@ -31,6 +31,9 @@ const (
 	// the final gear ends a cut. A fixed rate in decibels gives no step,
 	// for a shallow or a deep notch.
 	fadeDB = 200
+	// engLevelSec is the time constant in seconds of the engine level
+	// that the pops follow.
+	engLevelSec = 0.05
 	// waverHz1 and waverHz2 are the rates of the two slow sines of the
 	// final gear waver. Their ratio is not a simple fraction, so that the
 	// waver does not repeat audibly.
@@ -54,7 +57,7 @@ type Control struct {
 	// last block, and PopStrength the strength of the latest, from 0 to 1.
 	PopRequests int
 	PopStrength float32
-	// NoPops stops the own pops of a lift-off or a coast.
+	// NoPops stops the own pops of a lift-off or a wind-down.
 	NoPops bool
 	// Character is the pop character: 0 for the profile character, and 1,
 	// 2 and 3 for stock, sport and race.
@@ -91,7 +94,7 @@ type Synth struct {
 	out   output
 
 	// Profile constants.
-	idleFloor, cycleVar, jitter  float32
+	cycleVar, jitter             float32
 	redline, camRPM              float32
 	camGain, camAttack, attack   float32
 	decay                        float32
@@ -116,7 +119,7 @@ type Synth struct {
 	partLoad                     float32
 	idleGain, knee               float32
 	rpmG, rpmStep                float32
-	shape, lift                  float32
+	shape                        float32
 	intakeBP, jetBP, tickHP      dsp.Biquad
 	intakeSetMix                 float32
 	tickDec                      float32
@@ -127,6 +130,18 @@ type Synth struct {
 	inc, step, amp, amDepth      float32
 	jetGain, intakeGain, fanGain float32
 	tickGain, ka, kb, liveNorm   float32
+
+	// Engine level for the pops. engS and engE sum the output and its
+	// square over the chunk, before the RPM gain and the output stage,
+	// which the pops also pass. engMean and engMS follow their means over
+	// the chunks with no pop with the coefficient kEng, and hold while a
+	// pop sounds. The level is the RMS level with no DC, which the output
+	// stage removes.
+	engS, engE, engMean, engMS, kEng float32
+	// popTail is the samples left in which the paths run their pop
+	// stages. It is popTailLen after the last chunk with a pop, so that
+	// the pop stages ring out.
+	popTail, popTailLen int
 
 	// Rev limiter state. cut is the samples left of the cut, and cutLen is
 	// the length of the cut in samples. cutting is
@@ -176,7 +191,6 @@ func New(s *Spec, rate int) (*Synth, error) {
 		noise2:     dsp.NewNoise(seed + 0x51ed),
 		invRate120: float32(1 / (120 * fs)),
 		banks:      s.Banks(),
-		idleFloor:  float32(s.Pulse.IdleFloor),
 		cycleVar:   float32(s.Pulse.CycleVariation),
 		jitter:     float32(s.Pulse.Jitter),
 		redline:    float32(s.RedlineRPM),
@@ -219,6 +233,8 @@ func New(s *Spec, rate int) (*Synth, error) {
 		kCam:       dsp.TimeCoef(0.015, chunkHz),
 		kLim:       dsp.TimeCoef(0.002, chunkHz),
 		kHand:      1 - dsp.TimeCoef(handover, chunkHz),
+		kEng:       dsp.TimeCoef(engLevelSec, chunkHz),
+		popTailLen: int(0.1 * fs),
 		jit:        dsp.OnePole{A: dsp.OnePoleCoef(2, chunkHz)},
 		amLP:       dsp.OnePole{A: dsp.OnePoleCoef(2000, fs)},
 		idleRPM:    float32(s.IdleRPM),
@@ -253,6 +269,7 @@ func New(s *Spec, rate int) (*Synth, error) {
 	y.idle = newIdle(s, seed, chunkHz)
 	y.initCylinders(s, fs)
 	y.initPaths(s, fs)
+	y.pops.calibrate(s, fs)
 	return y, nil
 }
 
@@ -426,13 +443,11 @@ func (y *Synth) control(c *Control, n int) {
 	ld := float64(y.load)
 	rr := min(y.rpm/y.redline, 1.2)
 	// The pulse gain follows the load curve. On overrun, it moves to the
-	// overrun level. lift is the overrun gain over the idle floor. The pops
-	// follow it, so that they keep their balance with the pulses.
+	// overrun level.
 	pos := min(1, max(0, (y.rpm-y.idleRPM)/(y.redline-y.idleRPM)))
 	lvl := y.ovIdle + (y.ovLevel-y.ovIdle)*pos
 	shape := loadLevel(ld, lvl, y.partLoad)
 	y.shape = shape + (lvl-shape)*y.overrun
-	y.lift = 1 + (lvl/max(y.idleFloor, 0.05)-1)*y.overrun
 	y.amp = y.master * y.voiceGain * y.shape * (0.5 + 0.5*rr) *
 		(1 + y.camGain*y.camMix) * (1 + 2*y.jitter*j) * y.idle.rock
 	gate := float32(math.Pow(math.Max(ld, 0.02), 0.7))
@@ -448,7 +463,7 @@ func (y *Synth) control(c *Control, n int) {
 	heat := b2f(y.throttle > 0.2) * y.load * min(rr, 1)
 	y.pops.control(&popInput{
 		rpm: y.rpm, throttle: thr, overrun: over && y.master > 0.5, cut: limiting, off: c.NoPops,
-		heat: heat, character: c.Character, lift: y.lift, liftFull: lvl / max(y.idleFloor, 0.05),
+		heat: heat, character: c.Character, level: float32(math.Sqrt(math.Max(0, float64(y.engMS-y.engMean*y.engMean)))),
 		n: n, paths: len(y.paths),
 	})
 	// The exhaust flow layers follow the pulse gain, so that they keep the
@@ -662,6 +677,14 @@ func (y *Synth) pulses(bank *[MaxBanks]float32) {
 // process renders one chunk.
 func (y *Synth) process(dst []float32) {
 	np := len(y.paths)
+	// The pop stages of the paths run for the chunk while a pop sounds, or
+	// may start with a bang, and for popTailLen samples after.
+	if y.pops.active > 0 || y.cutting && y.bangAt >= 0 {
+		y.popTail = y.popTailLen
+	} else {
+		y.popTail = max(0, y.popTail-len(dst))
+	}
+	popOn := y.popTail > 0
 	for i := range dst {
 		if cyl := y.crank.step(y.inc); cyl >= 0 {
 			y.fire(cyl)
@@ -682,13 +705,33 @@ func (y *Synth) process(dst []float32) {
 			for b := range np {
 				x += y.mix[p][b] * bank[b]
 			}
-			x = x*am + y.pops.jump[p]*y.lift
-			sum += y.paths[p].process(x)
+			sum += y.paths[p].process(x*am, y.pops.jump[p], popOn)
 		}
-		sum += crack * y.lift
+		sum += crack
 		sum += y.layers(&bank, np)
+		y.engS += sum
+		y.engE += sum * sum
 		y.rpmG += y.rpmStep
 		dst[i] = y.out.process(sum * y.rpmG)
+	}
+	y.engineLevel(len(dst))
+}
+
+// engineLevel updates the engine level after a chunk of n samples. A
+// chunk in which a pop sounded does not change it. The first chunk sets
+// it.
+func (y *Synth) engineLevel(n int) {
+	inv := 1 / float32(n)
+	mean, ms := y.engS*inv, y.engE*inv
+	y.engS, y.engE = 0, 0
+	switch {
+	case y.pops.sounded:
+		y.pops.sounded = false
+	case y.engMS == 0:
+		y.engMean, y.engMS = mean, ms
+	default:
+		y.engMean += (mean - y.engMean) * y.kEng
+		y.engMS += (ms - y.engMS) * y.kEng
 	}
 }
 

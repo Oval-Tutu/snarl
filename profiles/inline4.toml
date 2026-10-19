@@ -26,7 +26,6 @@ attack = 26
 decay = 7.5
 cam_attack = 40
 cam_gain = 0.25
-idle_floor = 0.2
 part_load_db = -0.9
 cycle_variation = 0.03
 jitter = 0.003
@@ -53,7 +52,7 @@ intake_cam_hz = 560
 tick_gain = 0.015
 
 [pops]
-density = 0.025
+density = 0.17
 character = "sport"
 body_hz = 220
 body_ms = 30

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/oval-tutu/snarl/internal/analysis"
+	"github.com/oval-tutu/snarl/internal/dsp"
 	"github.com/oval-tutu/snarl/internal/scenario"
 )
 
@@ -500,12 +501,10 @@ func TestPopsFire(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Same sweep with and without pops. Pops add energy above 3.8 kHz
-	// through the crack.
-	q, err := LoadProfileWith("flat12", "pops.density=0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	// The same sweep with and without own pops. The ignition cut bangs
+	// play in both, so that the engines stay the same. The own pops of the
+	// lift-off and the wind-down add energy above about 1 kHz through the
+	// crack and the clicks.
 	hf := func(x []float32) float64 {
 		var e float64
 		var prev float32
@@ -516,10 +515,26 @@ func TestPopsFire(t *testing.T) {
 		}
 		return e
 	}
-	on := render(newTestEngine(t, "flat12"), 12, sweep(p))[7*testRate:]
-	off := render(newEngine(t, q), 12, sweep(q))[7*testRate:]
-	if hf(on) < 1.15*hf(off) {
-		t.Errorf("overrun high-frequency energy %.3g, without pops %.3g", hf(on), hf(off))
+	off := sweep(p)
+	on, reps := renderReports(newTestEngine(t, "flat12"), 12, sweep(p))
+	quiet := render(newTestEngine(t, "flat12"), 12, func(t float64) Snapshot {
+		s := off(t)
+		s.Flags |= FlagNoPops
+		return s
+	})
+	on, quiet = on[7*testRate:], quiet[7*testRate:]
+	d := make([]float32, len(on))
+	for i := range on {
+		d[i] = on[i] - quiet[i]
+	}
+	own := 0
+	for i := 1; i < len(reps); i++ {
+		if reps[i].Count != reps[i-1].Count && reps[i].Source == SourceOwn {
+			own++
+		}
+	}
+	if own < 2 || hf(d) < 0.005*hf(quiet) {
+		t.Errorf("%d own pops, high-frequency energy of the pops %.3g, of the engine %.3g", own, hf(d), hf(quiet))
 	}
 }
 
@@ -1026,6 +1041,250 @@ func TestFinalGearHandover(t *testing.T) {
 			}
 			if pLo < lo-1 || pHi > p.LimiterRPM {
 				t.Errorf("pitch from %.0f to %.0f RPM 150 ms after the switch, want from %.0f to %.0f", pLo, pHi, lo, p.LimiterRPM)
+			}
+		})
+	}
+}
+
+// popOverEngine renders n pops of one kind on the profile and returns the
+// level of each in decibels over the engine: the RMS level of the pop
+// over the span from its start block that holds 90 per cent of its
+// energy, against the RMS level of the engine with no pop over the same
+// span. The pop is the difference from a twin engine with no pops. The
+// output gain is 20 dB lower, so that the output limiter, which guards the
+// peak, does not act. Own pops come from lift-offs to closed throttle at
+// 0.85 times the redline, every 4.5 to 4.7 s after 1.5 s of full
+// throttle. Only the first pop of each lift plays, and the profile weights
+// pick only the kind. The level of an own pop is brought to the median
+// own level with its level in the report. Requested pops play every 0.5
+// to 0.7 s at full throttle at 0.7 times the redline, with a strength that
+// gives the kind half of the time. The event times are random, so that a
+// span does not start at the same engine phase each time.
+func popOverEngine(t *testing.T, name string, kind PopKind, request bool, n int) []float64 {
+	t.Helper()
+	w := [4]string{"0", "0", "0", "0"}
+	w[kind-1] = "1"
+	p, err := LoadProfileWith(name, "pops.density=4", "pops.weight_pop="+w[0], "pops.weight_boom="+w[1],
+		"pops.weight_crackle="+w[2], "pops.weight_burble="+w[3])
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := *p.spec
+	s.Voice.OutputDB -= 20
+	p.spec = &s
+	a, b := newEngine(t, p), newEngine(t, p)
+	strength := map[PopKind]float32{KindPop: 0.5, KindBoom: 0.9, KindCrackle: 0.9, KindBurble: 0.1}[kind]
+	cycle := 4.6
+	if request {
+		cycle = 0.6
+	}
+	rnd := dsp.NewNoise(7)
+	at := 2.5
+	var xa, xb []float32
+	var starts []int
+	var levels []float64
+	var count uint32
+	var req uint8
+	quiet, found := false, 0
+	buf := make([]float32, 256)
+	for i := 0; found <= n && i < 4000*testRate/256; i++ {
+		t0 := float64(i*256) / testRate
+		s := Snapshot{RPM: 0.7 * p.RedlineRPM, Throttle: 1, Load: 1, Flags: FlagRunning}
+		if t0 >= at {
+			at += cycle - 0.1 + 0.2*float64(rnd.Unipolar())
+			req++
+		}
+		if request {
+			s.PopRequest, s.PopStrength = req, strength
+		} else {
+			s.RPM = 0.85 * p.RedlineRPM
+			if t0 >= at-1.5 {
+				quiet = false
+			} else {
+				s.Throttle, s.Load, s.Flags = 0, 0, FlagRunning|FlagOverrun
+			}
+		}
+		sb := s
+		sb.Flags |= FlagNoPops
+		sb.PopRequest = 0
+		if quiet {
+			s.Flags |= FlagNoPops
+		}
+		a.Set(s)
+		b.Set(sb)
+		a.Render(buf)
+		xa = append(xa, buf...)
+		b.Render(buf)
+		xb = append(xb, buf...)
+		if r := a.Pops(); r.Count != count {
+			count = r.Count
+			quiet = true
+			// A pop of another kind ends the span of the pop before.
+			starts = append(starts, i*256)
+			levels = append(levels, -1)
+			if r.Kind == kind {
+				levels[len(levels)-1] = float64(r.Strength)
+				found++
+			}
+		}
+	}
+	var out []float64
+	for j, st := range starts[:len(starts)-1] {
+		if levels[j] < 0 {
+			continue
+		}
+		end := min(starts[j+1], st+testRate)
+		var tot float64
+		for i := st; i < end; i++ {
+			d := float64(xa[i] - xb[i])
+			tot += d * d
+		}
+		var ep, ee float64
+		for i := st; i < end; i++ {
+			d := float64(xa[i] - xb[i])
+			ep += d * d
+			ee += float64(xb[i]) * float64(xb[i])
+			if ep >= 0.9*tot && i >= st+testRate/100 {
+				break
+			}
+		}
+		db := 10 * math.Log10(ep/ee)
+		if !request {
+			db -= 20 * math.Log10(levels[j]/0.675)
+		}
+		out = append(out, db)
+	}
+	if len(out) < n {
+		t.Fatalf("%s: %d pops of kind %s, want %d", name, len(out), kind, n)
+	}
+	return out[:n]
+}
+
+// TestPopLevelOverEngine checks the median level over the engine of each
+// pop kind on each profile, for 41 own pops on overrun and 61 requested
+// pops at full throttle: pops and booms from 3 to 6 dB, crackles from 0
+// to 3 dB and burbles from -6 to -2 dB. No profile stands out: each median
+// is within 1.5 dB of the mean of the medians of the other profiles.
+func TestPopLevelOverEngine(t *testing.T) {
+	bands := map[PopKind][2]float64{KindPop: {3, 6}, KindBoom: {3, 6}, KindCrackle: {0, 3}, KindBurble: {-6, -2}}
+	names := Profiles()
+	var med [2][5][]float64
+	var mu sync.Mutex
+	t.Run("profiles", func(t *testing.T) {
+		for _, name := range names {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				for r, request := range []bool{false, true} {
+					for k := KindPop; k <= KindBurble; k++ {
+						n := 41
+						if request {
+							n = 61
+						}
+						v := popOverEngine(t, name, k, request, n)
+						slices.Sort(v)
+						m, b := v[len(v)/2], bands[k]
+						msg := fmt.Sprintf("%s, request %t, %s: median %.1f dB over the engine, want %.0f to %.0f", name, request, k, m, b[0], b[1])
+						if m < b[0] || m > b[1] {
+							t.Error(msg)
+						} else {
+							t.Log(msg)
+						}
+						mu.Lock()
+						med[r][k] = append(med[r][k], m)
+						mu.Unlock()
+					}
+				}
+			})
+		}
+	})
+	for r := range med {
+		for k := KindPop; k <= KindBurble; k++ {
+			if len(med[r][k]) != len(names) {
+				continue
+			}
+			var sum float64
+			for _, m := range med[r][k] {
+				sum += m
+			}
+			for _, m := range med[r][k] {
+				if d := m - (sum-m)/float64(len(names)-1); math.Abs(d) > 1.5 {
+					t.Errorf("request %t, %s: a median of %.1f dB is %.1f dB from the other profiles", r == 1, k, m, d)
+				}
+			}
+		}
+	}
+}
+
+// overrunOwnPops renders scenarios/<name>/overrun.scn on the profile and
+// returns the number of own pops.
+func overrunOwnPops(t *testing.T, p Profile) int {
+	t.Helper()
+	scn, err := scenario.ParseFile(filepath.Join("scenarios", p.Name, "overrun.scn"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := newEngine(t, p)
+	buf := make([]float32, 256)
+	last, own := e.Pops(), 0
+	for i := 0; i < int(scn.Duration()*testRate); i += 256 {
+		rpm, thr := scn.At(float64(i) / testRate)
+		s := Snapshot{RPM: float32(rpm), Throttle: float32(thr), Load: float32(thr), Flags: FlagRunning}
+		if thr < 0.05 {
+			s.Flags |= FlagOverrun
+		}
+		e.Set(s)
+		e.Render(buf)
+		if r := e.Pops(); r.Count != last.Count && r.Source == SourceOwn {
+			own++
+		}
+		last = e.Pops()
+	}
+	return own
+}
+
+// TestOverrunOwnPops checks the own pops of the wind-down in the overrun
+// scenario: a lift from full throttle at the top RPM, then closed
+// throttle down to idle. Over 60 seeds, each profile has 2 to 4 own pops
+// on average, and with the profile seed at least one. A coast at a
+// constant half of the redline for 20 s after a lift below the lift-off
+// RPM has none.
+func TestOverrunOwnPops(t *testing.T) {
+	for _, name := range Profiles() {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			p, err := LoadProfile(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			own := overrunOwnPops(t, p)
+			sum := 0
+			for seed := range 60 {
+				q, err := LoadProfileWith(name, fmt.Sprintf("seed=%d", 1000+seed))
+				if err != nil {
+					t.Fatal(err)
+				}
+				sum += overrunOwnPops(t, q)
+			}
+			mean := float64(sum) / 60
+			e := newEngine(t, p)
+			_, reps := renderReports(e, 23, func(t float64) Snapshot {
+				s := Snapshot{RPM: 0.5 * p.RedlineRPM, Throttle: 1, Load: 1, Flags: FlagRunning}
+				if t >= 3 {
+					s = Snapshot{RPM: 0.5 * p.RedlineRPM, Flags: FlagRunning | FlagOverrun}
+				}
+				return s
+			})
+			coast := 0
+			for i := 1; i < len(reps); i++ {
+				if reps[i].Count != reps[i-1].Count {
+					coast++
+				}
+			}
+			msg := fmt.Sprintf("%s: %d own pops with the profile seed, %.2f on average over 60 seeds, %d on a constant coast", name, own, mean, coast)
+			if own < 1 || mean < 2 || mean > 4 || coast > 0 {
+				t.Error(msg)
+			} else {
+				t.Log(msg)
 			}
 		})
 	}
