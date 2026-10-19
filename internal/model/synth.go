@@ -50,6 +50,15 @@ type Control struct {
 	LimiterEvents int
 	// Gear is the gear of the snapshot. A change ends a limiter bounce.
 	Gear uint8
+	// PopRequests is the number of pops that the game requests since the
+	// last block, and PopStrength the strength of the latest, from 0 to 1.
+	PopRequests int
+	PopStrength float32
+	// NoPops stops the own pops of a lift-off or a coast.
+	NoPops bool
+	// Character is the pop character: 0 for the profile character, and 1,
+	// 2 and 3 for stock, sport and race.
+	Character int
 }
 
 type voice struct {
@@ -316,10 +325,21 @@ func (y *Synth) PitchRPM() float32 {
 	return max(0, (y.rpm-y.dip)*(1+y.wav))
 }
 
+// PopReport returns the number of pops started since New, and the kind,
+// source and strength of the latest. The kinds count from 0 and the
+// sources from 1, in the order of the snarl PopKind and PopSource values.
+func (y *Synth) PopReport() (count uint32, kind, source int, strength float32) {
+	p := &y.pops
+	return p.total, p.lastKind, p.lastSrc, p.lastStrength
+}
+
 // Render fills dst. It allocates nothing.
 func (y *Synth) Render(dst []float32, c Control) {
 	if c.LimiterEvents > 0 && !c.Final {
 		y.limEvent = true
+	}
+	if c.PopRequests > 0 {
+		y.pops.request(c.PopRequests, c.PopStrength)
 	}
 	for len(dst) > 0 {
 		n := min(len(dst), chunk)
@@ -426,7 +446,11 @@ func (y *Synth) control(c *Control, n int) {
 	y.rpmStep = (g - y.rpmG) / float32(n)
 
 	heat := b2f(y.throttle > 0.2) * y.load * min(rr, 1)
-	y.pops.control(y.rpm, y.throttle, over && y.master > 0.5, limiting, heat)
+	y.pops.control(&popInput{
+		rpm: y.rpm, throttle: thr, overrun: over && y.master > 0.5, cut: limiting, off: c.NoPops,
+		heat: heat, character: c.Character, lift: y.lift, liftFull: lvl / max(y.idleFloor, 0.05),
+		n: n, paths: len(y.paths),
+	})
 	// The exhaust flow layers follow the pulse gain, so that they keep the
 	// level order over load.
 	y.controlLayers(y.shape, rr)
@@ -482,9 +506,9 @@ func (y *Synth) limit(rpm, thr float32, gear uint8, final bool, n int) bool {
 		y.fade = 1
 		y.limRot++
 		y.bangAt = -1
-		// An ignition cut bangs with a chance of the pop density, at a
-		// random time in the cut.
-		if y.limKind == "ignition" && y.noise.Unipolar() < y.pops.density {
+		// An ignition cut bangs with a chance of twice the pop density,
+		// at a random time in the cut.
+		if y.limKind == "ignition" && y.noise.Unipolar() < y.pops.bangChance {
 			y.bangAt = int((0.2 + 0.8*y.noise.Unipolar()) * float32(y.cutLen))
 		}
 	}
@@ -650,7 +674,7 @@ func (y *Synth) process(dst []float32) {
 
 		nz := y.amLP.Process(y.noise.Bipolar()) * noiseScale
 		am := 1 + y.amDepth*nz
-		crack := y.pops.tick(np)
+		crack := y.pops.tick()
 
 		var sum float32
 		for p := range np {

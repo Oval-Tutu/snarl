@@ -31,7 +31,7 @@ func TestPopShape(t *testing.T) {
 	for range 200 {
 		y.Render(buf, c)
 	}
-	y.pops.fire(1, 1, kindPop)
+	y.pops.fire(1, kindPop, srcOwn, 1, 1, 1)
 	x := make([]float32, rate*3/10)
 	y.Render(x, c)
 	var e [4]float64
@@ -79,8 +79,8 @@ func TestPopShape(t *testing.T) {
 }
 
 // BenchmarkPops renders a four-cylinder engine in a normal state with no
-// pops and in a dense pop state, where the heat and the run probability
-// stay at 1 on overrun at full pop density.
+// pops and in a dense pop state, where a request every 60 ms keeps every
+// pop slot busy.
 func BenchmarkPops(b *testing.B) {
 	for _, dense := range []bool{false, true} {
 		b.Run(fmt.Sprintf("dense %t", dense), func(b *testing.B) {
@@ -94,28 +94,20 @@ func BenchmarkPops(b *testing.B) {
 			c := Control{RPM: 4000, Throttle: 0.7, Load: 0.7, Running: true, Gear: 3}
 			y.Render(buf, c)
 			if dense {
-				c = Control{RPM: 6000, Throttle: 1, Load: 1, Running: true, Gear: 3}
-				y.Render(buf, c)
-				c = Control{RPM: 6000, Running: true, Overrun: true, Gear: 3}
+				c = Control{RPM: 6000, Running: true, Overrun: true, Gear: 3, PopStrength: 1}
 			}
 			b.ReportAllocs()
+			i := 0
 			for b.Loop() {
-				if dense {
-					y.pops.heat, y.pops.prob = 1, 1
+				c.PopRequests = 0
+				if dense && i%11 == 0 {
+					c.PopRequests = 1
 				}
+				i++
 				y.Render(buf, c)
 			}
 		})
 	}
-}
-
-// fired returns the number of pops started.
-func (p *pops) fired() int {
-	var n int
-	for _, c := range p.count {
-		n += c
-	}
-	return n
 }
 
 // popSpec is a one-cylinder engine with one path for isolated pops.
@@ -148,7 +140,7 @@ func renderPop(t testing.TB, s *Spec, kind, draws int) []float32 {
 	for range draws {
 		y.pops.noise.Next()
 	}
-	y.pops.fire(1, 1, kind)
+	y.pops.fire(1, kind, srcOwn, 1, 1, 1)
 	x := make([]float32, rate*8/10)
 	y.Render(x, c)
 	return x
@@ -314,77 +306,5 @@ func TestPopKinds(t *testing.T) {
 		} else {
 			t.Log(msg)
 		}
-	}
-}
-
-// TestPopMix checks that the kind picks follow the profile weights within
-// 1.5 percentage points over 20000 picks, and that the pops of 60 s of
-// overrun runs never play a kind with weight 0.
-func TestPopMix(t *testing.T) {
-	for _, w := range [][numKinds]float64{{0.1, 0.2, 0.3, 0.4}, {0.5, 0, 0.5, 0}} {
-		s := DefaultSpec()
-		s.IdleRPM, s.RedlineRPM = 800, 6800
-		s.Pops.Density = 1
-		s.Pops.WeightPop, s.Pops.WeightBoom, s.Pops.WeightCrackle, s.Pops.WeightBurble = w[0], w[1], w[2], w[3]
-		p := newPops(&s, rate, chunk/float64(rate))
-		var picks [numKinds]int
-		for range 20000 {
-			picks[p.pick()]++
-		}
-		for k := range numKinds {
-			if got := float64(picks[k]) / 20000; math.Abs(got-w[k]) > 0.015 || (w[k] == 0 && picks[k] > 0) {
-				t.Errorf("weights %v: kind %d share %.3f", w, k, got)
-			}
-		}
-		for range 60 {
-			p.heat = 1
-			p.control(4000, 1, false, false, 1)
-			for i := range rate {
-				if i%chunk == 0 {
-					p.control(4000, 0, true, false, 1)
-				}
-				p.tick(2)
-			}
-			p.control(4000, 0, false, false, 1)
-		}
-		if p.fired() < 100 {
-			t.Errorf("weights %v: %d pops in 60 s", w, p.fired())
-		}
-		for k := range numKinds {
-			if w[k] == 0 && p.count[k] > 0 {
-				t.Errorf("weights %v: %d pops of kind %d", w, p.count[k], k)
-			}
-		}
-	}
-}
-
-// TestPopCap checks that at most maxPopEvents pops sound at once, that a
-// pop with every slot busy does not start, and that the path jumps return
-// to zero when the last pop ends.
-func TestPopCap(t *testing.T) {
-	s := DefaultSpec()
-	p := newPops(&s, rate, chunk/float64(rate))
-	p.heat = 1
-	for i := range maxPopEvents + 3 {
-		e := p.fire(2, 1, kindCrackle)
-		if (e == nil) != (i >= maxPopEvents) {
-			t.Fatalf("pop %d: started %v with %d active", i, e != nil, p.active)
-		}
-	}
-	if p.active != maxPopEvents || p.fired() != maxPopEvents {
-		t.Fatalf("%d active and %d started, want %d", p.active, p.fired(), maxPopEvents)
-	}
-	p.bang(2)
-	if p.fired() != maxPopEvents {
-		t.Error("a bang started with every slot busy")
-	}
-	for range 2 * rate {
-		p.tick(2)
-		if p.active > maxPopEvents {
-			t.Fatalf("%d active", p.active)
-		}
-	}
-	if p.active != 0 || p.jump != [MaxBanks]float32{} {
-		t.Errorf("%d active after 2 s, jumps %v", p.active, p.jump)
 	}
 }

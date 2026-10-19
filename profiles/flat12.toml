@@ -51,8 +51,8 @@ tick_gain = 0.02
 tick_hz = 3500
 
 [pops]
-density = 0.4
-min_rpm = 3000
+density = 0.2
+character = "sport"
 body_hz = 200
 body_ms = 35
 # A free-flowing pair of pipes into one silencer: crackle trains lead.

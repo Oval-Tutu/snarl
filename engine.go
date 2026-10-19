@@ -135,15 +135,19 @@ func (f *LoadFilter) Update(throttle, accel, peakAccel, dt float32, overrun bool
 }
 
 // engine is the Engine implementation. Set and Render meet at a sequence
-// lock over three atomic words, so neither side allocates or blocks for
-// long.
+// lock over four atomic words, so neither side allocates or blocks for
+// long. Render publishes the pop report in one atomic word, so that Pops
+// never waits.
 type engine struct {
-	seq        atomic.Uint32
-	w0, w1, w2 atomic.Uint64
+	seq            atomic.Uint32
+	w0, w1, w2, w3 atomic.Uint64
+	report         atomic.Uint64
 
-	synth   *model.Synth
-	last    Snapshot
-	limiter uint8
+	synth    *model.Synth
+	last     Snapshot
+	limiter  uint8
+	popReq   uint8
+	reported uint32
 	// primed is true after Render reads the first snapshot from Set.
 	primed bool
 }
@@ -160,6 +164,7 @@ func (e *engine) Set(s Snapshot) {
 	e.w1.Store(uint64(math.Float32bits(s.Load)) | uint64(math.Float32bits(s.Speed))<<32)
 	e.w2.Store(uint64(s.Gear) | uint64(s.Flags)<<8 | uint64(s.ShiftUp)<<16 |
 		uint64(s.ShiftDown)<<24 | uint64(s.Limiter)<<32 | 1<<40)
+	e.w3.Store(uint64(math.Float32bits(s.PopStrength)) | uint64(s.PopRequest)<<32 | uint64(s.PopCharacter)<<40)
 	e.seq.Add(1)
 }
 
@@ -172,7 +177,7 @@ func (e *engine) snapshot() (Snapshot, bool) {
 		if q&1 != 0 {
 			continue
 		}
-		w0, w1, w2 := e.w0.Load(), e.w1.Load(), e.w2.Load()
+		w0, w1, w2, w3 := e.w0.Load(), e.w1.Load(), e.w2.Load(), e.w3.Load()
 		if e.seq.Load() != q {
 			continue
 		}
@@ -189,6 +194,10 @@ func (e *engine) snapshot() (Snapshot, bool) {
 			ShiftUp:   uint8(w2 >> 16 & 0xff),
 			ShiftDown: uint8(w2 >> 24 & 0xff),
 			Limiter:   uint8(w2 >> 32 & 0xff),
+
+			PopStrength:  math.Float32frombits(uint32(w3 & math.MaxUint32)),
+			PopRequest:   uint8(w3 >> 32 & 0xff),
+			PopCharacter: PopCharacter(w3 >> 40 & 0xff),
 		}
 		return e.last, true
 	}
@@ -197,11 +206,12 @@ func (e *engine) snapshot() (Snapshot, bool) {
 
 func (e *engine) Render(dst []float32) {
 	s, ok := e.snapshot()
-	events := 0
+	events, requests := 0, 0
 	if e.primed {
 		events = int(s.Limiter - e.limiter)
+		requests = int(s.PopRequest - e.popReq)
 	}
-	e.limiter = s.Limiter
+	e.limiter, e.popReq = s.Limiter, s.PopRequest
 	e.primed = e.primed || ok
 	e.synth.Render(dst, model.Control{
 		RPM:           s.RPM,
@@ -212,5 +222,28 @@ func (e *engine) Render(dst []float32) {
 		Final:         s.Flags&FlagFinalGear != 0,
 		LimiterEvents: events,
 		Gear:          s.Gear,
+		PopRequests:   requests,
+		PopStrength:   s.PopStrength,
+		NoPops:        s.Flags&FlagNoPops != 0,
+		Character:     int(s.PopCharacter),
 	})
+	n, kind, src, strength := e.synth.PopReport()
+	if n != e.reported {
+		e.reported = n
+		q := uint64(min(max(strength, 0), 1)*math.MaxUint16 + 0.5)
+		k, c := uint64(kind+1)&0xff, uint64(src)&0xff //nolint:gosec // The kinds and sources are below 8.
+		e.report.Store(uint64(n) | k<<32 | c<<40 | q<<48)
+	}
+}
+
+// Pops returns the pop report. The model kinds count from 0 in the order
+// of PopKind from KindPop, and the model sources have the PopSource values.
+func (e *engine) Pops() PopReport {
+	v := e.report.Load()
+	return PopReport{
+		Count:    uint32(v & math.MaxUint32),
+		Kind:     PopKind(v >> 32 & 0xff),
+		Source:   PopSource(v >> 40 & 0xff),
+		Strength: float32(v>>48) / math.MaxUint16,
+	}
 }

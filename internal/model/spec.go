@@ -180,17 +180,24 @@ type MechanicalSpec struct {
 	TickHz    float64 `toml:"tick_hz"`
 }
 
-// PopSpec is the overrun pop model.
+// PopSpec is the pop model.
 type PopSpec struct {
-	Density   float64 `toml:"density"`
-	MinRPM    float64 `toml:"min_rpm"`
+	// Density scales the chances of the own pops of a lift-off and a
+	// coast: 2.5 times the density multiplies each chance. Zero stops the
+	// own pops and the ignition cut bangs, which have a chance of twice
+	// the density. Requested pops do not depend on it.
+	Density float64 `toml:"density"`
+	// Character is "stock", "sport" or "race". It scales the own pops:
+	// their chances by 0.5, 1 or 1.8 and their gain by -6, 0 or +3 dB. A
+	// stock first pop of a lift-off run can be any kind, and a race later
+	// pop can be any kind. The requested pops change by -2, 0 or +1 dB.
+	Character string  `toml:"character"`
 	Gain      float64 `toml:"gain"`
 	BodyHz    float64 `toml:"body_hz"`
 	BodyMS    float64 `toml:"body_ms"`
 	JumpMS    float64 `toml:"jump_ms"`
 	Crack     float64 `toml:"crack"`
 	CrackMS   float64 `toml:"crack_ms"`
-	IntervalM float64 `toml:"interval_ms"`
 	// The weights of the pop kinds. Each pop picks a kind at random in
 	// proportion to its weight.
 	WeightPop     float64 `toml:"weight_pop"`
@@ -278,8 +285,8 @@ func DefaultSpec() Spec {
 			TickHz: 3000,
 		},
 		Pops: PopSpec{
-			MinRPM: 2500, Gain: 1, BodyHz: 200, BodyMS: 35, JumpMS: 3,
-			Crack: 2.5, CrackMS: 16, IntervalM: 174,
+			Character: "sport", Gain: 1, BodyHz: 200, BodyMS: 35, JumpMS: 3,
+			Crack: 2.5, CrackMS: 16,
 			// The kind mix of the muffler crackle pack.
 			WeightPop: 0.4, WeightBoom: 0.2, WeightCrackle: 0.3, WeightBurble: 0.1,
 		},
@@ -323,8 +330,12 @@ func (s *Spec) validateEngine() error {
 		return errors.New("pulse width_deg must be up to 360, and width_deg, attack and decay positive")
 	case s.Exhaust.SpeedOfSound <= 0 || s.Exhaust.Coupling < 0 || s.Exhaust.Coupling > 0.5:
 		return errors.New("speed_of_sound must be positive and coupling from 0 to 0.5")
-	case s.Pops.BodyHz <= 0 || s.Pops.BodyMS <= 0 || s.Pops.CrackMS <= 0 || s.Pops.IntervalM <= 0 || s.Pops.JumpMS <= 0:
-		return errors.New("pops body_hz, body_ms, jump_ms, crack_ms and interval_ms must be positive")
+	case s.Pops.BodyHz <= 0 || s.Pops.BodyMS <= 0 || s.Pops.CrackMS <= 0 || s.Pops.JumpMS <= 0:
+		return errors.New("pops body_hz, body_ms, jump_ms and crack_ms must be positive")
+	case s.Pops.Density < 0:
+		return errors.New("pops density must not be negative")
+	case !validCharacter(s.Pops.Character):
+		return fmt.Errorf("pops character %q is not stock, sport or race", s.Pops.Character)
 	case min(s.Pops.WeightPop, s.Pops.WeightBoom, s.Pops.WeightCrackle, s.Pops.WeightBurble) < 0 ||
 		s.Pops.WeightPop+s.Pops.WeightBoom+s.Pops.WeightCrackle+s.Pops.WeightBurble <= 0:
 		return errors.New("pops weights must not be negative, and at least one must be positive")
@@ -340,6 +351,11 @@ func (s *Spec) validateEngine() error {
 		return errors.New("pulse part_load_db must be from -20 to below 0")
 	}
 	return nil
+}
+
+func validCharacter(name string) bool {
+	_, ok := characterIndex(name)
+	return ok
 }
 
 func (s *Spec) validateLimiter() error {

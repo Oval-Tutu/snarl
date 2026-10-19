@@ -487,6 +487,12 @@ func TestDeterministic(t *testing.T) {
 			t.Fatalf("sample %d differs: %v and %v", i, a[i], b[i])
 		}
 	}
+	ea, eb := newTestEngine(t, "flat12"), newTestEngine(t, "flat12")
+	a = render(ea, 12, withRequests(sweep(p), 1, 3, 6.5, 7.2))
+	b = render(eb, 12, withRequests(sweep(p), 1, 3, 6.5, 7.2))
+	if !slices.Equal(a, b) || ea.Pops() != eb.Pops() || ea.Pops().Count < 4 {
+		t.Errorf("renders with pop requests differ, or reports %+v and %+v", ea.Pops(), eb.Pops())
+	}
 }
 
 func TestPopsFire(t *testing.T) {
@@ -523,8 +529,10 @@ func TestRenderAllocs(t *testing.T) {
 	s := Snapshot{RPM: 4000, Throttle: 1, Load: 1, Flags: FlagRunning}
 	n := testing.AllocsPerRun(200, func() {
 		s.Limiter++
+		s.PopRequest++
 		e.Set(s)
 		e.Render(buf)
+		_ = e.Pops()
 	})
 	if n != 0 {
 		t.Errorf("%v allocations per Render", n)

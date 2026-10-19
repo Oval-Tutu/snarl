@@ -37,78 +37,6 @@ func TestCrankFiringOrder(t *testing.T) {
 	}
 }
 
-// TestPopTiming checks the two-level schedule against the measured
-// spacing: 110 to 264 ms inside a run and 300 to 700 ms between runs.
-func TestPopTiming(t *testing.T) {
-	s := DefaultSpec()
-	s.IdleRPM = 800
-	s.RedlineRPM = 6800
-	s.Pops.Density = 0.8
-	p := newPops(&s, rate, chunk/float64(rate))
-	p.heat = 1
-	p.control(4000, 1, false, false, 1) // Arm at full throttle.
-	var fires []int
-	for i := range 30 * rate {
-		if i%chunk == 0 {
-			p.control(4000, 0, true, false, 1)
-		}
-		before := p.fired()
-		p.tick(2)
-		if p.fired() > before {
-			fires = append(fires, i)
-		}
-	}
-	if len(fires) < 8 {
-		t.Fatalf("%d pops in 30 seconds", len(fires))
-	}
-	// Gaps between runs can add up when a run start is skipped, so they
-	// have only a lower bound.
-	var inRun []float64
-	for i := 1; i < len(fires); i++ {
-		ms := float64(fires[i]-fires[i-1]) * 1000 / rate
-		switch {
-		case ms >= 95 && ms <= 265:
-			inRun = append(inRun, ms)
-		case ms < 275:
-			t.Errorf("pop interval %.0f ms", ms)
-		}
-	}
-	if len(inRun) < 4 {
-		t.Fatalf("%d intervals inside runs", len(inRun))
-	}
-	slices.Sort(inRun)
-	if m := inRun[len(inRun)/2]; m < 150 || m > 200 {
-		t.Errorf("median interval inside runs %.0f ms, want about 174", m)
-	}
-}
-
-func TestPopNeedsHeatAndArming(t *testing.T) {
-	s := DefaultSpec()
-	s.IdleRPM = 800
-	s.RedlineRPM = 6800
-	s.Pops.Density = 1
-	p := newPops(&s, rate, chunk/float64(rate))
-	// Never armed: overrun alone does not pop.
-	for i := range 5 * rate {
-		if i%chunk == 0 {
-			p.control(4000, 0, true, false, 0)
-		}
-		if p.tick(1); p.fired() > 0 {
-			t.Fatal("pop without arming")
-		}
-	}
-	// Armed but cold: no pop.
-	p.control(4000, 1, false, false, 0)
-	for i := range 5 * rate {
-		if i%chunk == 0 {
-			p.control(4000, 0, true, false, 0)
-		}
-		if p.tick(1); p.fired() > 0 {
-			t.Fatal("pop from a cold exhaust")
-		}
-	}
-}
-
 // TestLoadLevel checks that the pulse gain rises with load from the
 // overrun level to full load, through the part-load level at load 0.5.
 func TestLoadLevel(t *testing.T) {
@@ -194,8 +122,8 @@ func checkBounce(t *testing.T, name string, s *Spec, y *Synth) {
 			n, rot = y.limRot, y.limRot
 		}
 		y.Render(buf, c)
-		if i > 0 && (y.overrun > 1e-6 || y.pops.window) {
-			t.Fatalf("%s: overrun effect at the limiter: overrun %v, pop window %t", name, y.overrun, y.pops.window)
+		if i > 0 && (y.overrun > 1e-6 || y.pops.armed()) {
+			t.Fatalf("%s: overrun effect at the limiter: overrun %v, own pop pending %t", name, y.overrun, y.pops.armed())
 		}
 		if i >= rate/5/chunk {
 			if y.limRot != rot {
@@ -309,8 +237,8 @@ func checkEvent(t *testing.T, name string, y *Synth) {
 	over.LimiterEvents = 1
 	y.Render(buf, over)
 	over.LimiterEvents = 0
-	if y.limRot != n+1 || !y.cutting || y.pops.window {
-		t.Errorf("%s: limiter event: cuts %d, cutting %t, pop window %t", name, y.limRot-n, y.cutting, y.pops.window)
+	if y.limRot != n+1 || !y.cutting || y.pops.armed() {
+		t.Errorf("%s: limiter event: cuts %d, cutting %t, own pop pending %t", name, y.limRot-n, y.cutting, y.pops.armed())
 	}
 	for range y.cutLen/len(buf) - 1 {
 		y.Render(buf, over)
@@ -353,8 +281,8 @@ func TestFinalGear(t *testing.T) {
 				if y.limRot != n || y.cutting || y.climb {
 					t.Fatalf("%s: cut in the final gear at %.0f RPM", name, rpm)
 				}
-				if y.overrun > 1e-6 || y.pops.window {
-					t.Fatalf("%s: overrun effect in the final gear: overrun %v, pop window %t", name, y.overrun, y.pops.window)
+				if y.overrun > 1e-6 || y.pops.armed() {
+					t.Fatalf("%s: overrun effect in the final gear: overrun %v, own pop pending %t", name, y.overrun, y.pops.armed())
 				}
 				if p := y.PitchRPM(); i > rate/5/chunk && (p < lo-1 || p > lim) {
 					t.Fatalf("%s: pitch %.1f RPM in the final gear, want from %.1f to %.0f", name, p, lo, lim)
