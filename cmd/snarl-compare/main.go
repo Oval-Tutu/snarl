@@ -1,5 +1,8 @@
 // Command snarl-compare compares two engine renders that the same scenario
 // drives, and writes report.md, metrics.json and optional spectrograms.
+// With --residual, it measures instead the residual of each hold of one or
+// more renders: the part that does not repeat from one engine cycle to the
+// next.
 package main
 
 import (
@@ -57,6 +60,7 @@ type config struct {
 	target       float64
 	spectrograms bool
 	band         string
+	residual     bool
 }
 
 func main() {
@@ -71,6 +75,7 @@ func run(args []string) error {
 	fs := flag.NewFlagSet("snarl-compare", flag.ContinueOnError)
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "Usage: snarl-compare [flags] A.wav B.wav")
+		fmt.Fprintln(fs.Output(), "       snarl-compare --residual --scenario S.scn [flags] A.wav [B.wav ...]")
 		fs.PrintDefaults()
 	}
 	fs.StringVar(&cfg.scenario, "scenario", "", "scenario file that drove both renders (required for the order analysis)")
@@ -82,8 +87,12 @@ func run(args []string) error {
 	fs.Float64Var(&cfg.target, "target", -23, "integrated loudness in LUFS that both inputs are normalised to")
 	fs.StringVar(&cfg.band, "band", fmt.Sprintf("%d:%d", analysis.DefaultBandLo, analysis.DefaultBandHi), "low band LO:HI in hertz for the low-band metrics")
 	fs.BoolVar(&cfg.spectrograms, "spectrograms", true, "write spectrogram PNGs with ffmpeg when it is on PATH")
+	fs.BoolVar(&cfg.residual, "residual", false, "print the residual of each hold of each file to standard output, as Markdown tables, instead of the comparison")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if cfg.residual {
+		return residuals(os.Stdout, fs.Args(), &cfg)
 	}
 	if fs.NArg() != 2 {
 		fs.Usage()
