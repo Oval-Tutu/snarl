@@ -235,6 +235,25 @@ This is `cap`, and it adds to option 1 as `full`. The pulse attack stops getting
 
 Recommended order: option 1, then option 3 if high RPM still sounds too bright, then a separate look at the inline4 intake noise above the cam switch. Option 2 is a stop-gap only.
 
+## Fix
+
+Option 1 is in the model, with two new `[noise]` keys:
+
+- `am_cutoff_hz` (default 800): the cutoff of the AM noise low pass at the redline. At idle, the low pass is one pole at 2 kHz, as at HEAD. Towards the redline, it moves to two unity-gain poles at this cutoff. 0 keeps the idle low pass at every RPM.
+- `am_redline` (default 0.25): the AM depth at the redline as a fraction of the depth at idle.
+
+Both change along a smoothstep from the idle RPM to the redline, so that idle does not change and 2000 RPM changes little. The coefficients update once per control block. The cost is one one-pole per sample, and `BenchmarkRender` shows no change outside the noise of the machine. The four tuned profiles use the defaults: a lower cutoff or a lower `am_redline` lowers the 4 to 12 kHz level and raises the HNR by less than 1 dB more at the high holds. The catalogue profiles use the defaults.
+
+Results on `holds-t100` (`TestHissHighRPM` and `TestHissIdle` in `hiss_test.go`):
+
+- Idle: no change in any measure or in the RMS level.
+- 2000 RPM: the 4 to 12 kHz level falls by 0.9 to 2.1 dB, the HNR below 500 Hz rises by 0.2 to 0.5 dB, and the RMS level falls by at most 0.08 dB, for the tuned profiles.
+- From 4000 RPM up: the 4 to 12 kHz level falls by 1.2 to 10.4 dB, the HNR below 500 Hz rises by 1.7 to 5.1 dB, and the floor falls by 4 to 12 dB. From idle to the top hold, the HNR below 500 Hz now falls by 2 to 12 dB, against 7 to 15 dB at HEAD (v8 and flat12 2 dB, flat6 6 dB, inline4 12 dB). In engine-sim, it rises.
+- The sweep-wot loudness falls by 0.1 to 0.7 LU and stays within the 1 LU tolerance of `TestOutputCalibration`, so `output_db` does not change. A change of `output_db` would also change the idle level.
+- Pops: `TestHissPops` finds the pop waves unchanged (correlation 1.000). Requested pops at full throttle are 0.15 to 0.48 dB quieter, because the engine level that they follow is lower. Own pops on overrun change by at most 0.01 dB.
+
+From 4000 RPM up, the flat6 and inline4 4 to 12 kHz level is still 18 to 26 dB above engine-sim. This content is the pulse harmonics (option 3) and the inline4 intake noise above the cam switch, which the noise AM no longer covers.
+
 ## Caveats
 
 - The flat12 engine-sim reference is noisy below 2 kHz itself (floor -5 to -14 dB). It is not a good target for the floor of flat12. Use flat6 and inline4 for the floor and the 4 to 12 kHz level.

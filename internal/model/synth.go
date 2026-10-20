@@ -114,7 +114,6 @@ type Synth struct {
 	kRPM, kCtl, kMaster, kCam    float32
 	kLim, kHand                  float32
 	jit                          dsp.OnePole
-	amLP                         dsp.OnePole
 	idleRPM, ovLevel, ovIdle     float32
 	partLoad                     float32
 	idleGain, knee               float32
@@ -130,6 +129,14 @@ type Synth struct {
 	inc, step, amp, amDepth      float32
 	jetGain, intakeGain, fanGain float32
 	tickGain, ka, kb, liveNorm   float32
+
+	// amLP and amLP2 are the AM noise low pass. Their coefficients move
+	// with the RPM from amIdleA and 1 at idle to amTopA and amTopA2 at the
+	// redline. amTaper is the fall of the AM depth from idle to the
+	// redline.
+	amLP, amLP2              dsp.OnePole
+	amIdleA, amTopA, amTopA2 float32
+	amTaper                  float32
 
 	// fanSine holds the fan sine of each sample of the chunk.
 	fanSine [chunk]float32
@@ -234,7 +241,10 @@ func New(s *Spec, rate int) (*Synth, error) {
 		kHand:      1 - dsp.TimeCoef(handover, chunkHz),
 		kEng:       dsp.TimeCoef(engLevelSec, chunkHz),
 		jit:        dsp.OnePole{A: dsp.OnePoleCoef(2, chunkHz)},
-		amLP:       dsp.OnePole{A: dsp.OnePoleCoef(2000, fs)},
+		amIdleA:    dsp.OnePoleCoef(2000, fs),
+		amTopA:     dsp.OnePoleCoef(2000, fs),
+		amTopA2:    1,
+		amTaper:    float32(1 - s.Noise.AMRedline),
 		idleRPM:    float32(s.IdleRPM),
 		ovLevel:    float32(math.Pow(10, s.Overrun.LevelDB/20)),
 		ovIdle:     float32(math.Pow(10, s.Overrun.IdleLevelDB/20)),
@@ -244,6 +254,10 @@ func New(s *Spec, rate int) (*Synth, error) {
 		pops:       newPops(s, fs, chunk/fs),
 		out:        newOutput(s.Voice.OutputDB, fs),
 		idleGain:   float32(s.Voice.IdleGainDB),
+	}
+	if s.Noise.AMCutoffHz > 0 {
+		y.amTopA = dsp.OnePoleCoef(s.Noise.AMCutoffHz, fs)
+		y.amTopA2 = y.amTopA
 	}
 	y.knee = float32(max(s.Voice.IdleGainRPM, s.IdleRPM))
 	if y.camAttack <= 0 {
@@ -449,7 +463,13 @@ func (y *Synth) control(c *Control, n int) {
 	y.amp = y.master * y.voiceGain * y.shape * (0.5 + 0.5*rr) *
 		(1 + y.camGain*y.camMix) * (1 + 2*y.jitter*j) * y.idle.rock
 	gate := float32(math.Pow(math.Max(ld, 0.02), 0.7))
-	y.amDepth = y.amCfg * gate
+	// Towards the redline, the AM noise gets narrower and shallower along
+	// a smoothstep, so that the harmonics rise above it. At idle, it does
+	// not change.
+	w := pos * pos * (3 - 2*pos)
+	y.amDepth = y.amCfg * gate * (1 - y.amTaper*w)
+	y.amLP.A = y.amIdleA + (y.amTopA-y.amIdleA)*w
+	y.amLP2.A = 1 + (y.amTopA2-1)*w
 
 	// The RPM gain ramps over the chunk. It starts at its first value.
 	g := rpmGain(y.rpm, y.knee, y.redline, y.idleGain)
@@ -700,7 +720,7 @@ func (y *Synth) process(dst []float32) {
 			bank[b] += y.overlap * bank[b] * bank[b]
 		}
 
-		nz := y.amLP.Process(y.noise.Bipolar()) * noiseScale
+		nz := y.amLP2.Process(y.amLP.Process(y.noise.Bipolar())) * noiseScale
 		am := 1 + y.amDepth*nz
 		crack := y.pops.tick()
 

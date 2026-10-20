@@ -158,7 +158,16 @@ type PathSpec struct {
 
 // NoiseSpec holds the noise layer gains.
 type NoiseSpec struct {
-	AM            float64 `toml:"am"`
+	AM float64 `toml:"am"`
+	// AMCutoffHz is the cutoff in hertz of the AM noise low pass at the
+	// redline. At idle, the low pass is one pole at 2 kHz. As the RPM
+	// rises to the redline, it moves to two poles at AMCutoffHz. Zero
+	// keeps the idle low pass at every RPM.
+	AMCutoffHz float64 `toml:"am_cutoff_hz"`
+	// AMRedline is the AM depth at the redline as a fraction of the depth
+	// at idle. The depth and the low pass change between idle and the
+	// redline along a smoothstep over RPM.
+	AMRedline     float64 `toml:"am_redline"`
 	Jet           float64 `toml:"jet"`
 	JetHz         float64 `toml:"jet_hz"`
 	Intake        float64 `toml:"intake"`
@@ -278,7 +287,7 @@ func DefaultSpec() Spec {
 			SpeedOfSound: 565, Crossover: "none", OutletDirect: 0.4,
 			Steepening: 0.3, LowShelfHz: 250,
 		},
-		Noise: NoiseSpec{AM: 0.35, Jet: 0.02, JetHz: 1500},
+		Noise: NoiseSpec{AM: 0.35, AMCutoffHz: 800, AMRedline: 0.25, Jet: 0.02, JetHz: 1500},
 		Mechanical: MechanicalSpec{
 			TickHz: 3000,
 		},
@@ -347,6 +356,8 @@ func (s *Spec) validateEngine() error {
 		return errors.New("overrun level_db and idle_level_db must be from -40 to 6")
 	case s.Pulse.PartLoadDB >= 0 || s.Pulse.PartLoadDB < -20:
 		return errors.New("pulse part_load_db must be from -20 to below 0")
+	case s.Noise.AMCutoffHz < 0 || s.Noise.AMCutoffHz > 2000 || s.Noise.AMRedline < 0 || s.Noise.AMRedline > 1:
+		return errors.New("noise am_cutoff_hz must be from 0 to 2000 and am_redline from 0 to 1")
 	}
 	return nil
 }
