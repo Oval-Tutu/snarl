@@ -3,8 +3,13 @@ package snarl
 import (
 	"fmt"
 	"math"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/oval-tutu/snarl/internal/scenario"
+	"github.com/oval-tutu/snarl/internal/wav"
 )
 
 // The static tests support docs/research/static-analysis.md. They turn the
@@ -89,4 +94,93 @@ func TestStaticLayerFloor(t *testing.T) {
 			}
 		})
 	}
+}
+
+// staticFixes are the variants of TestStaticFixFloor, each named by its
+// overrides. "before" has neither option A nor option B, and "final" has
+// the profile values.
+var staticFixes = []struct {
+	name      string
+	overrides []string
+}{
+	{"before", []string{"noise.am_idle=1", "mechanical.tick_lp_hz=0"}},
+	{"A", []string{"mechanical.tick_lp_hz=0"}},
+	{"B", []string{"noise.am_idle=1"}},
+	{"final", nil},
+}
+
+// staticFixFloor is the highest final floor in dB that TestStaticFixFloor
+// accepts at the idle and the 3000 RPM holds of holds-t100. With options A
+// and B, the floor was -18.3 and -15.0 dB (flat12), -21.6 and -21.5 dB
+// (flat6), -22.4 and -21.4 dB (inline4) and -18.1 and -16.8 dB (v8).
+var staticFixFloor = map[string][2]float64{
+	"flat12":  {-17.5, -14.5},
+	"flat6":   {-21, -21},
+	"inline4": {-22, -21},
+	"v8":      {-17.5, -16.5},
+}
+
+// TestStaticFixFloor measures the noise floor between the harmonics and
+// the 4 to 12 kHz level of each hold of holds-t100, for each variant of
+// staticFixes and for the engine-sim reference in out/reference/engine-sim
+// when it is present. At the idle and the 3000 RPM holds of each tuned
+// profile, the final floor is at most staticFixFloor and at least 3 dB
+// below the floor before options A and B.
+func TestStaticFixFloor(t *testing.T) {
+	if testing.Short() {
+		t.Skip("renders 24 scenarios")
+	}
+	t.Parallel()
+	for name := range hissBounds {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var before, final []hissHold
+			var dir string
+			for _, v := range staticFixes {
+				var p Profile
+				p, dir = hissProfile(t, name, v.overrides...)
+				h := hissHolds(t, p, dir, "holds-t100")
+				t.Log(staticFixLine(name, v.name, h))
+				switch v.name {
+				case "before":
+					before = h
+				case "final":
+					final = h
+				}
+			}
+			ref := filepath.Join("out", "reference", "engine-sim", strings.TrimPrefix(dir, "scenarios"+string(filepath.Separator)), "holds-t100.wav")
+			if a, err := wav.ReadFile(ref); err != nil || a.SampleRate != testRate {
+				t.Logf("%s: no reference at %d Hz", ref, testRate)
+			} else {
+				sc, err := scenario.ParseFile(filepath.Join(dir, "holds-t100.scn"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				x := a.Mono()
+				t.Log(staticFixLine(name, "engine-sim", hissScenarioHolds(sc, func(i int) float64 { return x[min(i, len(x)-1)] })))
+			}
+			b, ok := staticFixFloor[name]
+			if !ok {
+				return
+			}
+			for i, h := range final {
+				j := slices.Index([]float64{final[0].rpm, 3000}, h.rpm)
+				if j < 0 {
+					continue
+				}
+				if h.floor > b[j] || h.floor > before[i].floor-3 {
+					t.Errorf("%.0f RPM: floor %.1f dB, want at most %.1f dB and 3 dB below %.1f dB", h.rpm, h.floor, b[j], before[i].floor)
+				}
+			}
+		})
+	}
+}
+
+// staticFixLine formats the floor and the 4 to 12 kHz level of each hold.
+func staticFixLine(name, label string, holds []hissHold) string {
+	line := fmt.Sprintf("%-14s %-10s", name, label)
+	for _, h := range holds {
+		line += fmt.Sprintf(" | %4.0f: floor %6.1f, 4-12 kHz %6.1f", h.rpm, h.floor, h.hf)
+	}
+	return line
 }

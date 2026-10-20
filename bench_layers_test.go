@@ -118,6 +118,31 @@ func BenchmarkLayers(b *testing.B) {
 	}
 }
 
+// BenchmarkTickLowPass measures the cost of the valve tick low pass
+// (tick_lp_hz). For each profile, it runs the state of BenchmarkRender
+// (4000 RPM at throttle 0.7) and the states of BenchmarkStates with the low
+// pass off and at 9000 Hz, one after the other, so that the two runs of a
+// state interleave. The cost is the time at 9000 Hz minus the time with
+// the low pass off.
+func BenchmarkTickLowPass(b *testing.B) {
+	states := append([]benchState{{"render", func(Profile) Snapshot {
+		return Snapshot{RPM: 4000, Throttle: 0.7, Load: 0.7, Flags: FlagRunning}
+	}}}, benchStates...)
+	for _, name := range Profiles() {
+		for _, st := range states {
+			for _, hz := range []string{"0", "9000"} {
+				p, err := LoadProfileWith(name, "mechanical.tick_lp_hz="+hz)
+				if err != nil {
+					b.Fatal(err)
+				}
+				b.Run(name+"/"+st.name+"/tick_lp_hz="+hz, func(b *testing.B) {
+					benchBlocks(b, newEngine(b, p), st.snap(p))
+				})
+			}
+		}
+	}
+}
+
 // sink keeps the primitive results live.
 var sink float32
 

@@ -46,6 +46,11 @@ const (
 // of the block-rate controls.
 var controlBlock = chunk
 
+// wholeSampleStart is true only in a test that compares the pulses with
+// pulses that start on the whole sample at or after their position, with
+// no band-limited corner and no end at zero.
+var wholeSampleStart bool
+
 // Control is the engine state for one block.
 type Control struct {
 	RPM, Throttle, Load float32
@@ -135,13 +140,27 @@ type Synth struct {
 	jetGain, intakeGain, fanGain float32
 	tickGain, ka, kb, liveNorm   float32
 
+	// Pulse placement for one chunk. aStep and bStep are the attack and
+	// decay rates per pulse step, so that a voice starts its envelope at
+	// its fractional position. endVal is the envelope at the end of the
+	// pulse, which the pulse subtracts along its length, so that it ends
+	// at zero. corner is the slope of the pulse at its start per sample,
+	// times liveNorm/6, the gain of the band-limited corner. invStep is
+	// 1/step.
+	aStep, bStep, endVal float32
+	corner, invStep      float32
+
 	// amLP and amLP2 are the AM noise low pass. Their coefficients move
 	// with the RPM from amIdleA and 1 at idle to amTopA and amTopA2 at the
-	// redline. amTaper is the fall of the AM depth from idle to the
-	// redline.
+	// redline. amIdle is the AM depth factor at idle, and amTaper is its
+	// fall from idle to the redline.
 	amLP, amLP2              dsp.OnePole
 	amIdleA, amTopA, amTopA2 float32
-	amTaper                  float32
+	amIdle, amTaper          float32
+
+	// tickLP band-limits the valve tick when tickLow is true.
+	tickLP  dsp.Biquad
+	tickLow bool
 
 	// fanSine holds the fan sine of each sample of the chunk.
 	fanSine [chunk]float32
@@ -249,7 +268,8 @@ func New(s *Spec, rate int) (*Synth, error) {
 		amIdleA:    dsp.OnePoleCoef(2000, fs),
 		amTopA:     dsp.OnePoleCoef(2000, fs),
 		amTopA2:    1,
-		amTaper:    float32(1 - s.Noise.AMRedline),
+		amIdle:     float32(s.Noise.AMIdle),
+		amTaper:    float32(s.Noise.AMIdle - s.Noise.AMRedline),
 		idleRPM:    float32(s.IdleRPM),
 		ovLevel:    float32(math.Pow(10, s.Overrun.LevelDB/20)),
 		ovIdle:     float32(math.Pow(10, s.Overrun.IdleLevelDB/20)),
@@ -282,6 +302,10 @@ func New(s *Spec, rate int) (*Synth, error) {
 	}
 	y.jetBP.SetBandPass(jetHz, 0.7, fs)
 	y.tickHP.SetHighPass(s.Mechanical.TickHz, 0.9, fs)
+	if f := s.Mechanical.TickLowPassHz; f > 0 && f < 0.45*fs {
+		y.tickLP.SetLowPass(f, math.Sqrt2/2, fs)
+		y.tickLow = true
+	}
 
 	y.idle = newIdle(s, seed, chunkHz)
 	y.initCylinders(s, fs)
@@ -469,10 +493,10 @@ func (y *Synth) control(c *Control, n int) {
 		(1 + y.camGain*y.camMix) * (1 + 2*y.jitter*j) * y.idle.rock
 	gate := float32(math.Pow(math.Max(ld, 0.02), 0.7))
 	// Towards the redline, the AM noise gets narrower and shallower along
-	// a smoothstep, so that the harmonics rise above it. At idle, it does
-	// not change.
+	// a smoothstep, so that the harmonics rise above it. The depth moves
+	// from its idle factor to its redline factor.
 	w := pos * pos * (3 - 2*pos)
-	y.amDepth = y.amCfg * gate * (1 - y.amTaper*w)
+	y.amDepth = y.amCfg * gate * (y.amIdle - y.amTaper*w)
 	y.amLP.A = y.amIdleA + (y.amTopA-y.amIdleA)*w
 	y.amLP2.A = 1 + (y.amTopA2-1)*w
 
@@ -626,6 +650,14 @@ func (y *Synth) controlLayers(flow, rr float32) {
 	y.ka = float32(math.Exp(-a * dx))
 	y.kb = float32(math.Exp(-b * dx))
 	y.liveNorm = float32(1 / envelopePeak(a, b))
+	y.aStep = float32(a / pulseLen)
+	y.bStep = float32(b / pulseLen)
+	y.endVal = float32((1 - math.Exp(-a)) * math.Exp(-b) / pulseLen)
+	y.corner = float32(a*dx/6) * y.liveNorm
+	y.invStep = 1 / max(y.step, 1e-9)
+	if wholeSampleStart {
+		y.aStep, y.bStep, y.endVal, y.corner = 0, 0, 0, 0
+	}
 	for i := range y.paths {
 		y.paths[i].steep = y.steepCfg * flow
 	}
@@ -662,7 +694,14 @@ func (y *Synth) fire(cyl int) {
 	}
 	v := &y.voices[cyl]
 	v.gain = y.amp * (y.cylGain[cyl] + y.idle.imbalance*y.cylDev[cyl]) * g
-	v.pos = (y.crank.past-late)*y.stepPerCycle - y.delay[cyl]*y.step
+	// The pulse starts one sample later than the crank places it, so that
+	// the sample before its start, which carries part of the band-limited
+	// corner, is still to come.
+	lead := float32(1)
+	if wholeSampleStart {
+		lead = 0
+	}
+	v.pos = (y.crank.past-late)*y.stepPerCycle - (y.delay[cyl]+lead)*y.step
 	v.active = true
 	v.started = false
 	y.tickEnv = y.tickGain
@@ -670,6 +709,14 @@ func (y *Synth) fire(cyl int) {
 
 // pulses runs every active voice for one sample and sums the voices per
 // bank.
+//
+// A pulse starts at its fractional position: its first sample is the
+// envelope v.pos pulse steps after the start. The envelope starts at zero
+// with a corner, a step of its slope. A two-sample polynomial band-limited
+// ramp (polyBLAMP) rounds the corner: with d the fraction of a sample from
+// the start to the first sample, the sample before the start adds
+// corner*d^3 and the first sample adds corner*(1-d)^3. The pulse subtracts
+// the envelope end value along its length, so that it ends at zero.
 func (y *Synth) pulses(bank *[MaxBanks]float32) {
 	step := y.step
 	for k := range y.voices {
@@ -679,17 +726,25 @@ func (y *Synth) pulses(bank *[MaxBanks]float32) {
 		}
 		if v.pos < 0 {
 			v.pos += step
+			if v.pos >= 0 {
+				d := v.pos * y.invStep
+				bank[v.bank] += y.corner * d * d * d * v.gain
+			}
 			continue
 		}
 		if int(v.pos) >= pulseLen {
 			v.active = false
 			continue
 		}
+		var c float32
 		if !v.started {
 			v.started = true
-			v.e1, v.e2 = 1, 1
+			v.e1 = float32(math.Exp(float64(-y.aStep * v.pos)))
+			v.e2 = float32(math.Exp(float64(-y.bStep * v.pos)))
+			d := max(0, 1-v.pos*y.invStep)
+			c = y.corner * d * d * d
 		}
-		e := (1 - v.e1) * v.e2 * y.liveNorm
+		e := ((1-v.e1)*v.e2-y.endVal*v.pos)*y.liveNorm + c
 		v.e1 *= y.ka
 		v.e2 *= y.kb
 		bank[v.bank] += e * v.gain
@@ -785,7 +840,11 @@ func (y *Synth) layers(bank *[MaxBanks]float32, np int, fan float32) float32 {
 		out += fan * y.fanGain
 	}
 	if y.tickEnv > 1e-5 {
-		out += y.tickHP.Process(n2) * y.tickEnv
+		tick := y.tickHP.Process(n2)
+		if y.tickLow {
+			tick = y.tickLP.Process(tick)
+		}
+		out += tick * y.tickEnv
 		y.tickEnv *= y.tickDec
 	}
 	return out

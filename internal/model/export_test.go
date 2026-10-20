@@ -8,3 +8,12 @@ func SetControlBlock(n int) (restore func()) {
 	controlBlock = min(chunk, max(1, n))
 	return func() { controlBlock = was }
 }
+
+// SetWholeSampleStart makes each pulse start on the whole sample at or
+// after its position, with no band-limited corner and no end at zero, and
+// returns a function that restores the fractional start. A test that
+// calls it must not run in parallel with other tests of the package.
+func SetWholeSampleStart() (restore func()) {
+	wholeSampleStart = true
+	return func() { wholeSampleStart = false }
+}

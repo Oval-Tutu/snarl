@@ -167,7 +167,12 @@ type NoiseSpec struct {
 	// AMRedline is the AM depth at the redline as a fraction of the depth
 	// at idle. The depth and the low pass change between idle and the
 	// redline along a smoothstep over RPM.
-	AMRedline     float64 `toml:"am_redline"`
+	AMRedline float64 `toml:"am_redline"`
+	// AMIdle is the AM depth at idle as a fraction of AM. The depth moves
+	// from AMIdle at idle to AMRedline at the redline along the same
+	// smoothstep. A value below 1 lowers the AM at idle and in the middle
+	// of the RPM range, and 1 keeps the full depth at idle.
+	AMIdle        float64 `toml:"am_idle"`
 	Jet           float64 `toml:"jet"`
 	JetHz         float64 `toml:"jet_hz"`
 	Intake        float64 `toml:"intake"`
@@ -182,7 +187,12 @@ type MechanicalSpec struct {
 	FanBlades float64 `toml:"fan_blades"`
 	FanGain   float64 `toml:"fan_gain"`
 	TickGain  float64 `toml:"tick_gain"`
-	TickHz    float64 `toml:"tick_hz"`
+	// TickHz is the cutoff in hertz of the valve tick high pass.
+	TickHz float64 `toml:"tick_hz"`
+	// TickLowPassHz is the cutoff in hertz of a two-pole low pass after
+	// the valve tick high pass, which band-limits the tick. Zero turns it
+	// off, so that the tick runs to the Nyquist frequency.
+	TickLowPassHz float64 `toml:"tick_lp_hz"`
 }
 
 // PopSpec is the pop model.
@@ -287,9 +297,9 @@ func DefaultSpec() Spec {
 			SpeedOfSound: 565, Crossover: "none", OutletDirect: 0.4,
 			Steepening: 0.3, LowShelfHz: 250,
 		},
-		Noise: NoiseSpec{AM: 0.35, AMCutoffHz: 800, AMRedline: 0.25, Jet: 0.02, JetHz: 1500},
+		Noise: NoiseSpec{AM: 0.35, AMCutoffHz: 800, AMRedline: 0.25, AMIdle: 0.5, Jet: 0.02, JetHz: 1500},
 		Mechanical: MechanicalSpec{
-			TickHz: 3000,
+			TickHz: 3000, TickLowPassHz: 9000,
 		},
 		Pops: PopSpec{
 			Character: "sport", Gain: 1, BodyHz: 200, BodyMS: 35, JumpMS: 3,
@@ -358,6 +368,10 @@ func (s *Spec) validateEngine() error {
 		return errors.New("pulse part_load_db must be from -20 to below 0")
 	case s.Noise.AMCutoffHz < 0 || s.Noise.AMCutoffHz > 2000 || s.Noise.AMRedline < 0 || s.Noise.AMRedline > 1:
 		return errors.New("noise am_cutoff_hz must be from 0 to 2000 and am_redline from 0 to 1")
+	case s.Noise.AMIdle < 0 || s.Noise.AMIdle > 1:
+		return errors.New("noise am_idle must be from 0 to 1")
+	case s.Mechanical.TickLowPassHz != 0 && (s.Mechanical.TickLowPassHz < 1000 || s.Mechanical.TickLowPassHz > 20000):
+		return errors.New("mechanical tick_lp_hz must be 0 or from 1000 to 20000")
 	}
 	return nil
 }

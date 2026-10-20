@@ -1,6 +1,6 @@
 # Background static
 
-Measured at HEAD `8b1fba5`, tier 1, f32, 48 kHz unless a table gives another rate. No model behaviour or profile value changed. The only model change is a test hook for the control block size, and the tuned-profile renders stay bit-identical.
+Measured at HEAD `8b1fba5`, tier 1, f32, 48 kHz unless a table gives another rate. No model behaviour or profile value changed. The only model change is a test hook for the control block size, and the tuned-profile renders stay bit-identical. The [Fix](#fix) section is later: it puts options A, B and C in the model.
 
 ## Answer
 
@@ -23,7 +23,7 @@ Recommendations, in this order: lower the noise AM at idle and middle RPM (optio
 - Residual: `snarl-compare --residual --scenario S.scn A.wav [B.wav ...]` (code in `internal/analysis/residual.go`). For each hold after the settle time, it removes the DC and finds the cycle period within 0.5 per cent of the nominal RPM that gives the least residual: a coarse search with linear interpolation, then two parabola fits with a Kaiser-windowed sinc interpolator (128 taps, passband to about 21 kHz at 48 kHz). It resamples whole 720-degree cycles to the crank-angle domain with at least the input rate, subtracts the synchronous average cycle and scales the residual power by k/(k-1) for k cycles. It reports the residual power relative to the signal power in dB, and the residual in the bands 20 to 500 Hz, 0.5 to 2 kHz, 2 to 6 kHz, 6 to 16 kHz and 16 to 24 kHz, both relative to the whole signal and relative to the signal in the same band.
 - Unit tests (`residual_test.go`): a periodic signal with a fractional cycle length and harmonics up to 20 kHz gives -135 to -143 dB. White noise 20, 40 and 60 dB below the signal is measured within 0.1 dB in total and within 1 dB in the bands from 500 Hz to 16 kHz.
 - Floor: the noise floor between the harmonics with the method of `docs/research/hiss-analysis.md` (`hissMeasure` in `hiss_test.go`). The residual also counts a slow pitch or gain wander. The floor does not, because that wander stays within 0.15 of a half order of each harmonic. At idle, the half orders are 5 to 8 Hz apart, and the leakage of the Hann window limits the floor to about -28 to -36 dB.
-- Holds: idle, 3000 RPM and 80 per cent of the redline, at throttle 1 and 0.5, 3 s each with 0.5 s settle (scenarios in `out/tmp/static/scn/`). Throttle 0.5 is load 0.5.
+- Holds: idle, 3000 RPM and 80 per cent of the redline, at throttle 1 and 0.5, 3 s each with 0.5 s settle (scenarios in `scenarios/static/<profile>/holds.scn`). Throttle 0.5 is load 0.5.
 - Silent engine: these `--set` overrides turn off every random and noise layer and the pops:
 
   `noise.am=0 noise.jet=0 noise.intake=0 mechanical.tick_gain=0 pulse.cycle_variation=0 pulse.jitter=0 idle.variation=0 idle.timing_deg=0 idle.hunt=0 idle.rock=0 idle.imbalance=0 pops.density=0`
@@ -93,7 +93,7 @@ At a constant hold, the block-rate controls do not step, and the residual change
 
 ### Pulse edges and the cycle length
 
-`TestPulseEdges` (`internal/model/pulse_test.go`) runs one voice with the pulse shape of each tuned profile at 800, 3000 and 6000 RPM:
+At `8b1fba5`, `TestPulseEdges` (`internal/model/pulse_test.go`) ran one voice with the pulse shape of each tuned profile at 800, 3000 and 6000 RPM. The test now checks the fractional start of the [Fix](#fix) section. At `8b1fba5`, it found:
 
 - The pulse starts at 0, so its start has no step.
 - The pulse stops at its last sample at -50.2 to -60.6 dB below its peak (v8 -50.4, flat6 -54.8, inline4 -59.2, inline4 cam -60.6, flat12 -59.5 dB). The step is small, and it repeats every cycle except for its timing.
@@ -209,8 +209,71 @@ The model has no fractional delay. Option C covers the lost fraction of the prim
 
 Lower the inline4 intake above the cam switch (`intake_cam_gain` 1.2) if its high RPM sounds noisy, and keep the cycle variation, the jet and the jitter, which give roughness, flow and wander rather than static. Cost: XS each. Set by ear.
 
+## Fix
+
+Options A, B and C are in the model. The four tuned profiles set `[noise] am_idle = 0.5` (option A, medium) and `[mechanical] tick_lp_hz = 9000` (option B). These values are also the defaults, so the catalogue profiles get the same change.
+
+### Option C: fractional pulse start and an end at zero
+
+- Each pulse starts at its fractional sample position. When a voice starts, its envelope state is the envelope at the fraction of a sample by which the start lies before the sample: two `math.Exp` per firing, none per sample.
+- The start of the envelope is a corner, a step of its slope. A two-sample polynomial band-limited ramp (polyBLAMP) rounds it: the sample before the start and the first sample each add a cubic of the fraction times the slope. So that the sample before the start is still to come, every pulse starts one sample (20.8 microseconds at 48 kHz) later than before.
+- The pulse subtracts its envelope end value along its length, `env(1)*x`, so that it ends at zero. The peak changes by less than 0.01 dB.
+- Cost per sample: one multiply-add per active voice, and a corner term on two samples per firing. `BenchmarkRender` (median of 5 runs of 2 s, 256-frame blocks) gave 12951, 10237, 15206 and 14955 ns per block before and 13704, 10697, 12998 and 13684 ns after, for flat12, inline4, flat6 and v8, with 0 allocations. The differences are in both directions and within the noise of the machine.
+
+Residual of the silent engine in dB, at throttle 1 / 0.5 (`TestStaticFractionalStart` in `internal/model/static_test.go`, before at `7ed553f`):
+
+| Profile | Idle before | Idle after | 3000 RPM before | 3000 RPM after | 80 % redline before | 80 % redline after |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| flat12 | -47.1 / -47.1 | -111.9 / -111.9 | -33.0 / -32.9 | -90.5 / -91.2 | -26.3 / -26.2 | -85.9 / -85.4 |
+| inline4 | -50.1 / -50.1 | -118.7 / -118.9 | -38.7 / -38.7 | -104.4 / -103.9 | -25.0 / -25.0 | -81.6 / -81.4 |
+| flat6 | -48.1 / -48.0 | -52.3 / -52.0 | -39.2 / -39.2 | -53.7 / -53.4 | -27.1 / -27.1 | -48.2 / -47.9 |
+| flat6, fan off | | -118.8 / -118.8 | | -104.5 / -104.3 | | -88.1 / -87.8 |
+| v8 | -50.7 / -50.7 | -118.8 / -118.8 | -34.1 / -34.0 | -102.2 / -102.1 | -41.7 / -41.6 | -108.2 / -107.8 |
+
+- For flat12, inline4 and v8, the residual falls by 57 to 69 dB, to -81 to -119 dB, in the range of the integer-period values of `8b1fba5` (-73 to -128 dB). The test fails above -75 dB with the fan off.
+- The flat6 fan is the rest of its residual: -48 to -54 dB. The fan sine runs on its own float32 phase, whose rounding differs from that of the crank phase, so the fan frequency is not an exact multiple of the cycle frequency. This is a slow drift of a pure tone, not static. With a cycle of exactly 2048 samples, where both phases are exact, the flat6 residual is -121 dB.
+- `TestStaticIntegerPeriod` now gives -116.3 to -121.0 dB at 2812.5 RPM, -86.1 to -105.1 dB at 2850 and 5600 RPM except the flat6 (-47.3 and -43.6 dB, the fan), and -79.1 to -117.6 dB at 5625 RPM. A whole number of samples per cycle no longer changes the residual much.
+- With the fan off, the residual from 6 to 16 kHz is -54 to -74 dB relative to the signal in the same band, against -11 dB before. The band from 16 to 24 kHz keeps -3 to -28 dB relative to its own small signal, but this is part of the total residual of -81 dB or lower.
+
+With every layer on (the stock profiles):
+
+- Level: `TestStaticWholeSampleLevel` compares the fix with the pulses on the whole sample, through the test hook `SetWholeSampleStart`, on `holds-t000`, `holds-t100` and `sweep-wot`. The loudness changes by -0.012 to -0.020 LU and the RMS level by -0.003 to -0.012 dB. The hook gives renders that are bit-identical to `7ed553f`.
+- Pops: `TestStaticWholeSamplePops` finds the pops alone, requested at full throttle and own pops of a lift-off, within -0.050 to 0.000 dB with a correlation of at least 0.99996.
+- Floor between the harmonics, before options A and B: on `holds-t100`, the floor falls by 0 to 0.2 dB below 4000 RPM and by up to 1.1 dB at the top holds. On `holds-t000`, where the throttle is closed and the noise AM is almost off, it falls by up to 4.7 dB (inline4 at 8400 RPM, -20.7 to -25.4 dB).
+- `TestOutputCalibration` and the hiss tests pass with no change of values.
+
+In the stock profiles, the noise layers still cover most of the gain. Options A and B lower those layers.
+
+### Options A and B: the AM depth at idle and the tick low pass
+
+- `[noise] am_idle` (0.5, from 0 to 1): the AM depth at idle as a fraction of `am`. The depth moves from `am_idle` at idle to `am_redline` at the redline along the smoothstep of the hiss fix. At 1, the AM is the AM of `7ed553f`.
+- `[mechanical] tick_lp_hz` (9000 Hz, 0 for off, else from 1000 to 20000 Hz): a two-pole Butterworth low pass after the valve tick high pass, with its coefficients set once in `New`. It runs only while the tick envelope sounds.
+
+The choice came from a listening comparison of `am_idle` 0.7, 0.5 and 0.35 (a light, medium and strong option A) and `tick_lp_hz` 12000, 9000 and 6000 (option B). The medium option A and 9 kHz were chosen. 9 kHz removes mostly content above 16 kHz. On `holds-t100`, before the choice:
+
+- Option A lowered the floor at idle by 2.3 to 2.8 dB (light), 4.2 to 5.3 dB (medium) and 5.6 to 7.8 dB (strong), and at 3000 RPM by 1.8 to 2.2, 3.1 to 3.9 and 4.0 to 5.4 dB. From 6000 RPM up, it changed the floor by at most 0.4 dB. At throttle 0, the AM is almost off, so option A changed the floor by at most 0.5 dB.
+- Option B lowered the residual from 16 to 24 kHz, relative to the whole signal, by 3 to 14 dB at 12 kHz, 4 to 18 dB at 9 kHz and 4 to 22 dB at 6 kHz: the most for the flat6, which has the loudest tick, and the least for the inline4. The floor changed by at most 0.3 dB, except for the flat6, where it fell by up to 1.5 dB at full throttle and 2.9 dB at throttle 0 (6 kHz).
+
+Floor between the harmonics on `holds-t100` in dB, before options A and B / with both / engine-sim (`TestStaticFixFloor` in `static_test.go`). "Before" has `noise.am_idle=1` and `mechanical.tick_lp_hz=0`, with option C:
+
+| Profile | Idle | 3000 RPM |
+| --- | ---: | ---: |
+| flat12 (1000 RPM) | -14.1 / -18.3 / -4.9 | -11.6 / -15.0 / -8.6 |
+| flat6 (800 RPM) | -16.4 / -21.6 / -16.4 | -17.7 / -21.5 / -29.2 |
+| inline4 (800 RPM) | -17.3 / -22.4 / -24.9 | -17.5 / -21.4 / -29.1 |
+| v8 (675 RPM) | -12.8 / -18.1 / -16.5 | -13.2 / -16.8 / -26.6 |
+
+- The floor falls by 4.2 to 5.3 dB at idle and by 3.4 to 3.9 dB at 3000 RPM. Option A gives almost all of it. Option B adds at most 0.7 dB (flat6 at 3000 RPM).
+- At idle, the floor is now at or below the engine-sim floor, except for the inline4 (2.5 dB above). At 3000 RPM, it is still 7.7 dB above engine-sim for flat6 and inline4 and 9.8 dB above for the v8. The flat12 reference is noisy itself.
+- `TestStaticFixFloor` fails when a final floor at idle or 3000 RPM is above its bound (-17.5 and -14.5 dB flat12, -21 and -21 dB flat6, -22 and -21 dB inline4, -17.5 and -16.5 dB v8) or less than 3 dB below the floor before.
+- `TestHissIdle` now checks option A against the noise AM of `a553aef`: on `holds-t100`, the floor is at least 3.5 dB lower at idle and 2000 RPM (measured 4.2 to 6.2 dB), and on every holds scenario the 4 to 12 kHz level and the floor do not rise, the HNR does not fall and the RMS level stays within 0.3 dB (measured -0.26 to 0.00 dB).
+- `TestHissHighRPM`: for each tuned profile, the worst 4 to 12 kHz level of the high holds changes by at most 0.3 dB and the worst HNR does not fall, so their bounds do not change. The tick low pass raises the 4 to 12 kHz level of the top hold of `es-v12-60-aero` and `el-v12-60-aero` by 1.3 and 1.4 dB, to -37.4 and -48.2 dB, so their bounds are now -36.5 and -47.5 dB. The tick, the jet and the intake noise share one noise source, and the low pass changes the phase of the tick against the other two. With the other layers off, the tick low pass lowers the 4 to 12 kHz level as expected.
+- Level: `sweep-wot` is at -16.34, -16.18, -16.44 and -16.85 LUFS for flat12, inline4, flat6 and v8 (before -16.21, -16.13, -16.31 and -16.68), within 1 LU of -16 LUFS, so `output_db` does not change. The v8 is 0.15 LU from the bound. In `TestLoadLevelOrder`, the closed and the half throttle levels rise by up to 0.22 and 0.14 dB relative to full throttle, and no margin of the test moves by more than 0.2 dB. The overrun level and the pop levels move by at most 0.1 dB.
+- Cost of option B: `BenchmarkTickLowPass` (in `bench_layers_test.go`) runs the state of `BenchmarkRender` and the four states of `BenchmarkStates` with `tick_lp_hz` 0 and 9000 one after the other, 10 runs of 0.5 s. The geometric mean goes from 12.79 to 12.96 microseconds per 256-frame block (+1.36 per cent, about 170 ns), that is from 0.240 to 0.243 per cent of real time, with 0 allocations. The single states change by -5.5 to +9.0 per cent in both directions, which is within the noise of the machine.
+
 ## Reproduce
 
 - Residual of any render: `nix develop -c just compare A.wav B.wav --residual --scenario S.scn` or `nix develop -c go run ./cmd/snarl-compare --residual --settle 0.5 --scenario S.scn A.wav [B.wav ...]`. The output is Markdown on standard output.
-- Renders: `nix develop -c go run ./cmd/snarl-render --format f32 [--rate 96000] --set <key>=<value> ... --out out/tmp/static/wav/<profile>/<name>.wav <profile> out/tmp/static/scn/<profile>.scn`, with the silent-engine overrides of the method, less the keys of a layer to turn it back on. The scenario files hold `hold <rpm> <throttle> 3` lines for the idle, 3000 RPM and 80 % redline holds at throttle 1 and 0.5.
-- Tests: `nix develop -c go test -run 'TestStatic|TestPulseEdges' -v ./internal/model/` for the control block, the integer cycle and the pulse edges, `nix develop -c go test -run TestStaticLayerFloor -v .` for the floor per layer, and `nix develop -c go test -run Residual -v ./internal/analysis/` for the measurement. The static tests do not run with `-short`.
+- Renders: `nix develop -c go run ./cmd/snarl-render --format f32 [--rate 96000] --set <key>=<value> ... --out out/tmp/static/wav/<profile>/<name>.wav <profile> scenarios/static/<profile>/holds.scn`, with the silent-engine overrides of the method, less the keys of a layer to turn it back on. The scenario files hold `hold <rpm> <throttle> 3` lines for the idle, 3000 RPM and 80 % redline holds at throttle 1 and 0.5.
+- Tests: `nix develop -c go test -run 'TestStatic|TestPulseEdges' -v ./internal/model/` for the control block, the integer cycle, the fractional start, the level and pop checks of the fix and the pulse edges, `nix develop -c go test -run 'TestStaticLayerFloor|TestStaticFixFloor' -v .` for the floor per layer and the floor of options A and B, and `nix develop -c go test -run Residual -v ./internal/analysis/` for the measurement. The static tests do not run with `-short`.
+- Cost of option B: `nix develop -c go test -run '^$' -bench BenchmarkTickLowPass -benchtime 0.5s -count 10 . > out/bench/tick-lp.txt`, then `nix develop -c benchstat -col /tick_lp_hz out/bench/tick-lp.txt`.

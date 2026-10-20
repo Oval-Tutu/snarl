@@ -268,15 +268,18 @@ func TestOverrunLevel(t *testing.T) {
 			x, scn := renderScenario(t, p, "overrun")
 			quiet, _ := renderScenario(t, q, "overrun")
 			ref := rms(x[testRate : 2*testRate])
+			least, most := math.Inf(1), math.Inf(-1)
 			for w := 10; float64(w+1)/5 <= scn.Duration(); w++ {
 				t0 := float64(w) / 5
 				lo, hi := windowDB(x, t0, ref), windowDB(quiet, t0, ref)
+				least, most = min(least, lo), max(most, hi)
 				if lo < -3 || hi > 3 {
 					rpm, _ := scn.At(t0 + 0.1)
 					t.Errorf("window at %.1f s, %.0f RPM: %.1f dB, %.1f dB without pops, want within 3 dB",
 						t0, rpm, lo, hi)
 				}
 			}
+			t.Logf("windows from %.2f dB with pops to %.2f dB without pops", least, most)
 		})
 	}
 }
@@ -310,6 +313,7 @@ func TestLoadLevelOrder(t *testing.T) {
 				if seg.Kind == scenario.Hold {
 					t0 := start + seg.Seconds/2 - 0.5
 					o, h, f := level(over, t0), level(part, t0), level(full, t0)
+					t.Logf("%.0f RPM: overrun %.2f dB, part %.2f dB, relative to full throttle", seg.RPM0, o-f, h-f)
 					if o > h || h > f-0.5 || h < f-4 {
 						t.Errorf("%.0f RPM: overrun %.1f dB, part %.1f dB, relative to full throttle",
 							seg.RPM0, o-f, h-f)
@@ -392,6 +396,7 @@ func TestOutputCalibration(t *testing.T) {
 			}
 			x, scn := renderScenario(t, p, "sweep-wot")
 			l := segmentLoudness(x, 0, scn.Duration())
+			t.Logf("sweep-wot at %.2f LUFS", l)
 			if math.Abs(l+16) > 1 {
 				t.Errorf("sweep-wot at %.2f LUFS, want -16 within 1 LU", l)
 			}

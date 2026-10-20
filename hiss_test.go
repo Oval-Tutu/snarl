@@ -21,8 +21,8 @@ import (
 const hissFFT = 65536
 
 // legacyAM are the overrides that give the noise AM of HEAD a553aef: one
-// pole at 2 kHz and the same depth at every RPM.
-var legacyAM = []string{"noise.am_cutoff_hz=0", "noise.am_redline=1"}
+// pole at 2 kHz and the full depth at every RPM.
+var legacyAM = []string{"noise.am_cutoff_hz=0", "noise.am_redline=1", "noise.am_idle=1"}
 
 // hissHold holds the measures of one hold, in decibels.
 type hissHold struct {
@@ -121,6 +121,12 @@ func hissHolds(t *testing.T, p Profile, dir, name string) []hissHold {
 		}
 		return s
 	})
+	return hissScenarioHolds(scn, func(i int) float64 { return float64(x[i]) })
+}
+
+// hissScenarioHolds measures each hold of at least 2.5 s of scn in an
+// output at testRate, which at returns sample by sample.
+func hissScenarioHolds(scn *scenario.Scenario, at func(i int) float64) []hissHold {
 	var out []hissHold
 	start := 0.0
 	for _, g := range scn.Segments {
@@ -128,7 +134,7 @@ func hissHolds(t *testing.T, p Profile, dir, name string) []hissHold {
 			i0 := int((start + 0.8) * testRate)
 			w := make([]float64, int(1.8*testRate))
 			for i := range w {
-				w[i] = float64(x[i0+i])
+				w[i] = at(i0 + i)
 			}
 			out = append(out, hissMeasure(w, g.RPM0))
 		}
@@ -164,14 +170,18 @@ func hissProfile(t *testing.T, name string, overrides ...string) (Profile, strin
 // the noise AM of HEAD a553aef, the worst holds were at -12.2 and 19.4 dB
 // (flat6), -14.6 and 16.1 dB (inline4), -15.2 and 19.8 dB (v8), -14.4
 // and 17.1 dB (flat12), -29.4 and 23.4 dB (es-v12-60-aero) and -39.3 and
-// 24.1 dB (el-v12-60-aero).
+// 24.1 dB (el-v12-60-aero). The valve tick low pass (tick_lp_hz) raises
+// the 4 to 12 kHz level of the top hold of es-v12-60-aero and
+// el-v12-60-aero by 1.3 and 1.4 dB, to -37.4 and -48.2 dB. The tick, the
+// jet and the intake noise share one noise source, and the low pass
+// changes the phase of the tick against the other two.
 var hissBounds = map[string]struct{ hf, hnr float64 }{
 	"flat12":         {-17.5, 19},
 	"flat6":          {-14, 23.5},
 	"inline4":        {-15.3, 18.5},
 	"v8":             {-24, 22},
-	"es-v12-60-aero": {-37.5, 26},
-	"el-v12-60-aero": {-48.5, 28},
+	"es-v12-60-aero": {-36.5, 26},
+	"el-v12-60-aero": {-47.5, 28},
 }
 
 // TestHissHighRPM checks that the noise AM leaves the harmonics clear at
@@ -275,13 +285,15 @@ func TestHissPops(t *testing.T) {
 	}
 }
 
-// TestHissIdle checks that the noise AM does not change at idle and
-// changes little at 2000 RPM, against the noise AM of HEAD a553aef. At
-// the idle hold of the holds-t000, holds-t050 and holds-t100 scenarios,
-// the 4 to 12 kHz level, the HNR from 20 to 500 Hz and the floor are
-// within 0.2 dB, and the RMS level within 0.05 dB. At the 2000 RPM hold,
-// the 4 to 12 kHz level is lower by at most 3 dB, the HNR within 1 dB and
-// the RMS level within 0.2 dB.
+// TestHissIdle checks the noise AM at idle and at 2000 RPM against the
+// noise AM of HEAD a553aef, where am_idle 0.5 halves the AM depth at idle.
+// At the idle and the 2000 RPM holds of the holds-t000, holds-t050 and
+// holds-t100 scenarios, the 4 to 12 kHz level and the floor are not higher
+// by more than 0.2 dB, the HNR from 20 to 500 Hz is not lower by more
+// than 0.2 dB, and the RMS level is within 0.3 dB. On holds-t100, the
+// floor is at least 3.5 dB lower at both holds. With am_idle 0.5, it was
+// 4.2 to 5.3 dB lower at idle and 4.8 to 6.2 dB lower at 2000 RPM, and
+// the RMS level changed by -0.04 to -0.26 dB.
 func TestHissIdle(t *testing.T) {
 	t.Parallel()
 	for _, name := range Profiles() {
@@ -295,9 +307,8 @@ func TestHissIdle(t *testing.T) {
 					w := was[i]
 					d := hissHold{rpm: h.rpm, hnr: h.hnr - w.hnr, floor: h.floor - w.floor, hf: h.hf - w.hf, rmsDB: h.rmsDB - w.rmsDB}
 					t.Logf("%5.0f RPM: change of 4-12 kHz %+.2f dB, HNR 20-500 Hz %+.2f dB, floor %+.2f dB, RMS %+.3f dB", d.rpm, d.hf, d.hnr, d.floor, d.rmsDB)
-					idle := i == 0 && (math.Abs(d.hf) > 0.2 || math.Abs(d.hnr) > 0.2 || math.Abs(d.floor) > 0.2 || math.Abs(d.rmsDB) > 0.05)
-					low := i == 1 && (d.hf < -3 || d.hf > 0.2 || math.Abs(d.hnr) > 1 || math.Abs(d.rmsDB) > 0.2)
-					if idle || low {
+					worse := d.hf > 0.2 || d.floor > 0.2 || d.hnr < -0.2 || math.Abs(d.rmsDB) > 0.3
+					if worse || scn == "holds-t100" && d.floor > -3.5 {
 						t.Errorf("%.0f RPM: 4-12 kHz %+.2f dB, HNR %+.2f dB, floor %+.2f dB, RMS %+.3f dB against HEAD", d.rpm, d.hf, d.hnr, d.floor, d.rmsDB)
 					}
 				}
