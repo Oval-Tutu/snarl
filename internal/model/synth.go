@@ -41,6 +41,11 @@ const (
 	waverHz2 = 1.13
 )
 
+// controlBlock is the control period in samples that New and Render use,
+// from 1 to chunk. It is chunk except in a test that measures the stepping
+// of the block-rate controls.
+var controlBlock = chunk
+
 // Control is the engine state for one block.
 type Control struct {
 	RPM, Throttle, Load float32
@@ -189,7 +194,7 @@ func New(s *Spec, rate int) (*Synth, error) {
 		return nil, errors.New("sample rate is below 8000 Hz")
 	}
 	fs := float64(rate)
-	chunkHz := fs / chunk
+	chunkHz := fs / float64(controlBlock)
 	seed := uint32(s.Seed & math.MaxUint16)
 	y := &Synth{
 		rate:       fs,
@@ -251,7 +256,7 @@ func New(s *Spec, rate int) (*Synth, error) {
 		partLoad:   float32(math.Pow(10, s.Pulse.PartLoadDB/20)),
 		rpmG:       -1,
 		tickDec:    dsp.DecayCoef(40, 0.004, fs),
-		pops:       newPops(s, fs, chunk/fs),
+		pops:       newPops(s, fs, float64(controlBlock)/fs),
 		out:        newOutput(s.Voice.OutputDB, fs),
 		idleGain:   float32(s.Voice.IdleGainDB),
 	}
@@ -371,7 +376,7 @@ func (y *Synth) Render(dst []float32, c Control) {
 		y.pops.request(c.PopRequests, c.PopStrength)
 	}
 	for len(dst) > 0 {
-		n := min(len(dst), chunk)
+		n := min(len(dst), controlBlock)
 		y.control(&c, n)
 		y.process(dst[:n])
 		dst = dst[n:]
