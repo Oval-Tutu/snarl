@@ -262,6 +262,9 @@ From 4000 RPM up, the flat6 and inline4 4 to 12 kHz level is still 18 to 26 dB a
 
 ## Reproduce
 
-- Renders: `snarl-render --format f32 --tier 1 [--set key=value] --out out/tmp/hiss/... <profile> scenarios/<profile>/<scenario>.scn`.
-- Analyser: `/tmp/hiss/hissan LABEL WAV SCN`, which prints one row per hold. The measured tables are `out/tmp/hiss/head.tsv`, `mute.tsv`, `load.tsv`, `cat.tsv`, `fix.tsv`, `fix2.tsv` and `fix3.tsv`.
-- Prototypes: `HISS_FIX=<option> /tmp/hiss/snarl-render-fix ...`, built from `/tmp/hiss/fix`.
+The scratch analyser and the prototype copy of the repository that produced the tables above were under `/tmp/hiss`, which does not persist. The method is now in `hiss_test.go`, and these repository commands reproduce the measures:
+
+- Measures of the fix: `nix develop -c go test -run 'TestHiss' -v .` runs `TestHissHighRPM`, `TestHissIdle` and `TestHissPops`. `TestHissHighRPM` logs the 4 to 12 kHz level, the HNR from 20 to 500 Hz, the floor and the RMS change of each `holds-t100` hold, with the values of the noise AM of HEAD `a553aef` beside them. The `legacyAM` overrides in `hiss_test.go` give that noise AM.
+- Renders: `nix develop -c go run ./cmd/snarl-render --format f32 --tier 1 [--set section.key=value] --out out/tmp/hiss/<name>.wav <profile> scenarios/<profile>/<scenario>.scn`. The layer mutes use `--set` with the keys in the "Layer mutes" section, for example `--set noise.am=0`.
+- Comparison with engine-sim: `nix develop -c just compare out/tmp/hiss/<name>.wav out/reference/engine-sim/<profile>/<scenario>.wav --scenario scenarios/<profile>/<scenario>.scn`.
+- The fix options 2 and 3 have no switch in the repository. Option 1 is the model at HEAD, and `noise.am_cutoff_hz=0` with `noise.am_redline=1` turns it off.
