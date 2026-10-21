@@ -213,3 +213,139 @@ The formant bank, the engine-sim noise settings and the smooth pulse close most 
 | v8 | 0.25 to 0.27 | 0.27 to 0.28 | +0 to +13 per cent |
 
 The sum over the 16 states rises by 11 per cent. Every state stays under 0.35 per cent except the flat12 limiter hold (0.41, against 0.37 before), where the ignition cut bangs run the pop stages. inline4 rises most: its one path had the cheapest EngineLab stages, and its formant bank has 10 sections. The per-sample cost is the formant bank (41 to 51 multiply-adds), the input jitter (about 12 operations per path) and the 10 Hz DC removal of the pressure term, against the EngineLab stages, the steepening and the jet noise that they replace.
+
+### Measured pulse (phase 4d)
+
+"Before" is `2ca2a0d` (the "After" of the tables above). "After" is the working tree with these changes:
+
+- The pulse is the engine-sim runner pressure (measured), in place of the computed envelope and the squared attack. `tools/fit --pulse` fits one pulse per firing, scaled by the strength of the firing, plus a constant, to the sum of the runner pressures of each exhaust system in the per-step CSV of `out/analysis/engine-sim/<profile>/full/holds-t100.csv` (flat6 also `holds-t050.csv`), by least squares with a ridge term that grows with the time from the onset. The onsets are at the spark angles, moved to the crossing of half of the own extreme of each runner pulse. The fit explains the sums within -18 to -41 dB. Reports: `out/phase4d/pulse/<profile>.md`.
+- The table is one row of 128 values per hold RPM (`internal/model/pulses/<profile>.txt`, `[pulse] table`), blended between rows in steps of 1/16 and kept by each firing. A single table with a length that follows the RPM to a power holds the measured pulses within -1 to -16 dB only, and the rows hold them within -40 to -62 dB at the holds and 0 to -28 dB between them (left out), so the rows stay.
+- The inline4 collector overlap is 0. The cam crossfade sets the weight between the inline4 rows at 5000 and 6000 RPM.
+- The formant banks are fitted with `--tolerance 1.5`: 4, 4, 7 and 7 sections for flat12, flat6, inline4 and v8, in place of 9, 8, 10 and 10 (weighted error 1.48, 1.44, 1.31 and 1.42 dB, against 0.90 to 0.98 dB).
+- `leveller_db` puts the closed-throttle idle 3 dB below the knee again (-2.2, 23.5, 10.9 and 13.0 dB), and `output_db` holds the sweep at -16 LUFS.
+
+Renders, gap tables and analyses: `out/phase4d/after/<profile>/` (`gap-<scenario>.md` and `<scenario>/`). Ranges are over the windows of `holds-t100` unless the row names another scenario.
+
+#### Answer
+
+The measured pulse closes the inline4 gaps: the loudness band of the sweep falls from 5.8 to 4.1 LU (engine-sim 2.3 LU), the peak band from 2.9 to 1.5 dB, and the crest factor at the top holds from 12.0 to 8.9 dB (engine-sim 8.3 dB). The inline4 sweep spectrogram now has the harmonic pattern of engine-sim, with the step at the cam switch ([inline4 after](../../out/phase4d/after/inline4/sweep-wot/spectrogram.png) against [engine-sim inline4](../../out/analysis/engine-sim/inline4/sweep-wot/spectrogram.png)). The v8 strongest order now sits at 180 to 400 Hz at every hold, as in engine-sim. Four gaps remain:
+
+1. The loudness band of the sweep is 2.7 to 5.2 LU against 1.3 to 3.0 LU. The closed-throttle idle is 3 dB below the knee, and the overrun level is close to the full-throttle level (both approved), so the full-throttle sweep below 1500 RPM is below the knee too. engine-sim has its full-throttle idle 11 to 13 dB over its closed-throttle idle. The flat6 band rises from 3.1 to 5.2 LU: its measured pulse below 2000 RPM is a long, smooth dip.
+2. The v8 and flat12 centroids are still up to 400 to 500 Hz high, at the v8 hold at 5000 RPM and the flat12 holds at 4000 and 5000 RPM. With `input_jitter` 0, the flat12 centroid at 4000 RPM falls to 401 Hz against 1251 Hz in engine-sim. The mean pulse leaves out the cycle-to-cycle change of the engine-sim pressure, which the derivative of engine-sim lifts above 1 kHz, so the jitter noise of snarl carries the treble alone.
+3. The residual is still 5 to 13 dB above engine-sim at high RPM for flat6, inline4 and v8. The slow `[pulse] jitter` (approved) gives about 6 dB of it.
+4. The closed-throttle idle has more noise than engine-sim (residual -1.2 dB for v8 against -11.3 dB): its long measured pulse leaves little harmonic power at the formants.
+
+#### flat12
+
+| Measure | engine-sim | Before | After |
+| --- | --- | --- | --- |
+| Loudness band, `sweep-wot` | 1.3 LU | 2.0 LU | 2.7 LU |
+| Peak band, `sweep-wot` | 1.3 dB | 1.5 dB | 2.7 dB |
+| Crest factor | 7.0 to 8.3 dB | 6.9 to 9.6 dB | 6.3 to 9.0 dB |
+| Centroid | 1251 to 1525 Hz | 1426 to 1856 Hz | 1363 to 1907 Hz |
+| Power above 2.84 kHz | -25.6 to -30.3 dB | -24.4 to -29.6 dB | -23.2 to -30.0 dB |
+| Strongest order, top hold (6800 RPM) | 2 (227 Hz) | 3 (340 Hz) | 3 (340 Hz) |
+| Strongest order, all holds | 100 to 400 Hz | 100 to 500 Hz | 100 to 400 Hz |
+| Residual | -6.0 to -12.8 dB | -15.3 to -23.7 dB | -15.7 to -23.9 dB |
+| AM peak / trough | +3.0 to +4.7 / -5.8 to -12.5 dB | +5.3 to +8.5 / -6.6 to -10.4 dB | +3.9 to +6.6 / -5.0 to -10.1 dB |
+| Residual 6-16 kHz | -29.0 to -33.8 dB | -28.0 to -33.2 dB | -26.5 to -33.5 dB |
+| Idle, closed throttle (1000 RPM): residual, 6-16 kHz | -3.2, -30.5 dB | -2.8, -32.9 dB | -2.6, -33.8 dB |
+
+#### flat6
+
+| Measure | engine-sim | Before | After |
+| --- | --- | --- | --- |
+| Loudness band, `sweep-wot` | 3.0 LU | 3.1 LU | 5.2 LU |
+| Peak band, `sweep-wot` | 2.3 dB | 1.3 dB | 1.8 dB |
+| Crest factor | 3.6 to 10.0 dB | 5.2 to 10.3 dB | 4.6 to 10.9 dB |
+| Centroid | 846 to 1168 Hz | 733 to 1136 Hz | 739 to 1106 Hz |
+| Power above 2.84 kHz | -26.5 to -39.0 dB | -29.4 to -38.2 dB | -33.0 to -39.6 dB |
+| Strongest order, top hold (6600 RPM) | 3 (330 Hz) | 3 (330 Hz) | 3 (330 Hz) |
+| Strongest order, all holds | 240 to 400 Hz | 150 to 330 Hz | 150 to 330 Hz |
+| Residual | -16.7 to -32.4 dB | -19.5 to -27.0 dB | -20.0 to -26.2 dB |
+| AM peak / trough | +2.5 to +5.4 / -2.8 to -6.5 dB | +3.2 to +7.0 / -5.1 to -10.3 dB | +4.0 to +7.7 / -7.6 to -11.8 dB |
+| Residual 6-16 kHz | -33.1 to -45.9 dB | -36.5 to -45.4 dB | -41.3 to -47.7 dB |
+| Idle, closed throttle (800 RPM): residual, 6-16 kHz | -16.1, -37.8 dB | -6.0, -36.5 dB | -3.7, -41.1 dB |
+
+#### inline4
+
+| Measure | engine-sim | Before | After |
+| --- | --- | --- | --- |
+| Loudness band, `sweep-wot` | 2.3 LU | 5.8 LU | 4.1 LU |
+| Peak band, `sweep-wot` | 2.3 dB | 2.9 dB | 1.5 dB |
+| Crest factor | 3.8 to 8.3 dB | 2.8 to 12.0 dB | 3.7 to 8.9 dB |
+| Centroid | 337 to 1088 Hz | 321 to 1575 Hz | 290 to 1499 Hz |
+| Power above 2.84 kHz | -34.2 to -51.7 dB | -30.4 to -52.6 dB | -31.2 to -54.6 dB |
+| Strongest order, top hold (8400 RPM) | 4 (560 Hz) | 4 (560 Hz) | 2 (280 Hz) |
+| Strongest order, all holds | 133 to 560 Hz | 100 to 560 Hz | 100 to 533 Hz |
+| Residual | -23.9 to -41.8 dB | -15.5 to -34.6 dB | -17.1 to -35.8 dB |
+| AM peak / trough | +4.3 to +11.2 / -5.9 to -18.3 dB | +4.6 to +9.9 / -7.8 to -20.6 dB | +4.1 to +8.9 / -6.7 to -16.6 dB |
+| Residual 6-16 kHz | -37.4 to -55.0 dB | -33.7 to -55.7 dB | -34.3 to -57.9 dB |
+| Idle, closed throttle (800 RPM): residual, 6-16 kHz | -23.0, -52.9 dB | -26.6, -53.1 dB | -29.9, -56.7 dB |
+
+#### v8
+
+| Measure | engine-sim | Before | After |
+| --- | --- | --- | --- |
+| Loudness band, `sweep-wot` | 1.7 LU | 3.7 LU | 3.9 LU |
+| Peak band, `sweep-wot` | 2.2 dB | 1.5 dB | 1.6 dB |
+| Crest factor | 5.6 to 8.5 dB | 5.8 to 9.5 dB | 5.3 to 12.7 dB (12.7 dB at the 675 RPM hold, 9.2 dB and less from 2000 RPM) |
+| Centroid | 868 to 1049 Hz | 1066 to 1464 Hz | 990 to 1460 Hz |
+| Power above 2.84 kHz | -28.2 to -36.3 dB | -26.8 to -37.8 dB | -26.2 to -37.1 dB |
+| Strongest order, top hold (6000 RPM) | 4 (400 Hz) | 4 (400 Hz) | 4 (400 Hz) |
+| Strongest order, all holds | 180 to 417 Hz | 45 to 400 Hz | 180 to 400 Hz |
+| Residual | -16.7 to -30.3 dB | -15.9 to -21.6 dB | -16.4 to -22.3 dB |
+| AM peak / trough | +2.4 to +5.6 / -3.0 to -9.4 dB | +4.6 to +7.3 / -5.8 to -12.2 dB | +4.7 to +8.6 / -8.3 to -21.1 dB |
+| Residual 6-16 kHz | -34.7 to -42.4 dB | -33.0 to -44.1 dB | -32.5 to -43.6 dB |
+| Idle, closed throttle (675 RPM): residual, 6-16 kHz | -11.3, -35.3 dB | -6.1, -33.9 dB | -1.2, -36.1 dB |
+
+#### What the images show
+
+- inline4 `sweep-wot`: the harmonic lines and their levels follow engine-sim from 1 to 8 kHz, with the step at the cam switch near 5.2 s in both. Above the cam switch, the snarl lines from 500 Hz to 1.4 kHz are a little stronger ([inline4 after](../../out/phase4d/after/inline4/sweep-wot/spectrogram.png)). The waveform has a flat peak envelope from the first window to the last ([inline4 waveform](../../out/phase4d/after/inline4/sweep-wot/waveform.png)).
+- v8 `sweep-wot`: the bright band at 340 to 420 Hz is there, but engine-sim has more power from 50 to 300 Hz all through the sweep, and the snarl lines from 130 to 400 Hz move with the RPM more clearly ([v8 after](../../out/phase4d/after/v8/sweep-wot/spectrogram.png) against [engine-sim v8](../../out/analysis/engine-sim/v8/sweep-wot/spectrogram.png)).
+- flat12 `sweep-wot`: the band at 200 to 400 Hz follows engine-sim, and the noise from 2 to 6 kHz is brighter from 3.6 to 5.5 s ([flat12 after](../../out/phase4d/after/flat12/sweep-wot/spectrogram.png)).
+
+#### Pops, limiter and overrun
+
+The pops pass the same tests as before (`TestPopColour`, `TestPopLevelOverEngine`, `TestHissPops`, `TestPopsFire`). The limiter bounce keeps its rate, dip, cut, notch and bark within the engine-sim bounds (`TestLimiterBounce`). The flat12 ignition cut bangs lift the band above 3 kHz by 3.0 dB over full throttle, against 1.2 dB before, so its bound is 3.5 dB. The overrun stays within 3 dB of full throttle (`TestOverrunLevel`), and the final gear hold is unchanged.
+
+#### Cost
+
+`BenchmarkStates` and `BenchmarkRender` with a fixed 20000 blocks (107 s of audio) per run, 8 runs each, with the test binaries of `2ca2a0d` and of the working tree run in turn, two rounds of 4 (`out/phase4d/final-head-*.txt` and `final-new-*.txt`). A fixed number of blocks gives every run the same limiter bounces and bangs, which the default benchmark time does not. Median per cent of real time per 256-frame block on the AMD Ryzen 9 7940HS:
+
+| Profile | State | Before | After | Change |
+| --- | --- | --- | --- | --- |
+| flat12 | wot4000 | 0.288 | 0.221 | -23 per cent |
+| flat12 | idle | 0.281 | 0.205 | -27 per cent |
+| flat12 | overrun | 0.289 | 0.219 | -24 per cent |
+| flat12 | limiter | 0.423 | 0.287 (highest run 0.316) | -32 per cent |
+| inline4 | wot4000 | 0.255 | 0.204 | -20 per cent |
+| inline4 | idle | 0.233 | 0.202 | -13 per cent |
+| inline4 | overrun | 0.243 | 0.210 | -14 per cent |
+| inline4 | limiter | 0.243 | 0.212 | -13 per cent |
+| flat6 | wot4000 | 0.266 | 0.220 | -17 per cent |
+| flat6 | idle | 0.248 | 0.203 | -18 per cent |
+| flat6 | overrun | 0.258 | 0.211 | -18 per cent |
+| flat6 | limiter | 0.259 | 0.228 | -12 per cent |
+| v8 | wot4000 | 0.283 | 0.248 | -12 per cent |
+| v8 | idle | 0.279 | 0.226 | -19 per cent |
+| v8 | overrun | 0.281 | 0.229 | -19 per cent |
+| v8 | limiter | 0.288 | 0.236 | -18 per cent |
+| flat12 | `BenchmarkRender` | 0.296 | 0.224 | -24 per cent |
+| flat6 | `BenchmarkRender` | 0.275 | 0.206 | -25 per cent |
+| inline4 | `BenchmarkRender` | 0.257 | 0.203 | -21 per cent |
+| v8 | `BenchmarkRender` | 0.292 | 0.234 | -20 per cent |
+
+The sum over the 16 states falls by 19 per cent, from 4.42 to 3.56. Every median is at or below 0.30 per cent. Scaled as before (0.30 per cent on this PC was 2.07 per cent of a OnePlus 3T slow core, and the Switch estimate 3.2 to 4.2 per cent), the flat12 limiter at 0.287 per cent is about 2.0 per cent of the slow core and 3.1 to 4.0 per cent of the Switch (estimate). Each saving, measured A against B on the state that it changes:
+
+| Change | Saving |
+| --- | --- |
+| The table pulse alone, with two voices per cylinder for the longer pulses | +12 to +18 per cent on flat12 and v8 at first: the measured pulses last longer than the envelope, so more voices sound |
+| A list of the active voices, so the pulse loop visits no idle voice | flat12 wot4000 0.317 to 0.268, v8 wot4000 0.288 to 0.261 |
+| Subnormal values of the decaying pop levels snap to zero at 1e-20 | flat12 limiter 0.465 to 0.429. In the profile, the pop tick fell from 17 to 7 per cent and the one-poles from 13 to 4 per cent |
+| Each voice runs over the chunk in one loop, from its firing sample | flat12 limiter 0.43 to 0.38 |
+| Formant bank tolerance 1.5 dB (5, 4, 3 and 3 fewer sections, 25, 20, 15 and 15 fewer multiply-adds) | flat12 limiter: the formant bank fell from 14 to 3 per cent of the profile |
+| No output low pass at 44.4 kHz and up | flat12 limiter 0.338 to 0.323 |
+| One jitter offset for every path, no engine DC block after a bank high pass, one bounds check in the voice loop | flat12 limiter 0.318 to 0.298 (fixed blocks) |
+| One pop bank on the sum of the paths, the pop stages stop 100 dB down, a rung-out pop slot skips its stages | within the run-to-run spread (2 per cent or less) |
+| Tried and dropped: the stages one at a time over the chunk, and a binomial in place of the jitter low pass | both slower, by about 20 and 10 per cent on the flat12 limiter |
