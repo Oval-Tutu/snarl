@@ -75,6 +75,12 @@ func ResidualBurst(x []float64, rate int, rpm float64) (BurstResult, bool) {
 	if !ok {
 		return BurstResult{}, false
 	}
+	return burstOf(&c, rate), true
+}
+
+// burstOf returns the burst measure of the residual of the cycles c of a
+// signal at the input rate.
+func burstOf(c *cycles, rate int) BurstResult {
 	// The average keeps 1/k of the noise, so the residual power scales by
 	// k/(k-1), as in Residual.
 	scale := float64(c.k) / float64(c.k-1)
@@ -83,7 +89,7 @@ func ResidualBurst(x []float64, rate int, rpm float64) (BurstResult, bool) {
 		Cycles: c.k,
 		AtEdge: c.atEdge,
 		Bands:  Burst(c.a, c.rate, c.m, c.k, meanSq(c.sig)/scale),
-	}, true
+	}
 }
 
 // Burst measures the band envelope of x, k cycles of m samples at the rate

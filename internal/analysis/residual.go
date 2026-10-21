@@ -232,6 +232,12 @@ func Residual(x []float64, rate int, rpm float64) (ResidualResult, bool) {
 	if !ok {
 		return ResidualResult{}, false
 	}
+	return residualOf(&c, rate), true
+}
+
+// residualOf returns the residual measurement of the cycles c of a signal at
+// the input rate.
+func residualOf(c *cycles, rate int) ResidualResult {
 	a, sig, m, k, p := c.a, c.sig, c.m, c.k, c.p
 	ps := meanSq(sig)
 	scale := float64(k) / float64(k-1)
@@ -270,7 +276,7 @@ func Residual(x []float64, rate int, rpm float64) (ResidualResult, bool) {
 		es *= norm
 		res.Bands = append(res.Bands, ResidualBand{Lo: b[0], Hi: b[1], DB: powerRatioDB(er, ps), InBandDB: powerRatioDB(er, es)})
 	}
-	return res, true
+	return res
 }
 
 // meanSq returns the mean square of x.
