@@ -1,11 +1,14 @@
 // Command esynth runs the Go port of the engine-sim synthesiser
 // (internal/esynth) on a record of engine-sim-render --dump-synth. It
 // writes the port output at 44.1 kHz and prints the sample-by-sample
-// difference from the engine-sim output in the record.
+// difference from the engine-sim output in the record. With --runtime it
+// runs esynth.Runtime, the real-time mode, at --rate with --block and
+// --taps.
 //
 // Usage:
 //
 //	go run ./tools/esynth --dump DIR [--es DIR] [--out OUT.wav] [--full FULL.wav]
+//	go run ./tools/esynth --dump DIR --runtime [--rate 48000] [--block 128] [--taps N] [--out OUT.wav]
 package main
 
 import (
@@ -33,12 +36,19 @@ func run(args []string, stdout io.Writer) error {
 	out := fs.String("out", "", "write the port output after the pre-roll, the span of engine-sim-render --out, to this 32-bit float WAV file")
 	full := fs.String("full", "", "write the whole port output, with the pre-roll, to this 32-bit float WAV file")
 	precisionName := fs.String("precision", "float64", "arithmetic of the port: float64, or float32 to round as engine-sim does")
+	runtime := fs.Bool("runtime", false, "run esynth.Runtime, the real-time float32 mode, instead of the exact port")
+	rate := fs.Int("rate", 44100, "with --runtime, the output rate in hertz; at another rate than 44100 the reference is the engine-sim output resampled by analysis.Resample")
+	block := fs.Int("block", esynth.DefaultRuntimeBlock, "with --runtime, the convolution block in samples at 44.1 kHz")
+	taps := fs.Int("taps", 0, "with --runtime, shorten each impulse response to at most this many taps with a fade over the last eighth (0: the engine-sim length)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *dumpDir == "" || fs.NArg() != 0 {
 		fs.Usage()
 		return errors.New("need --dump DIR and no arguments")
+	}
+	if *runtime {
+		return runRuntime(stdout, *dumpDir, *esDir, *out, *full, esynth.RuntimeOptions{OutputSampleRate: *rate, Block: *block, MaxTaps: *taps})
 	}
 	precision := esynth.Float64
 	switch *precisionName {
