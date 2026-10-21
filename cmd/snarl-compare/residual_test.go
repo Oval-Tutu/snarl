@@ -61,9 +61,9 @@ func TestResiduals(t *testing.T) {
 	t.Log(out)
 	var rows [][]string
 	for line := range strings.SplitSeq(out, "\n") {
-		// The rows of the first table have 11 cells, and of the in-band
+		// The rows of the first table have 13 cells, and of the in-band
 		// table 7.
-		if f := strings.Split(line, "|"); len(f) == 13 && strings.Contains(f[1], "hold") {
+		if f := strings.Split(line, "|"); len(f) == 15 && strings.Contains(f[1], "hold") {
 			rows = append(rows, f)
 		}
 	}

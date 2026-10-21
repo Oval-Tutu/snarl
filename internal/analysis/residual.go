@@ -66,6 +66,44 @@ type ResidualResult struct {
 	// search range, so that the RPM of the signal is far from the nominal
 	// RPM and the residual is not valid.
 	AtEdge bool `json:"at_edge,omitempty"`
+	// AMPeakDB and AMTroughDB describe how the residual power moves over
+	// the engine cycle: the cycle splits into residualSectors equal crank
+	// angle sectors, and these are the highest and the lowest sector
+	// power, averaged over the cycles, relative to the mean sector power.
+	// A steady noise gives about 0 dB for both. Noise that the engine
+	// pulses modulate gives a high peak and a deep trough.
+	AMPeakDB   float64 `json:"am_peak_db"`
+	AMTroughDB float64 `json:"am_trough_db"`
+}
+
+// residualSectors is the number of crank angle sectors of the residual
+// modulation, 7.5 degrees each.
+const residualSectors = 96
+
+// sectorPowers returns the residual power ratios of the highest and the
+// lowest of residualSectors sectors of the cycle of m samples to their
+// mean, in dB, for k cycles of the residual a.
+func sectorPowers(a []float64, m, k int) (peakDB, troughDB float64) {
+	p := make([]float64, residualSectors)
+	n := make([]int, residualSectors)
+	for c := range k {
+		for j := range m {
+			v := a[c*m+j]
+			p[j*residualSectors/m] += v * v
+			n[j*residualSectors/m]++
+		}
+	}
+	var mean float64
+	hi, lo := 0.0, math.Inf(1)
+	for s := range p {
+		if n[s] > 0 {
+			p[s] /= float64(n[s])
+		}
+		mean += p[s]
+		hi, lo = max(hi, p[s]), min(lo, p[s])
+	}
+	mean /= residualSectors
+	return powerRatioDB(hi, mean), powerRatioDB(lo, mean)
 }
 
 // kaiser returns the table of the Kaiser window w(u) for u from 0 to 1 in
@@ -244,6 +282,7 @@ func Residual(x []float64, rate int, rpm float64) (ResidualResult, bool) {
 	sig := append([]float64(nil), a...)
 	scale := float64(k) / float64(k-1)
 	pr := subtractAverage(a, m, k) / float64(len(a)) * scale
+	amPeak, amTrough := sectorPowers(a, m, k)
 
 	res := ResidualResult{
 		RPM:        float64(rate) * 120 / p,
@@ -251,6 +290,8 @@ func Residual(x []float64, rate int, rpm float64) (ResidualResult, bool) {
 		SignalDBFS: 10 * math.Log10(ps),
 		ResidualDB: powerRatioDB(pr, ps),
 		AtEdge:     best <= -n || best >= n,
+		AMPeakDB:   amPeak,
+		AMTroughDB: amTrough,
 	}
 	// The angle domain has m samples per cycle of p input samples.
 	fa := float64(rate) * float64(m) / p

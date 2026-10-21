@@ -2,7 +2,10 @@
 // drives, and writes report.md, metrics.json and optional spectrograms.
 // With --residual, it measures instead the residual of each hold of one or
 // more renders: the part that does not repeat from one engine cycle to the
-// next.
+// next. With --describe, it measures each window of one or more renders on
+// its own. With --transfer, it measures the transfer from the engine-sim
+// synthesiser input to its output. With --ir, it measures engine-sim
+// impulse responses and how close shorter filters come to them.
 package main
 
 import (
@@ -61,6 +64,10 @@ type config struct {
 	spectrograms bool
 	band         string
 	residual     bool
+	describe     bool
+	transfer     string
+	engine       string
+	ir           bool
 }
 
 func main() {
@@ -76,6 +83,9 @@ func run(args []string) error {
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "Usage: snarl-compare [flags] A.wav B.wav")
 		fmt.Fprintln(fs.Output(), "       snarl-compare --residual --scenario S.scn [flags] A.wav [B.wav ...]")
+		fmt.Fprintln(fs.Output(), "       snarl-compare --describe --scenario S.scn [flags] A.wav [B.wav ...]")
+		fmt.Fprintln(fs.Output(), "       snarl-compare --transfer A.csv --engine E.json --scenario S.scn [flags] A.wav")
+		fmt.Fprintln(fs.Output(), "       snarl-compare --ir IR.wav [IR.wav ...]")
 		fs.PrintDefaults()
 	}
 	fs.StringVar(&cfg.scenario, "scenario", "", "scenario file that drove both renders (required for the order analysis)")
@@ -88,11 +98,22 @@ func run(args []string) error {
 	fs.StringVar(&cfg.band, "band", fmt.Sprintf("%d:%d", analysis.DefaultBandLo, analysis.DefaultBandHi), "low band LO:HI in hertz for the low-band metrics")
 	fs.BoolVar(&cfg.spectrograms, "spectrograms", true, "write spectrogram PNGs with ffmpeg when it is on PATH")
 	fs.BoolVar(&cfg.residual, "residual", false, "print the residual of each hold of each file to standard output, as Markdown tables, instead of the comparison")
+	fs.BoolVar(&cfg.describe, "describe", false, "print the level, spectral shape, bands and orders of each window of each file to standard output, as Markdown tables, instead of the comparison")
+	fs.StringVar(&cfg.transfer, "transfer", "", "engine-sim-render CSV with every step: print the transfer from the synthesiser input to the WAV output for each hold, as Markdown tables, instead of the comparison (needs --engine)")
+	fs.StringVar(&cfg.engine, "engine", "", "engine-sim-render --dump-json output of the engine of the --transfer CSV")
+	fs.BoolVar(&cfg.ir, "ir", false, "print the response of each engine-sim impulse response WAV file next to shorter FIR filters and all-pole fits, as Markdown tables, instead of the comparison")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if cfg.residual {
+	switch {
+	case cfg.residual:
 		return residuals(os.Stdout, fs.Args(), &cfg)
+	case cfg.describe:
+		return describe(os.Stdout, fs.Args(), &cfg)
+	case cfg.ir:
+		return irs(os.Stdout, fs.Args())
+	case cfg.transfer != "":
+		return transfers(os.Stdout, fs.Args(), &cfg)
 	}
 	if fs.NArg() != 2 {
 		fs.Usage()

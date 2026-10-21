@@ -71,14 +71,16 @@ func residualTable(w io.Writer, labels []string, rs []analysis.ResidualResult) {
 	}
 	fmt.Fprint(w, "| Hold | Throttle | RPM | Cycles | Signal (dBFS) | Residual (dB) |")
 	bands()
-	fmt.Fprint(w, "\n|"+strings.Repeat(" --- |", 6+len(rs[0].Bands))+"\n")
+	fmt.Fprint(w, " AM peak (dB) | AM trough (dB) |")
+	fmt.Fprint(w, "\n|"+strings.Repeat(" --- |", 8+len(rs[0].Bands))+"\n")
 	for i, r := range rs {
 		fmt.Fprintf(w, "| %s | %.1f | %d | %.1f | %.1f |", labels[i], r.RPM, r.Cycles, r.SignalDBFS, r.ResidualDB)
 		for _, b := range r.Bands {
 			fmt.Fprintf(w, " %.1f |", b.DB)
 		}
-		fmt.Fprintln(w)
+		fmt.Fprintf(w, " %.1f | %.1f |\n", r.AMPeakDB, r.AMTroughDB)
 	}
+	fmt.Fprint(w, "\nAM peak and AM trough: the highest and the lowest residual power of 96 crank angle sectors of the cycle, relative to the mean sector power.\n")
 	fmt.Fprint(w, "\nThe residual in each band relative to the signal in the same band:\n\n| Hold | Throttle |")
 	bands()
 	fmt.Fprint(w, "\n|"+strings.Repeat(" --- |", 2+len(rs[0].Bands))+"\n")

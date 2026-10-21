@@ -120,6 +120,34 @@ func TestResidualWhiteNoise(t *testing.T) {
 	}
 }
 
+// TestResidualAM checks the residual modulation over the cycle: steady
+// noise gives a flat sector power, and noise only in the first half of
+// each cycle gives a peak of +3 dB and a trough at the floor.
+func TestResidualAM(t *testing.T) {
+	const rate, rpm = 48000, 1500
+	for _, gated := range []bool{false, true} {
+		x := periodic(rate, rpm, 8000, 3, 5)
+		rng := rand.New(rand.NewPCG(13, 4)) //nolint:gosec // Seeded test noise, not security.
+		for i := range x {
+			ph := math.Mod(float64(i)*rpm/120/rate, 1)
+			if !gated || ph < 0.5 {
+				x[i] += 0.01 * rng.NormFloat64()
+			}
+		}
+		r, ok := Residual(x, rate, rpm)
+		if !ok {
+			t.Fatal("no result")
+		}
+		t.Logf("gated %v: AM peak %.2f dB, trough %.2f dB", gated, r.AMPeakDB, r.AMTroughDB)
+		if !gated && (r.AMPeakDB > 1 || r.AMTroughDB < -1) {
+			t.Errorf("steady noise: AM peak %.2f dB and trough %.2f dB, want within 1 dB of 0", r.AMPeakDB, r.AMTroughDB)
+		}
+		if gated && (math.Abs(r.AMPeakDB-3) > 1 || r.AMTroughDB > -20) {
+			t.Errorf("gated noise: AM peak %.2f dB and trough %.2f dB, want about 3 and below -20", r.AMPeakDB, r.AMTroughDB)
+		}
+	}
+}
+
 // TestResidualTooShort checks that fewer than three cycles give no result.
 func TestResidualTooShort(t *testing.T) {
 	x := periodic(48000, 800, 1000, 0.3, 1)

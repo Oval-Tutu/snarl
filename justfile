@@ -34,6 +34,36 @@ render profile script *args: (_command "snarl-render")
 compare a b *args: (_command "snarl-compare")
     go run ./cmd/snarl-compare {{ args }} "{{ a }}" "{{ b }}"
 
+# Analyse one render that a scenario drove, and write the results to the
+# out directory: spectrogram.png (log frequency and magnitude),
+# waveform.png (linear peak amplitude), waveform-log.png (logarithmic
+# amplitude), histogram.png (sample value histogram over the whole file),
+# the ffmpeg logs ebur128.log (momentary and short-term loudness every
+# 100 ms), astats.log (RMS, peak, crest factor and noise floor every
+# 100 ms) and aspectralstats.log (centroid, flatness, rolloff and flux per
+# 4096-sample frame), and the snarl-compare tables describe.md (level,
+# spectral shape, bands and orders per window) and residual.md (residual
+# of each hold).
+analyse wav scenario out: (_command "snarl-compare")
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v ffmpeg >/dev/null; then
+        echo "Error: ffmpeg is not on PATH. Run this recipe in nix develop." >&2
+        exit 1
+    fi
+    mkdir -p "{{ out }}"
+    ff=(ffmpeg -nostdin -hide_banner -loglevel error -y -i "{{ wav }}")
+    "${ff[@]}" -lavfi "showspectrumpic=s=1600x600:scale=log:fscale=log:legend=1" "{{ out }}/spectrogram.png"
+    "${ff[@]}" -filter_complex "showwavespic=s=1600x400:scale=lin:filter=peak:colors=white[w];color=c=black:s=1600x400[b];[b][w]overlay=format=auto,format=rgb24" -frames:v 1 "{{ out }}/waveform.png"
+    "${ff[@]}" -filter_complex "showwavespic=s=1600x400:scale=log:filter=peak:colors=white[w];color=c=black:s=1600x400[b];[b][w]overlay=format=auto,format=rgb24" -frames:v 1 "{{ out }}/waveform-log.png"
+    "${ff[@]}" -lavfi "ahistogram=s=800x400:acount=-1:rheight=1:hmode=sign:scale=log:ascale=lin,format=rgb24" -update 1 "{{ out }}/histogram.png"
+    "${ff[@]}" -af "ebur128=metadata=1,ametadata=mode=print:file={{ out }}/ebur128.log" -f null -
+    "${ff[@]}" -af "asetnsamples=n=4800,astats=metadata=1:reset=1:measure_overall=none:measure_perchannel=RMS_level+Peak_level+Crest_factor+Noise_floor,ametadata=mode=print:file={{ out }}/astats.log" -f null -
+    "${ff[@]}" -af "aspectralstats=win_size=4096:measure=centroid+flatness+rolloff+flux,ametadata=mode=print:file={{ out }}/aspectralstats.log" -f null -
+    go run ./cmd/snarl-compare --describe --scenario "{{ scenario }}" "{{ wav }}" > "{{ out }}/describe.md"
+    go run ./cmd/snarl-compare --residual --scenario "{{ scenario }}" "{{ wav }}" > "{{ out }}/residual.md"
+    echo "Wrote the analysis of {{ wav }} to {{ out }}"
+
 # Render an engine-sim reference to a WAV file. The script is a path, or a
 # path inside the upstream engines directory. Pass scenario segments as args,
 # for example: just ref-engine-sim atg-video-2/07_gm_ls.mr out/v8.wav --hold 3000:0.5:3 --volume 0.5
