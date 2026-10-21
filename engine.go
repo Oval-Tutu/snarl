@@ -1,21 +1,28 @@
 package snarl
 
 import (
+	"bytes"
 	"embed"
 	"errors"
 	"fmt"
 	"math"
+	"path"
 	"runtime"
+	"sync"
 	"sync/atomic"
 
-	"github.com/oval-tutu/snarl/internal/model"
+	"github.com/oval-tutu/snarl/internal/core"
+	"github.com/oval-tutu/snarl/internal/cycles"
+	"github.com/oval-tutu/snarl/internal/esynth"
 )
 
-// The embedded profiles are the reference set of profiles/README.md. The
-// sources files beside them are not embedded.
+// The embedded profiles are the reference set of profiles/README.md, with
+// the cycle tables and the impulse responses that they name. The sources
+// files beside them are not embedded.
 //
 //go:embed profiles/i4-vtec.toml profiles/v8-ls.toml profiles/f4-ej25.toml
-//go:embed profiles/v12-412.toml profiles/v12-merlin.toml profiles/f6-aircooled.toml
+//go:embed profiles/v12-412.toml profiles/v12-merlin.toml
+//go:embed profiles/cycles/*.bin profiles/ir/*.wav
 var profileFiles embed.FS
 
 // Profile is a parsed engine profile.
@@ -28,17 +35,21 @@ type Profile struct {
 	// profile, in revolutions per minute.
 	IdleRPM, RedlineRPM, LimiterRPM float32
 
-	spec *model.Spec
+	spec *core.Spec
 }
 
 // ErrUnknownProfile is returned when no embedded profile has the name.
 var ErrUnknownProfile = errors.New("unknown engine profile")
 
+// ErrNoTables is returned for a profile that names no cycle tables, for
+// example a catalogue profile in the format before the cycle tables.
+var ErrNoTables = errors.New("profile has no cycle tables")
+
 // Profiles returns the names of the embedded engine profiles: five
-// engine-sim engines and one EngineLab engine, each converted from its
-// upstream engine (profiles/README.md).
+// engine-sim engines, each converted from its upstream engine
+// (profiles/README.md).
 func Profiles() []string {
-	return []string{"i4-vtec", "v8-ls", "f4-ej25", "v12-412", "v12-merlin", "f6-aircooled"}
+	return []string{"i4-vtec", "v8-ls", "f4-ej25", "v12-412", "v12-merlin"}
 }
 
 // LoadProfile returns the embedded engine profile with the given name.
@@ -57,18 +68,27 @@ func LoadProfile(name string) (Profile, error) {
 	return parseProfile(string(data))
 }
 
-// parseProfile parses the profile text over the model defaults.
+// parseProfile parses the profile text over the core defaults, and checks
+// that the embedded tables and impulse responses that it names exist and
+// match.
 func parseProfile(data string) (Profile, error) {
 	t, err := parseTOML(data)
 	if err != nil {
 		return Profile{}, fmt.Errorf("profile: %w", err)
 	}
-	spec := model.DefaultSpec()
+	if _, ok := t.values["tables"]; !ok {
+		name := t.values["name"].str
+		return Profile{}, fmt.Errorf("profile %q: %w", name, ErrNoTables)
+	}
+	spec := core.DefaultSpec()
 	if err := decodeTOML(t, &spec); err != nil {
 		return Profile{}, fmt.Errorf("profile: %w", err)
 	}
 	if err := spec.Validate(); err != nil {
 		return Profile{}, err
+	}
+	if _, err := resources(&spec); err != nil {
+		return Profile{}, fmt.Errorf("profile %s: %w", spec.Name, err)
 	}
 	return Profile{
 		Name:        spec.Name,
@@ -80,9 +100,69 @@ func parseProfile(data string) (Profile, error) {
 	}, nil
 }
 
+// resource is one embedded file, decoded once for the life of the
+// process and shared by every engine.
+type resource struct {
+	once sync.Once
+	v    any
+	err  error
+}
+
+var resourceCache sync.Map
+
+// cached returns the decoded value of the embedded file at name.
+func cached(name string, decode func([]byte) (any, error)) (any, error) {
+	v, _ := resourceCache.LoadOrStore(name, &resource{})
+	r := v.(*resource)
+	r.once.Do(func() {
+		data, err := profileFiles.ReadFile(name)
+		if err != nil {
+			r.err = err
+			return
+		}
+		r.v, r.err = decode(data)
+	})
+	return r.v, r.err
+}
+
+// resources returns the cycle tables and the impulse responses of the
+// spec. The impulse response of each channel of the profile must be the
+// one that the tables name.
+func resources(s *core.Spec) (core.Resources, error) {
+	v, err := cached("profiles/cycles/"+s.Tables+".bin", func(b []byte) (any, error) {
+		t, err := cycles.Read(b)
+		if err != nil {
+			return nil, err
+		}
+		return cycles.NewBank(t)
+	})
+	if err != nil {
+		return core.Resources{}, fmt.Errorf("cycle tables %q: %w", s.Tables, err)
+	}
+	bank := v.(*cycles.Bank)
+	t := bank.Tables()
+	if len(t.Channels) != len(s.Channels) {
+		return core.Resources{}, fmt.Errorf("%d channels, the tables %q have %d", len(s.Channels), s.Tables, len(t.Channels))
+	}
+	res := core.Resources{Bank: bank}
+	for i, c := range s.Channels {
+		if want := path.Base(t.Channels[i].ImpulseResponse); c.ImpulseResponse != want {
+			return core.Resources{}, fmt.Errorf("channel %d: impulse response %q, the tables name %q", i+1, c.ImpulseResponse, want)
+		}
+		name := "profiles/ir/" + c.ImpulseResponse
+		v, err := cached(name, func(b []byte) (any, error) {
+			return esynth.DecodeImpulseResponse(bytes.NewReader(b), name)
+		})
+		if err != nil {
+			return core.Resources{}, err
+		}
+		res.ImpulseResponses = append(res.ImpulseResponses, v.([]int16))
+	}
+	return res, nil
+}
+
 // New returns an engine for the profile at the given sample rate and tier.
-// Tier2 renders the tier 1 model until tier 2 exists. Any other tier is an
-// error.
+// Both tiers render the same engine. Any other tier is an error.
 func New(p Profile, sampleRate int, tier Tier) (Engine, error) {
 	if sampleRate <= 0 {
 		return nil, fmt.Errorf("sample rate %d is not positive", sampleRate)
@@ -97,7 +177,11 @@ func New(p Profile, sampleRate int, tier Tier) (Engine, error) {
 		}
 		p = q
 	}
-	s, err := model.New(p.spec, sampleRate)
+	res, err := resources(p.spec)
+	if err != nil {
+		return nil, err
+	}
+	s, err := core.New(p.spec, res, sampleRate)
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +233,7 @@ type engine struct {
 	w0, w1, w2, w3 atomic.Uint64
 	report         atomic.Uint64
 
-	synth    *model.Synth
+	synth    *core.Engine
 	last     Snapshot
 	limiter  uint8
 	popReq   uint8
@@ -219,7 +303,7 @@ func (e *engine) Render(dst []float32) {
 	}
 	e.limiter, e.popReq = s.Limiter, s.PopRequest
 	e.primed = e.primed || ok
-	e.synth.Render(dst, model.Control{
+	e.synth.Render(dst, core.Control{
 		RPM:           s.RPM,
 		Throttle:      s.Throttle,
 		Load:          s.Load,
@@ -242,8 +326,8 @@ func (e *engine) Render(dst []float32) {
 	}
 }
 
-// Pops returns the pop report. The model kinds count from 0 in the order
-// of PopKind from KindPop, and the model sources have the PopSource values.
+// Pops returns the pop report. The core kinds count from 0 in the order of
+// PopKind from KindPop, and the core sources have the PopSource values.
 func (e *engine) Pops() PopReport {
 	v := e.report.Load()
 	return PopReport{

@@ -4,39 +4,28 @@
 name = "v12-412"
 description = "75 degree V12 race engine, uneven firing"
 seed = 46654
+cylinders = 12
 idle_rpm = 3810
 redline_rpm = 18000
 limiter_rpm = 18500
-limiter_kind = "fuel"
-limiter_ms = 101.7
-limiter_fall_rpm_s = 30580
-limiter_rise_rpm_s = 57323
-limiter_load_scale = 1
-limiter_pump_db = -1
-limiter_notch_db = -3
-limiter_bark_db = 1
+tables = "v12-412"
+volume = 0.25
+
+[throttle]
+close_lag_s = 0.019
+open_lag_s = 0.0155
+
+[limiter]
+cut_ms = 101.7
+fall_rpm_s = 30580
+rise_rpm_s = 57323
+load_scale = 1
 final_gear_waver = 0.003
 
-[pulse]
-table = "v12-412"
-cycle_variation = 0
-measured_variation = 1
-jitter = 0.003
-gain_variation = 0.0329
-timing_variation_deg = 0.336
-
-[exhaust]
-speed_of_sound = 171.5
-crossover = "none"
-formant_gain_db = -5.61
-pop_formant_gain_db = -8.35
-pop_delay_ms = 0.531
-
-[noise]
-hf_gain = 0.01
-am = 1
-am_cutoff_hz = 2000
-input_jitter = 0.1
+[idle]
+fade_rpm = 5210
+hunt = 0.0245
+hunt_hz = 0.42
 
 [pops]
 density = 0.15
@@ -45,176 +34,14 @@ gain = 1
 body_hz = 200
 body_ms = 35
 jump_ms = 3
-crack = 2.5
-crack_ms = 16
+limiter_bangs = false
 weight_pop = 0.4
 weight_boom = 0.2
 weight_crackle = 0.3
 weight_burble = 0.1
 
-[idle]
-fade_rpm = 5210
-hunt = 0.0245
-hunt_hz = 0.42
+[[channel]]
+impulse_response = "minimal_muffling_01.wav"
 
-[voice]
-gain = 1
-leveller_db = -3.8
-output_db = 2.42
-
-[[cylinder]]
-crank_deg = 0
-bank = 0
-primary_m = 1.4229
-
-[[cylinder]]
-crank_deg = 480
-bank = 0
-primary_m = 1.4224
-
-[[cylinder]]
-crank_deg = 240
-bank = 0
-primary_m = 1.4226
-
-[[cylinder]]
-crank_deg = 600
-bank = 0
-primary_m = 1.4239
-
-[[cylinder]]
-crank_deg = 120
-bank = 0
-primary_m = 1.4249
-
-[[cylinder]]
-crank_deg = 360
-bank = 0
-primary_m = 1.4229
-
-[[cylinder]]
-crank_deg = 75
-bank = 1
-primary_m = 0.5085
-
-[[cylinder]]
-crank_deg = 555
-bank = 1
-primary_m = 0.5083
-
-[[cylinder]]
-crank_deg = 315
-bank = 1
-primary_m = 0.5115
-
-[[cylinder]]
-crank_deg = 675
-bank = 1
-primary_m = 0.5095
-
-[[cylinder]]
-crank_deg = 195
-bank = 1
-primary_m = 0.5085
-
-[[cylinder]]
-crank_deg = 435
-bank = 1
-primary_m = 0.5095
-
-[[path]]
-collector_m = 1.4224
-reflection = 0
-gain = 0.1269
-
-[[path]]
-collector_m = 0.508
-reflection = 0
-gain = 1
-
-[[formant]]
-kind = "highpass"
-hz = 119.9
-q = 1.098
-
-[[formant]]
-kind = "peak"
-hz = 191.3
-q = 6.441
-gain_db = -7.89
-
-[[formant]]
-kind = "peak"
-hz = 256.5
-q = 12.179
-gain_db = -7.74
-
-[[formant]]
-kind = "peak"
-hz = 321.5
-q = 0.3
-gain_db = 6.4
-
-[[formant]]
-kind = "peak"
-hz = 580.2
-q = 12.121
-gain_db = -8.83
-
-[[formant]]
-kind = "peak"
-hz = 837
-q = 2.284
-gain_db = -25.64
-
-[[formant]]
-kind = "peak"
-hz = 885.4
-q = 3.583
-gain_db = 17.59
-
-[[formant]]
-kind = "lowpass"
-hz = 5771.4
-q = 0.587
-
-[[formant]]
-kind = "peak"
-hz = 10524.3
-q = 3.893
-gain_db = -3.37
-
-[[pop_formant]]
-kind = "peak"
-hz = 600
-q = 0.3
-gain_db = -11.15
-
-[[pop_formant]]
-kind = "peak"
-hz = 936.3
-q = 2.678
-gain_db = 12.61
-
-[[pop_formant]]
-kind = "peak"
-hz = 1906.8
-q = 7.062
-gain_db = 10.11
-
-[[pop_formant]]
-kind = "peak"
-hz = 2867.1
-q = 9.207
-gain_db = 7.95
-
-[[pop_formant]]
-kind = "lowpass"
-hz = 5892.6
-q = 1.851
-
-[[pop_formant]]
-kind = "peak"
-hz = 15472.9
-q = 1.08
-gain_db = -16.23
+[[channel]]
+impulse_response = "minimal_muffling_01.wav"

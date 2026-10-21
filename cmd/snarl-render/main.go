@@ -8,7 +8,9 @@
 //
 // PROFILE, and each profile of a log, is an embedded profile, for example
 // v8-ls, or the id of a profile in the catalogue directory, for example
-// es-v10-72.
+// es-v10-72. A catalogue profile without cycle tables cannot render: as
+// PROFILE it is an error with a note, and in a log its rows render
+// silence with a note on standard error.
 package main
 
 import (
@@ -100,7 +102,7 @@ func run(args []string, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		r := &replayer{rows: rows, rate: *rate, sets: sets, catalogue: *catalogue}
+		r := &replayer{rows: rows, rate: *rate, sets: sets, catalogue: *catalogue, stderr: stderr}
 		src, duration = r.at, rows[len(rows)-1].t
 		if path == "" {
 			name := strings.TrimSuffix(filepath.Base(*replay), filepath.Ext(*replay))

@@ -134,6 +134,8 @@ type replayer struct {
 	sets []string
 	// catalogue is the catalogue profile directory, or "".
 	catalogue string
+	// stderr gets the note of a skipped profile, or is nil.
+	stderr io.Writer
 
 	eng     snarl.Engine
 	profile string
@@ -149,13 +151,21 @@ func (r *replayer) at(t float64) (snarl.Engine, snarl.Snapshot, error) {
 	}
 	row := r.rows[r.i]
 	if r.eng == nil || row.profile != r.profile || row.tier != r.tier {
+		var e snarl.Engine
 		p, err := loadProfile(row.profile, r.catalogue, r.sets...)
-		if err != nil {
+		switch {
+		case errors.Is(err, snarl.ErrNoTables):
+			// A catalogue profile without tables renders silence.
+			if r.stderr != nil {
+				fmt.Fprintf(r.stderr, "snarl-render: %v; its rows from %.3f s render silence\n", err, row.t)
+			}
+			e = silent{}
+		case err != nil:
 			return nil, snarl.Snapshot{}, err
-		}
-		e, err := snarl.New(p, r.rate, row.tier)
-		if err != nil {
-			return nil, snarl.Snapshot{}, err
+		default:
+			if e, err = snarl.New(p, r.rate, row.tier); err != nil {
+				return nil, snarl.Snapshot{}, err
+			}
 		}
 		if r.eng != nil {
 			e.Set(r.last)
@@ -165,3 +175,12 @@ func (r *replayer) at(t float64) (snarl.Engine, snarl.Snapshot, error) {
 	r.last = row.snap
 	return r.eng, row.snap, nil
 }
+
+// silent is the engine of a skipped profile: it renders silence.
+type silent struct{}
+
+func (silent) Set(snarl.Snapshot) {}
+
+func (silent) Render(dst []float32) { clear(dst) }
+
+func (silent) Pops() snarl.PopReport { return snarl.PopReport{} }

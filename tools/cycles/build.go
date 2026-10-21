@@ -17,6 +17,7 @@ func runBuild(args []string, stdout io.Writer) error {
 	out := fs.String("out", "", "tables file to write (required)")
 	settle := fs.Float64("settle", 0.5, "settle time in seconds that the measure skips at the start of each hold")
 	step := fs.String("step", "", "record of the throttle steps (step.scn) to measure the intake lag from; its holds are not grid points")
+	closing := fs.String("close", "", "record of the closing steps (close.scn) to measure the closing transient from; its holds are not grid points")
 	minHold := fs.Float64("min-hold", 0.9, "skip holds shorter than the settle time and this many seconds")
 	thin := fs.Int("thin", 1, "keep every Nth grid RPM of each row, and the last; 2 leaves out the points that the half-grid check plays")
 	maxHarmonics := fs.Int("max-harmonics", 0, "cap the harmonics of the average cycle (0: every harmonic below the input Nyquist frequency)")
@@ -60,6 +61,11 @@ func runBuild(args []string, stdout io.Writer) error {
 	t.Points = thinPoints(t.Points, *thin)
 	if *step != "" {
 		if err := measureLag(stdout, t, *step, *settle); err != nil {
+			return err
+		}
+	}
+	if *closing != "" {
+		if err := measureClose(stdout, t, *closing, *maxHarmonics); err != nil {
 			return err
 		}
 	}
@@ -146,7 +152,57 @@ func measureLag(w io.Writer, t *cycles.Tables, dir string, settle float64) error
 	return nil
 }
 
-// sortPoints orders the points by ignition (on first), throttle and RPM.
+// measureClose adds the slices of the closing transient of each closing
+// step of the record in dir to t, and reports each slice: its residual
+// below the signal, and the distance of its average cycle from the steady
+// closed-throttle point at the RPM, below the signal.
+func measureClose(w io.Writer, t *cycles.Tables, dir string, maxHarmonics int) error {
+	r, err := cycles.LoadRecord(dir)
+	if err != nil {
+		return err
+	}
+	if r.Script != t.Script || r.SimulationFrequency != t.Rate || r.InputChannelCount != len(t.Channels) {
+		return fmt.Errorf("%s: another engine than the grid", dir)
+	}
+	fmt.Fprint(w, "| Closing step RPM | Since (s) | Cycles | Residual below signal (dB) | Distance from the steady closed point below signal (dB) |\n| --- | --- | --- | --- | --- |\n")
+	n := 0
+	for k := range r.Segments {
+		if !r.IsClose(k) {
+			continue
+		}
+		parts, err := r.CloseSlices(k, cycles.MeasureOptions{MaxHarmonics: maxHarmonics})
+		if err != nil {
+			return fmt.Errorf("%s: %w", dir, err)
+		}
+		steady := -1
+		for i, p := range t.Points {
+			if p.Ignition && p.Since == 0 && p.Throttle == 0 && p.RPM == r.Segments[k].RPM0 {
+				steady = i
+			}
+		}
+		for _, p := range parts {
+			var res, dist string
+			for c := range t.Channels {
+				sp := seriesPower(p.Wave[c])
+				res += fmt.Sprintf(" %.1f", db(sp)-db(noisePower(p.Noise[c])))
+				if steady >= 0 {
+					dist += fmt.Sprintf(" %.1f", db(sp)-db(seriesDistance(p.Wave[c], t.Points[steady].Wave[c])))
+				}
+			}
+			fmt.Fprintf(w, "| %g | %.3f | %d |%s |%s |\n", p.RPM, p.Since, p.Cycles, res, dist)
+		}
+		t.Points = append(t.Points, parts...)
+		n++
+	}
+	if n == 0 {
+		return fmt.Errorf("%s: no closing step", dir)
+	}
+	fmt.Fprintf(w, "\nClosing transient: %d closing steps\n\n", n)
+	return nil
+}
+
+// sortPoints orders the points by ignition (on first), throttle, the
+// closing transient (steady first) and RPM.
 func sortPoints(ps []cycles.Point) []cycles.Point {
 	slices.SortStableFunc(ps, func(a, b cycles.Point) int {
 		switch {
@@ -157,6 +213,8 @@ func sortPoints(ps []cycles.Point) []cycles.Point {
 			return 1
 		case a.Throttle != b.Throttle:
 			return cmp(a.Throttle, b.Throttle)
+		case a.Since != b.Since:
+			return cmp(a.Since, b.Since)
 		}
 		return cmp(a.RPM, b.RPM)
 	})
@@ -175,7 +233,7 @@ func cmp(a, b float64) int {
 
 // sameRow reports whether two points are in one throttle row.
 func sameRow(a, b *cycles.Point) bool {
-	return a.Ignition == b.Ignition && a.Throttle == b.Throttle
+	return a.Ignition == b.Ignition && a.Throttle == b.Throttle && a.Since == 0 && b.Since == 0
 }
 
 // thinPoints keeps every nth point of each row of sorted points, and the

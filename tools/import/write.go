@@ -19,11 +19,6 @@ import (
 const (
 	defaultChamberM    = 0.3
 	defaultChamberArea = 7.0
-	// kneeMargin is the calibration target of leveller_db: the
-	// closed-throttle hold at the idle RPM is this many dB below the knee
-	// of the leveller, so that the leveller leaves the idle character
-	// alone.
-	kneeMargin = 3.0
 )
 
 // sections are the fixed defaults of every imported profile, in profile

@@ -39,34 +39,41 @@ func findCatalogue() string {
 // missing or has no profiles.
 var errNoCatalogue = errors.New("no catalogue profiles")
 
-// loadCatalogue returns the profiles in dir, sorted by id.
-func loadCatalogue(dir string) ([]snarl.Profile, error) {
+// loadCatalogue returns the profiles in dir that have cycle tables, sorted
+// by id, and the number of profiles that it skips because they have none.
+func loadCatalogue(dir string) ([]snarl.Profile, int, error) {
 	files, err := filepath.Glob(filepath.Join(dir, "*.toml"))
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if len(files) == 0 {
-		return nil, fmt.Errorf("%w in %s", errNoCatalogue, dir)
+		return nil, 0, fmt.Errorf("%w in %s", errNoCatalogue, dir)
 	}
 	ps := make([]snarl.Profile, 0, len(files))
+	skipped := 0
 	for _, f := range files {
 		data, err := os.ReadFile(f)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		p, err := snarl.ParseProfile(data)
+		if errors.Is(err, snarl.ErrNoTables) {
+			skipped++
+			continue
+		}
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", f, err)
+			return nil, 0, fmt.Errorf("%s: %w", f, err)
 		}
 		ps = append(ps, p)
 	}
 	slices.SortFunc(ps, func(a, b snarl.Profile) int { return strings.Compare(a.Name, b.Name) })
-	return ps, nil
+	return ps, skipped, nil
 }
 
 // loadProfiles returns the embedded profiles, then the catalogue profiles
-// in dir, and the index of the named one. When dir is "" or has no
-// profiles, the list has the embedded profiles only, and the note says so.
+// in dir that have cycle tables, and the index of the named one. When dir
+// is "" or has no profiles, or when it skips catalogue profiles with no
+// tables, the note says so.
 func loadProfiles(name, dir string) ([]snarl.Profile, int, string, error) {
 	var ps []snarl.Profile
 	for _, n := range snarl.Profiles() {
@@ -78,12 +85,14 @@ func loadProfiles(name, dir string) ([]snarl.Profile, int, string, error) {
 	}
 	note := "No profile catalogue found: embedded profiles only (-catalogue DIR)"
 	if dir != "" {
-		cat, err := loadCatalogue(dir)
+		cat, skipped, err := loadCatalogue(dir)
 		switch {
 		case errors.Is(err, errNoCatalogue):
 			note = "No profile catalogue in " + dir + ": embedded profiles only"
 		case err != nil:
 			return nil, 0, "", err
+		case skipped > 0:
+			note = fmt.Sprintf("Skipped %d catalogue profiles in %s: they have no cycle tables (profiles/README.md)", skipped, dir)
 		default:
 			note = ""
 		}

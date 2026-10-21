@@ -14,7 +14,7 @@ import (
 const referenceDir = "profiles"
 
 // referenceIDs are the engines of the reference set, in file name order.
-var referenceIDs = []string{"f4-ej25", "f6-aircooled", "i4-vtec", "v12-412", "v12-merlin", "v8-ls"}
+var referenceIDs = []string{"f4-ej25", "i4-vtec", "v12-412", "v12-merlin", "v8-ls"}
 
 // sourceKinds are the kinds of source that a key of a reference profile
 // can have (profiles/README.md).
@@ -23,7 +23,7 @@ var sourceKinds = []string{"upstream", "measured", "snarl", "not-measured"}
 // TestReferenceSources checks that every key that a reference profile sets
 // has one source entry of a known kind with a text, and that no entry
 // names a key that the profile does not set. A key of an array table, such
-// as cylinder.crank_deg, has one entry for all entries of the array.
+// as channel.impulse_response, has one entry for all entries of the array.
 func TestReferenceSources(t *testing.T) {
 	files, err := filepath.Glob(filepath.Join(referenceDir, "*.toml"))
 	if err != nil {

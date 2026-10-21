@@ -96,7 +96,7 @@ func TestReadShortSlices(t *testing.T) {
 
 func TestReadDoesNotAllocate(t *testing.T) {
 	s := New()
-	s.SetEngine(newEngine(t, "f6-aircooled"))
+	s.SetEngine(newEngine(t, "f4-ej25"))
 	buf := make([]byte, BlockBytes)
 	_, _ = s.Read(buf)
 	s.SetEngine(newEngine(t, "v12-merlin")) // The first runs include the crossfade.
@@ -145,7 +145,7 @@ func TestTapGetsPlayedAudio(t *testing.T) {
 
 func TestReadWithTapDoesNotAllocate(t *testing.T) {
 	s := New()
-	s.SetEngine(newEngine(t, "f6-aircooled"))
+	s.SetEngine(newEngine(t, "i4-vtec"))
 	s.SetTap(&copyTap{})
 	buf := make([]byte, BlockBytes)
 	_, _ = s.Read(buf)

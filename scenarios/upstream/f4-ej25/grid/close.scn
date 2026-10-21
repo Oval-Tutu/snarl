@@ -1,0 +1,22 @@
+# f4-ej25: written by tools/cycles scenarios. Closing steps for the closing transient of the cycle tables:
+# full throttle for 1 s, then closed for 3 s, at each RPM. snarl does not read this file.
+hold 830 1 1
+hold 830 0 3
+sweep 830 1750 1 0.25
+hold 1750 1 1
+hold 1750 0 3
+sweep 1750 2750 1 0.25
+hold 2750 1 1
+hold 2750 0 3
+sweep 2750 3750 1 0.25
+hold 3750 1 1
+hold 3750 0 3
+sweep 3750 4750 1 0.25
+hold 4750 1 1
+hold 4750 0 3
+sweep 4750 5750 1 0.25
+hold 5750 1 1
+hold 5750 0 3
+sweep 5750 6400 1 0.25
+hold 6400 1 1
+hold 6400 0 3

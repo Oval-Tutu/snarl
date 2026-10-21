@@ -12,26 +12,27 @@ func TestLoadProfileWith(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, err := LoadProfileWith("v8-ls",
-		"noise.input_jitter=0", // A key in the file.
-		"exhaust.coupling=0.2", // A key that the file does not set.
-		"limiter_rpm=6100",     // A top-level key.
-		`exhaust.crossover="partial"`,
+		"limiter.cut_ms=100",        // A key in the file.
+		"pops.limiter_bangs=true",   // A key in the file of another type.
+		"limiter_rpm=6900",          // A top-level key.
+		`pops.character="race"`,     // A string.
+		"throttle.close_lag_s=0.05", // A measured key.
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := p.spec
-	if s.Noise.InputJitter != 0 || s.Exhaust.Coupling != 0.2 || p.LimiterRPM != 6100 || s.Exhaust.Crossover != "partial" {
+	if s.Limiter.CutMS != 100 || !s.Pops.LimiterBangs || p.LimiterRPM != 6900 || s.Pops.Character != "race" || s.Throttle.CloseLagS != 0.05 {
 		t.Errorf("overrides not applied: %+v", *s)
 	}
-	if s.Noise.AM != base.spec.Noise.AM || s.Pops.Density != base.spec.Pops.Density || len(s.Cylinders) != 8 {
+	if s.Idle != base.spec.Idle || s.Pops.Density != base.spec.Pops.Density || len(s.Channels) != 2 {
 		t.Error("an override changed another key")
 	}
 	again, err := LoadProfile("v8-ls")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if again.spec.Noise.InputJitter != 0.6 || again.spec.Exhaust.Coupling != 0 || again.LimiterRPM != 6800 {
+	if again.spec.Limiter.CutMS == 100 || again.spec.Pops.LimiterBangs || again.LimiterRPM != 6800 {
 		t.Error("the embedded profile changed")
 	}
 	same, err := LoadProfileWith("v8-ls")
@@ -42,36 +43,30 @@ func TestLoadProfileWith(t *testing.T) {
 
 func TestLoadProfileWithErrors(t *testing.T) {
 	for _, o := range []string{
-		"noise.bogus=1",          // Unknown key.
-		"bogus.am=1",             // Unknown table.
-		"bogus=1",                // Unknown top-level key.
-		"cylinder.bank=1",        // An array, not a table.
-		"noise.air=0",            // A removed key.
-		"noise.jet=0",            // A removed key.
-		"exhaust.steepening=0",   // A removed key.
-		"exhaust.low_shelf_db=0", // A removed key.
-		"exhaust.overlap=0",      // A removed key.
-		"limiter_jitter=0",       // A removed key.
-		"overrun.level_db=0",     // A removed table.
-		"pulse.part_load_db=-1",  // A removed key.
-		"idle.variation=0",       // A removed key.
-		"idle.timing_deg=0",      // A removed key.
-		"idle.imbalance=0",       // A removed key.
-		"idle.rock=0",            // A removed key.
-		"noise.am",               // No value.
-		"noise.am=",              // Empty value.
-		"noise.am=loud",          // Bad value.
-		"noise.am=\"0\"",         // Wrong type.
-		"a.b.c=1",                // Nested too deep.
-		".am=1",                  // No table name.
-		"voice.gain=0",           // Fails validation.
-		"noise.am=0\n[pops]",     // Two lines.
+		"pops.bogus=1",                  // Unknown key.
+		"bogus.am=1",                    // Unknown table.
+		"bogus=1",                       // Unknown top-level key.
+		"channel.impulse_response=\"\"", // An array, not a table.
+		"noise.am=1",                    // A removed table.
+		"pulse.table=\"v8-ls\"",         // A removed table.
+		"voice.output_db=0",             // A removed table.
+		"limiter_ms=50",                 // A removed key.
+		"pops.crack=1",                  // A removed key.
+		"tables=\"nonesuch\"",           // No such tables.
+		"pops.gain",                     // No value.
+		"pops.gain=",                    // Empty value.
+		"pops.gain=loud",                // Bad value.
+		"pops.gain=\"0\"",               // Wrong type.
+		"a.b.c=1",                       // Nested too deep.
+		".gain=1",                       // No table name.
+		"volume=0",                      // Fails validation.
+		"pops.gain=0\n[pops]",           // Two lines.
 	} {
 		if _, err := LoadProfileWith("v8-ls", o); err == nil {
 			t.Errorf("override %q did not fail", o)
 		}
 	}
-	if _, err := LoadProfileWith("nope", "noise.am=0"); !errors.Is(err, ErrUnknownProfile) {
+	if _, err := LoadProfileWith("nope", "pops.gain=0"); !errors.Is(err, ErrUnknownProfile) {
 		t.Errorf("unknown profile: %v", err)
 	}
 }

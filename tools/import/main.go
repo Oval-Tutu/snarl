@@ -3,20 +3,22 @@
 // the JSON dumps that just import-profiles makes, fits the formant bank of
 // each engine to its engine-sim impulse response and the pop bank to its
 // earlier EngineLab pop stages, writes one TOML profile and one scenario
-// directory for each engine, calibrates the output level of each profile
-// by rendering it, and writes profiles/catalogue/README.md.
+// directory for each engine, and writes profiles/catalogue/README.md. The
+// catalogue is in the format before the cycle tables, which snarl does not
+// load, so its output level is not calibrated.
 //
 // With --reference, it writes the reference set of just import-reference
-// in place of the catalogue: six engines from their upstream files and
-// their own upstream reference renders, each with a sources file that
-// gives the source of every key, and the README of the set
-// (reference.go). --enginelab then holds the JSON of the EngineLab engine,
-// and --scenarios the upstream scenarios (scenarios/upstream).
+// in place of the catalogue: five engine-sim engines from their upstream
+// files, their cycle tables and their own upstream reference renders, each
+// with a sources file that gives the source of every key, the impulse
+// responses that the tables name, and the README of the set
+// (reference.go). --scenarios then holds the upstream scenarios
+// (scenarios/upstream).
 //
 // Usage:
 //
 //	go run ./tools/import --engine-sim DIR --enginelab DIR --profiles DIR --scenarios DIR [--sound-library DIR]
-//	go run ./tools/import --reference profiles --enginelab DIR --scenarios scenarios/upstream [--work DIR] [--ref id=DIR ...]
+//	go run ./tools/import --reference profiles --scenarios scenarios/upstream [--grid DIR] [--engine-sim-share DIR] [--ref id=DIR ...]
 package main
 
 import (
@@ -93,10 +95,9 @@ func run(args []string) error {
 	profiles := fs.String("profiles", "", "output `directory` for the profiles and README.md")
 	scenarios := fs.String("scenarios", "", "output `directory` for the scenarios")
 	library := fs.String("sound-library", "", "engine-sim sound library `directory` with the impulse responses (default: share/engine-sim/es/sound-library of nix build -f reference/engine-sim)")
-	reference := fs.String("reference", "", "write the reference set to this `directory`, in place of the catalogue")
+	reference := fs.String("reference", "", "write the reference set to this `directory`, which holds its cycle tables in cycles/, in place of the catalogue")
 	ro := refOptions{refs: map[string]string{}}
-	fs.StringVar(&ro.work, "work", "out/import/reference", "with --reference, `directory` of the tools/fit --pulse --json files, <id>/pulse.json")
-	fs.StringVar(&ro.elScenarios, "enginelab-scenarios", "reference/enginelab/scenarios", "with --reference, `directory` of the EngineLab scenarios of just ref-enginelab")
+	fs.StringVar(&ro.grid, "grid", "out/cycles/grid", "with --reference, `directory` of the grid records of just cycles-grid, which the sources cite")
 	fs.StringVar(&ro.share, "engine-sim-share", "", "with --reference, share/engine-sim `directory` of the engine-sim package (default: that of nix build -f reference/engine-sim)")
 	fs.Func("ref", "with --reference, `id=directory` of the reference renders of one engine, in place of its default (repeatable)", func(s string) error {
 		id, dir, ok := strings.Cut(s, "=")
@@ -110,10 +111,10 @@ func run(args []string) error {
 		return err
 	}
 	if *reference != "" {
-		if *elDir == "" || *scenarios == "" || fs.NArg() != 0 {
-			return errors.New("--reference needs --enginelab and --scenarios, and no other arguments")
+		if *scenarios == "" || fs.NArg() != 0 {
+			return errors.New("--reference needs --scenarios, and no other arguments")
 		}
-		ro.out, ro.enginelab, ro.scenarios = *reference, *elDir, *scenarios
+		ro.out, ro.scenarios = *reference, *scenarios
 		return runReference(&ro)
 	}
 	if *esDir == "" || *elDir == "" || *profiles == "" || *scenarios == "" {
@@ -150,17 +151,15 @@ func run(args []string) error {
 	for i := range all {
 		e := &all[i]
 		e.PulseTable = pulseFor(len(e.Cylinders))
-		if err := calibrate(e, profileTOML); err != nil {
-			return fmt.Errorf("%s: %w", e.ID, err)
-		}
+		// The catalogue has no cycle tables, so snarl cannot render it, and
+		// its output level is not calibrated.
 		if err := os.WriteFile(filepath.Join(*profiles, e.ID+".toml"), []byte(profileTOML(e)), 0o644); err != nil {
 			return err
 		}
 		if err := writeScenarios(filepath.Join(*scenarios, e.ID), e); err != nil {
 			return err
 		}
-		fmt.Printf("%-34s %2d cylinders, %d banks, leveller_db %5.1f, output_db %6.2f, sweep-wot %.2f LUFS\n",
-			e.ID, len(e.Cylinders), len(e.Paths), e.LevellerDB, e.OutputDB, e.SweepLUFS)
+		fmt.Printf("%-34s %2d cylinders, %d banks\n", e.ID, len(e.Cylinders), len(e.Paths))
 	}
 	if err := writeScripts(filepath.Join(*scenarios, "engine-sim-scripts.txt"), all); err != nil {
 		return err

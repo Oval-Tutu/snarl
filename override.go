@@ -10,10 +10,10 @@ import (
 // LoadProfileWith returns the embedded engine profile with the given name,
 // with each override applied over the profile text before it is parsed.
 // An override is "section.key=value" for a key in a [section] table, or
-// "key=value" for a top-level key, for example "noise.jet=0". The value
-// uses the profile syntax, so a string value needs quotes. The keys of
-// [[cylinder]] and [[path]] arrays cannot be overridden. An unknown key is
-// an error. The embedded profile does not change.
+// "key=value" for a top-level key, for example "pops.density=0". The
+// value uses the profile syntax, so a string value needs quotes. The keys
+// of the [[channel]] array cannot be overridden. An unknown key is an
+// error. The embedded profile does not change.
 func LoadProfileWith(name string, overrides ...string) (Profile, error) {
 	if _, err := LoadProfile(name); err != nil {
 		return Profile{}, err

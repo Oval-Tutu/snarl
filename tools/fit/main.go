@@ -38,8 +38,8 @@
 // of each hold, the error of one table whose length follows the RPM, and
 // the error of one row per hold RPM, at the holds and left out. With --out,
 // it writes the rows of the holds that --throttle, --min-rpm and --max-rpm
-// select as the pulse file that the model embeds
-// (internal/model/pulses/<profile>.txt).
+// select as a pulse file, in the format that the pulse-train model before
+// the cycle tables embedded.
 //
 // With --pulse --variation, it also measures the cycle-to-cycle variation
 // of each hold: with the pulse fixed, it fits a gain, a shift and a width
@@ -48,8 +48,8 @@
 // spread of the means of the cylinders, and the residuals of the sums and
 // of the part that does not repeat from cycle to cycle. With --out, the
 // pulse file gets one spread line per row with the firing gain spread,
-// which the model takes with [pulse] measured_variation. With --json, it
-// also writes the measures of each hold as JSON, for tools/import.
+// which that model took with [pulse] measured_variation. With --json, it
+// also writes the measures of each hold as JSON.
 //
 // With --upstream-scenarios, it writes the scenarios of just ref-upstream
 // for the engine dump of --engine into --scenarios: holds at throttle 0,
@@ -65,7 +65,7 @@
 //
 //	go run ./tools/fit --ir IR.wav [--base ir] [--profile LEGACY.toml] [--out out/analysis/fit/v8-ls.toml] > fit.md
 //	go run ./tools/fit --pop --profile LEGACY.toml [--out out/analysis/fit/v8-ls-pop.toml] > fit.md
-//	go run ./tools/fit --pulse [--variation] --throttle 1 --engine engine.json --scenarios scenarios/upstream/v8-ls --name v8-ls [--out internal/model/pulses/v8-ls.txt] [--json holds.json] holds-t100.csv [holds-t050.csv] > pulse.md
+//	go run ./tools/fit --pulse [--variation] --throttle 1 --engine engine.json --scenarios scenarios/upstream/v8-ls --name v8-ls [--out out/analysis/fit/v8-ls-pulse.txt] [--json holds.json] holds-t100.csv [holds-t050.csv] > pulse.md
 //	go run ./tools/fit --upstream-scenarios --engine engine.json --scenarios scenarios/upstream/v8-ls --name v8-ls
 //	go run ./tools/fit --health --engine engine.json --scenarios scenarios/upstream/v8-ls --name v8-ls holds-t000.csv [idle-free.csv ...] > health.md
 package main

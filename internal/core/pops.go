@@ -1,4 +1,4 @@
-package model
+package core
 
 import (
 	"math"
@@ -10,7 +10,7 @@ const (
 	// golden is the step of the low-discrepancy sequence for the pop
 	// intervals inside a lift-off run.
 	golden = 0.6180339887
-	// bangGain is the gain of an ignition cut bang relative to a pop.
+	// bangGain is the gain of a limiter bang relative to a pop.
 	bangGain = 3
 	// maxPopEvents is the number of pop events that can sound at once. An
 	// own pop or a bang that starts when every slot is busy does not
@@ -31,13 +31,12 @@ const (
 	// shortCrackle is the most sub-events of a requested crackle.
 	shortCrackle = 10
 	// gapSteps is the number of steps per unit of the normal value in
-	// the click gap table, and gapRange the highest normal value in it.
+	// the crackle gap table, and gapRange the highest normal value in it.
 	gapSteps = 8
 	gapRange = 3
 )
 
-// The pop timing in seconds, chances and gates. They are starting points
-// for tuning by ear.
+// The pop timing in seconds, chances and gates.
 const (
 	guardSec     = 0.05 // No pop starts within this time of the last.
 	gapSec       = 0.7  // Least time between own pops of two triggers.
@@ -62,8 +61,8 @@ const (
 // overDB holds the level of each pop kind in decibels over the engine: the
 // RMS level of the pop over the span from its start that holds 90 per cent
 // of its energy, against the RMS level of the engine with no pop over the
-// same span. ownNorm brings the median level of an own pop, 0.675, to 1,
-// so that the median own pop has its target.
+// same span, both before the leveller. ownNorm brings the median level of
+// an own pop, 0.675, to 1, so that the median own pop has its target.
 var overDB = [numKinds]float64{kindPop: 4.8, kindBoom: 4.5, kindCrackle: 1.5, kindBurble: -4.3}
 
 const ownNorm = 1 / 0.675
@@ -72,27 +71,10 @@ const ownNorm = 1 / 0.675
 // pop level snaps to zero.
 const snapLevel = 1e-20
 
-// The calibration of the kind gains renders calDraws pops of up to calSec
-// of each kind on each path. calTrimDB raises the gains, because the
-// median of the random pops in an engine is about 0.5 dB below the mean
-// level of the calibration pops.
+// The crackle gaps are log-normal around gapMS with the spread gapSigma,
+// and the normal value of each gap follows the one before with the
+// correlation gapRho (docs/research/crackles.md section 11).
 const (
-	calSec    = 0.8
-	calDraws  = 7
-	calTrimDB = 0.5
-)
-
-// The crackle clicks. A click is a noise burst through a band pass at
-// clickHz that starts at once and decays to -20 dB in clickSec. The gaps
-// between the clicks are log-normal around gapMS with the spread
-// gapSigma, and the normal value of each gap follows the one before with
-// the correlation gapRho. The values put the clicks, measured as
-// TestCrackleClicks measures them, on the clicks of the crackle trains in
-// the muffler crackle pack (docs/research/crackles.md section 11).
-const (
-	clickSec = 0.0095
-	clickHz  = 1500
-	clickQ   = 1.2
 	gapMS    = 6.5
 	gapSigma = 0.95
 	gapRho   = 0.1
@@ -102,9 +84,9 @@ const (
 // docs/research/crackles.md. The snarl PopKind values are these plus 1.
 const (
 	kindPop     = iota // An isolated pop with a resonant body.
-	kindBoom           // A short deep burst with a bright onset.
-	kindCrackle        // A long train of cracks over a deep body.
-	kindBurble         // A soft low pop with no crack.
+	kindBoom           // A short deep burst.
+	kindCrackle        // A long train of short jumps over a deep body.
+	kindBurble         // A soft low pop.
 	numKinds
 )
 
@@ -112,7 +94,7 @@ const (
 const (
 	srcRequest = iota + 1 // A pop that the game requests.
 	srcOwn                // A pop of a lift-off or a wind-down.
-	srcLimiter            // An ignition cut bang.
+	srcLimiter            // A limiter bang.
 )
 
 // The own pop triggers.
@@ -174,47 +156,41 @@ type popShape struct {
 	bodyMS    float64 // Body decay to -20 dB, or 0 for the profile body_ms.
 	jump      float64 // Pressure jump length over the profile jump_ms.
 	roundMS   float64 // Rounding of the jump edges, or 0 for 0.25 ms.
-	crack     float32 // Crack of the first sub-event over the pop crack.
-	subCrack  float32 // Crack of a later sub-event over the pop crack.
 	subGain   float32 // Jump of a later sub-event over the first.
 	subs      int     // Least number of later sub-events.
 	subsRange int     // Spread of the number of later sub-events.
 	spacingMS float64 // Median spacing of the sub-events.
-	click     bool    // Sub-events are short clicks at irregular gaps.
+	logNormal bool    // Sub-events follow at log-normal gaps.
 }
 
 // shapes holds the form of each kind. The body frequencies, decays,
 // sub-event counts and spacings are the medians of the pack clusters. The
-// crack levels set the band shares of the clusters through the exhaust
-// path. The kind gains of pops.calibrate set the levels.
+// kind gains of the calibration set the levels.
 var shapes = [numKinds]popShape{
-	kindPop:     {bodyRatio: 1, jump: 1, crack: 1},
-	kindBoom:    {bodyRatio: 0.3, bodyMS: 50, jump: 1, crack: 2.5, subCrack: 0.3, subGain: 0.25, subs: 3, subsRange: 12, spacingMS: 12.5},
-	kindCrackle: {bodyRatio: 0.3, bodyMS: 70, jump: 0.4, crack: 1.5, subCrack: 1.3, subGain: 0.5, subs: 5, subsRange: 27, spacingMS: gapMS, click: true},
+	kindPop:     {bodyRatio: 1, jump: 1},
+	kindBoom:    {bodyRatio: 0.3, bodyMS: 50, jump: 1, subGain: 0.25, subs: 3, subsRange: 12, spacingMS: 12.5},
+	kindCrackle: {bodyRatio: 0.3, bodyMS: 70, jump: 0.4, subGain: 0.5, subs: 5, subsRange: 27, spacingMS: gapMS, logNormal: true},
 	kindBurble:  {bodyRatio: 0.8, bodyMS: 34, jump: 3, roundMS: 1.5, subGain: 0.6, subs: 0, subsRange: 6, spacingMS: 11},
 }
 
 // popEvent is one sounding pop.
 type popEvent struct {
-	left              int // Samples until the slot is free.
-	path              int
-	subs, next        int // Sub-events to come and samples to the next.
+	left              int // Steps until the slot is free.
+	channel           int
+	subs, next        int // Sub-events to come and steps to the next.
 	spacing           float32
 	amp               float32
 	jumpLeft, jumpLen int
 	jumpAmp           float32
-	// ring is the samples left in which the pop jump sounds: the jump of
-	// the last sub-event and six decays of the body to -120 dB. ringLen is
-	// its length from a sub-event.
+	// ring is the steps left in which the pop jump sounds: the jump of the
+	// last sub-event and six decays of the body to -120 dB. ringLen is its
+	// length from a sub-event.
 	ring, ringLen int
 	jumpLP        dsp.OnePole
 	body          dsp.Biquad
-	crackLvl      float32
-	crackEnv      float32
-	clickLvl      float32
-	gapZ          float32 // Normal value of the last click gap.
+	gapZ          float32 // Normal value of the last crackle gap.
 	kind, src     int
-	start         int64 // Start time in samples.
+	start         int64 // Start time in steps.
 }
 
 // popInput is the engine state of one control block for the pops.
@@ -231,17 +207,15 @@ type popInput struct {
 	heat float32
 	// character is 0 for the profile character, or the character plus 1.
 	character int
-	// level is the RMS level of the engine with no pop. Every pop scales
-	// by it.
-	level    float32
-	n, paths int
+	n, paths  int
 }
 
 // pops is the pop model: the requested pops, the own pops of a lift-off
 // or a wind-down, the limits of the own pops and the pop events. All
-// triggers run once per control block. A pop is a rounded pressure jump
-// with a resonant body, injected into an exhaust path, plus a
-// high-frequency crack at the outlet.
+// triggers run once per control block, and the events once per simulation
+// step. A pop is a rounded pressure jump with a resonant body, which tick
+// adds to the synthesiser input of one exhaust channel, so that the
+// impulse response of the channel colours it.
 type pops struct {
 	density    float32 // Multiplier of the own pop chances.
 	bangChance float32
@@ -249,7 +223,6 @@ type pops struct {
 	rate       float32
 	character  int
 	liftRPM    float32
-	level      float32
 
 	// Wind-down bands below liftRPM. windInv is the number of bands per
 	// RPM, windBands the number of bands, and windIn the number of band
@@ -265,9 +238,9 @@ type pops struct {
 	heatUp   float32
 	heatDown float32
 
-	// Times in samples. now is the start of the control block, and last
-	// the start of the last pop. The other times are the lengths of the
-	// timing constants.
+	// Times in steps. now is the start of the control block, and last the
+	// start of the last pop. The other times are the lengths of the timing
+	// constants.
 	now, last          int64
 	guard, gap, window int64
 
@@ -294,7 +267,7 @@ type pops struct {
 	ownI            int              // Index of the oldest in ownTimes.
 	lastOwn         int64
 	lastTrig        int
-	target          int                                 // Path of the next pop.
+	target          int                                 // Channel of the next pop.
 	cum             [numCharacters][2][numKinds]float32 // Run kind weights: first pop, later pops.
 	gainOwn, gainRq [numCharacters]float32
 	// sounded is true when a pop sounded since the last control block.
@@ -314,71 +287,55 @@ type pops struct {
 	// Events.
 	ev     [maxPopEvents]popEvent
 	active int
-	count  [numKinds]int // Pops started, per kind.
-	jump   [MaxBanks]float32
-	// live is true for each path with a pop jump that sounds.
-	live       [MaxBanks]bool
-	busyLen    int
-	jumpLen    float64
-	jumpA      [numKinds]float32 // Jump rounding coefficient per kind.
-	jumpMix    float32
-	bodyGain   float32
-	bodyHz     float64
-	bodyMS     float64
-	crackMS    float64
-	crackDec   float32
-	crackAtt   float32
-	crackRatio float32
-	crackHP    dsp.Biquad
-	clickDec   float32
-	clickBP    dsp.Biquad
-	gapTab     [2*gapSteps*gapRange + 1]float32 // Gap over gapMS per normal value step.
-	gapInnov   float32                          // Gain of the new draw, sqrt(1-gapRho^2).
-	gapMean    float32                          // Mean gap over the median, exp(gapSigma^2/2).
-	// kindGain is the gain of each kind on each path that puts a pop of
+	// jump is the pressure of the pops on each channel at the last step,
+	// over an engine of unit RMS level. The engine scales it by its level
+	// at each step, so that a pop follows the engine that it sounds over.
+	jump     [MaxChannels]float32
+	busyLen  int
+	jumpLen  float64
+	jumpA    [numKinds]float32 // Jump rounding coefficient per kind.
+	jumpMix  float32
+	bodyGain float32
+	bodyHz   float64
+	bodyMS   float64
+	gapTab   [2*gapSteps*gapRange + 1]float32 // Gap over gapMS per normal value step.
+	gapInnov float32                          // Gain of the new draw, sqrt(1-gapRho^2).
+	gapMean  float32                          // Mean gap over the median, exp(gapSigma^2/2).
+	// kindGain is the gain of each kind on each channel that puts a pop of
 	// unit scale on an engine of unit RMS level at its overDB target, for
 	// an own pop or a bang and for a requested pop.
-	kindGain [MaxBanks][2][numKinds]float32
+	kindGain [MaxChannels][2][numKinds]float32
 }
 
-// popCrack scales the crack of the isolated pop. The pop bank, which
-// follows the EngineLab expansion chamber, takes energy out of the body
-// band, so the pop crack is lower and the body gain is higher.
-const popCrack = 0.35
-
-// newPops returns the pop model.
+// newPops returns the pop model at the simulation step rate.
 func newPops(s *Spec, rate, chunkSeconds float64) pops {
 	p := s.Pops
 	ch, _ := characterIndex(p.Character)
 	q := pops{
-		density:    float32(densityScale * p.Density),
-		bangChance: float32(2 * p.Density),
-		gain:       float32(p.Gain),
-		rate:       float32(rate),
-		character:  ch,
-		liftRPM:    float32(liftRedline * s.RedlineRPM),
-		noise:      dsp.NewNoise(uint32(s.Seed&math.MaxUint16) + 0x9e37),
-		heatUp:     dsp.TimeCoef(3, 1/chunkSeconds),
-		heatDown:   dsp.TimeCoef(15, 1/chunkSeconds),
-		guard:      int64(guardSec * rate),
-		gap:        int64(gapSec * rate),
-		window:     int64(ownSeconds * rate),
-		reqKind:    -1,
-		histLen:    int(histSeconds * rate),
-		busyLen:    int(0.3 * rate),
-		jumpLen:    p.JumpMS * 1e-3 * rate,
-		jumpMix:    0.6,
-		bodyGain:   6.4,
-		bodyHz:     p.BodyHz,
-		bodyMS:     p.BodyMS,
-		crackMS:    p.CrackMS,
-		crackDec:   dsp.DecayCoef(20, p.CrackMS*1e-3, rate),
-		crackAtt:   dsp.TimeCoef(0.0001, rate),
-		// The crack level is a small share of the body, as measured.
-		crackRatio: float32(0.05 * p.Crack),
-		clickDec:   dsp.DecayCoef(20, clickSec, rate),
-		gapInnov:   float32(math.Sqrt(1 - gapRho*gapRho)),
-		gapMean:    float32(math.Exp(gapSigma * gapSigma / 2)),
+		density:   float32(densityScale * p.Density),
+		gain:      float32(p.Gain),
+		rate:      float32(rate),
+		character: ch,
+		liftRPM:   float32(liftRedline * s.RedlineRPM),
+		noise:     dsp.NewNoise(uint32(s.Seed&math.MaxUint16) + 0x9e37),
+		heatUp:    dsp.TimeCoef(3, 1/chunkSeconds),
+		heatDown:  dsp.TimeCoef(15, 1/chunkSeconds),
+		guard:     int64(guardSec * rate),
+		gap:       int64(gapSec * rate),
+		window:    int64(ownSeconds * rate),
+		reqKind:   -1,
+		histLen:   int(histSeconds * rate),
+		busyLen:   int(0.3 * rate),
+		jumpLen:   p.JumpMS * 1e-3 * rate,
+		jumpMix:   0.6,
+		bodyGain:  6.4,
+		bodyHz:    p.BodyHz,
+		bodyMS:    p.BodyMS,
+		gapInnov:  float32(math.Sqrt(1 - gapRho*gapRho)),
+		gapMean:   float32(math.Exp(gapSigma * gapSigma / 2)),
+	}
+	if p.LimiterBangs {
+		q.bangChance = float32(2 * p.Density)
 	}
 	if span := float64(q.liftRPM) - windIdle*s.IdleRPM; span > 0 {
 		q.windBands = max(1, int(math.Round(span/windBandRPM)))
@@ -410,8 +367,6 @@ func newPops(s *Spec, rate, chunkSeconds float64) pops {
 		q.gainOwn[c] = float32(math.Pow(10, cs.gainDB/20))
 		q.gainRq[c] = float32(math.Pow(10, cs.requestDB/20))
 	}
-	q.crackHP.SetHighPass(3800, 0.707, rate)
-	q.clickBP.SetBandPass(clickHz, clickQ, rate)
 	for i := range q.kindGain {
 		for r := range q.kindGain[i] {
 			for k := range q.kindGain[i][r] {
@@ -420,113 +375,6 @@ func newPops(s *Spec, rate, chunkSeconds float64) pops {
 		}
 	}
 	return q
-}
-
-// calibrate sets the kind gains for the exhaust paths of the spec. It
-// renders calDraws pops of each kind at unit gain into each path, from a
-// copy of the pop model, and measures the RMS level over the span that
-// holds 90 per cent of the energy, through the DC block of the output
-// stage and its low pass when the engine runs it, with no output gain or
-// limiter. The gain is set from the mean level in decibels. The body
-// frequency, body decay and sub-event count of the pops cover their
-// spreads in even steps, and the sub-events follow a low-discrepancy
-// sequence. The render runs at the sample rate, so that the pop bank has
-// the sections that play. It allocates. New runs it through
-// calibrateCached, once per spec and sample rate.
-func (p *pops) calibrate(s *Spec, rate float64) {
-	buf := make([]float32, int(calSec*rate))
-	step := int(0.005 * rate)
-	c := newPops(s, rate, chunk/rate)
-	c.noise = dsp.NewNoise(0xca1)
-	for i := range s.Paths {
-		for slot := range 2 * numKinds {
-			kind, src := slot%numKinds, srcOwn
-			if slot >= numKinds {
-				src = srcRequest
-			}
-			var lg float64
-			for d := range calDraws {
-				e, q := c.calFire(s, i, kind, src, d, rate)
-				o := newOutput(0, 0, rate)
-				// The render stops when the train has ended and a step is
-				// 40 dB below the loudest step.
-				var top float64
-				n := 0
-				for n+step <= len(buf) {
-					var en float64
-					for j := n; j < n+step; j++ {
-						crack := c.tick()
-						pe := q.popProcess(c.jump[i], true)
-						v := o.dc.Process(pe + crack)
-						if o.useLP {
-							v = o.lp.Process(v)
-						}
-						buf[j] = v
-						en += float64(v) * float64(v)
-					}
-					n += step
-					top = max(top, en)
-					if e.subs == 0 && en < 1e-4*top {
-						break
-					}
-				}
-				e.left, c.active, c.stratum = 0, 0, 0
-				lg += math.Log10(math.Max(spanRMS(buf[:n], int(0.01*rate)), 1e-9))
-			}
-			p.kindGain[i][slot/numKinds][kind] = float32(math.Pow(10, (overDB[kind]+calTrimDB)/20-lg/calDraws))
-		}
-	}
-}
-
-// calFire starts draw d of the calibration pops of the kind and source on
-// path i, from the calibration copy c of the pop model, and returns the
-// pop and new pop stages of the path.
-func (p *pops) calFire(s *Spec, i, kind, src, d int, rate float64) (*popEvent, path) {
-	p.target, p.stratum, p.drawN = i, d+1, 0
-	p.subU = float32(d) / calDraws
-	return p.fire(len(s.Paths), kind, src, 1, 1, 1), newPath(s.Paths[i], s, rate)
-}
-
-// PopSignals renders draw d, from 0 to 6, of the calibration pops of the
-// kind on path i of s at the sample rate and at unit gain: the pressure
-// jump into the path, the crack, and the output of the pop stages of the
-// path, n samples each. The kinds count from 0, in the order of the snarl
-// PopKind values. TestPopColour compares the output with the pops of the
-// EngineLab path stages that the pop bank replaces.
-func PopSignals(s *Spec, i, kind, d int, rate float64, n int) (jump, crack, out []float32) {
-	c := newPops(s, rate, chunk/rate)
-	c.noise = dsp.NewNoise(0xca1)
-	_, q := c.calFire(s, i, kind, srcOwn, d, rate)
-	jump, crack, out = make([]float32, n), make([]float32, n), make([]float32, n)
-	for j := range n {
-		crack[j] = c.tick()
-		jump[j] = c.jump[i]
-		out[j] = q.popProcess(jump[j], true)
-	}
-	return jump, crack, out
-}
-
-// spanRMS returns the RMS level of x from its start to the sample at which
-// the energy reaches 90 per cent of the total, and over at least minN
-// samples.
-func spanRMS(x []float32, minN int) float64 {
-	var tot float64
-	for _, v := range x {
-		tot += float64(v) * float64(v)
-	}
-	var e float64
-	for i, v := range x {
-		e += float64(v) * float64(v)
-		if e >= 0.9*tot {
-			n := min(len(x), max(i+1, minN))
-			var w float64
-			for _, u := range x[:n] {
-				w += float64(u) * float64(u)
-			}
-			return math.Sqrt(w / float64(n))
-		}
-	}
-	return 0
 }
 
 // cumulative returns the cumulative weights of the kinds in use, from 0 to
@@ -557,12 +405,12 @@ func cumulative(w [numKinds]float64, use [numKinds]bool) [numKinds]float32 {
 	return cum
 }
 
-// sec returns seconds in samples.
+// sec returns seconds in steps.
 func (p *pops) sec(s float64) int64 {
 	return int64(s * float64(p.rate))
 }
 
-// uniform returns a random time in samples from lo to hi seconds.
+// uniform returns a random time in steps from lo to hi seconds.
 func (p *pops) uniform(lo, hi float64) int64 {
 	return p.sec(lo + (hi-lo)*float64(p.noise.Unipolar()))
 }
@@ -585,7 +433,6 @@ func (p *pops) control(in *popInput) {
 	} else {
 		p.heat += (in.heat - p.heat) * p.heatDown
 	}
-	p.level = in.level
 	p.trigger(in, p.now)
 	p.now += int64(in.n)
 }
@@ -669,7 +516,7 @@ func (p *pops) windBand(rpm float32, over bool) bool {
 	return false
 }
 
-// history adds the throttle of a block of n samples to the throttle
+// history adds the throttle of a block of n steps to the throttle
 // history, and returns the fall from the highest throttle in it.
 func (p *pops) history(thr float32, n int) float32 {
 	p.histAcc += n
@@ -715,7 +562,7 @@ func (p *pops) ownAllowed(now int64, trig int) bool {
 // about 9 dB and falls on a cold exhaust.
 func (p *pops) own(in *popInput, ch, kind, trig int, now int64) {
 	level := 1 - 0.65*p.noise.Unipolar()
-	if p.fire(in.paths, kind, srcOwn, p.gain*p.gainOwn[ch]*p.heatFactor()*p.level*ownNorm, level, level) == nil {
+	if p.fire(in.paths, kind, srcOwn, p.gain*p.gainOwn[ch]*p.heatFactor()*ownNorm, level, level) == nil {
 		return
 	}
 	p.ownTimes[p.ownI] = now
@@ -746,7 +593,7 @@ func (p *pops) requested(in *popInput, ch int) {
 		k = a + b - k
 	}
 	p.reqKind = k
-	scale := p.gain * p.gainRq[ch] * p.level
+	scale := p.gain * p.gainRq[ch]
 	level := float32(math.Pow(10, 0.15*float64(p.noise.Bipolar())))
 	p.fire(in.paths, k, srcRequest, scale, level, s)
 	p.reqPending--
@@ -789,8 +636,8 @@ func (p *pops) heatFactor() float32 {
 	return min(1, max(0, (p.heat-0.08)*4))
 }
 
-// nextInterval returns the samples to the next pop of a run, from
-// runGapMin to runGapMax.
+// nextInterval returns the steps to the next pop of a run, from runGapMin
+// to runGapMax seconds.
 func (p *pops) nextInterval() int64 {
 	p.uRun += golden
 	if p.uRun >= 1 {
@@ -838,30 +685,29 @@ func (p *pops) slot(src int) *popEvent {
 	return old
 }
 
-// fire starts one pop of a kind from the source and returns it, or nil
-// when no slot is free. The gain is scale times level times the kind gain.
-// The scale of an own pop, a requested pop and a bang holds the engine
-// level, so that each kind keeps its level over the engine.
-// strength is the strength in the pop report. The body frequency spreads
-// over plus or minus 15 per cent, or 8 per cent for a requested pop, and
-// the body decay over plus or minus 25 per cent.
-func (p *pops) fire(paths, kind, src int, scale, level, strength float32) *popEvent {
+// fire starts one pop of a kind from the source on the next channel in
+// turn, and returns it, or nil when no slot is free. The gain is scale
+// times level times the kind gain, over an engine of unit level, so that
+// each kind keeps its level over the engine. strength is the strength in
+// the pop report. The body
+// frequency spreads over plus or minus 15 per cent, or 8 per cent for a
+// requested pop, and the body decay over plus or minus 25 per cent.
+func (p *pops) fire(channels, kind, src int, scale, level, strength float32) *popEvent {
 	e := p.slot(src)
 	if e == nil {
 		return nil
 	}
 	sh := &shapes[kind]
 	e.subs = sh.subs + int(float32(sh.subsRange+1)*p.draw())
-	e.path = p.target
+	e.channel = p.target
 	p.target++
-	if p.target >= paths {
+	if p.target >= channels {
 		p.target = 0
 	}
 	if src == srcRequest && kind == kindCrackle {
 		e.subs = min(e.subs, shortCrackle)
 	}
-	g := p.kindGain[e.path][b2i(src == srcRequest)][kind]
-	a := scale * level * g
+	a := scale * level * p.kindGain[e.channel][b2i(src == srcRequest)][kind]
 	ms := sh.bodyMS
 	if ms == 0 {
 		ms = p.bodyMS
@@ -882,38 +728,29 @@ func (p *pops) fire(paths, kind, src int, scale, level, strength float32) *popEv
 	e.ring = e.ringLen
 	e.jumpAmp = a
 	e.amp = a
-	e.crackLvl = a * p.crackRatio * sh.crack
-	if kind == kindPop {
-		e.crackLvl *= popCrack
-	}
-	e.clickLvl, e.gapZ, e.crackEnv = 0, 0, 0
-	if sh.click {
-		e.clickLvl, e.crackLvl = e.crackLvl, 0
-	}
+	e.gapZ = 0
 	e.kind, e.src, e.start = kind, src, p.now
 	e.spacing = float32(sh.spacingMS*1e-3) * p.rate
 	e.next = p.subSpacing(e)
-	if sh.click {
+	if sh.logNormal {
 		e.spacing *= p.gapMean
 	}
-	// The slot holds the train and six body or crack decays, whichever is
-	// longer, down by 120 dB.
-	e.left = max(p.busyLen, int(float32(e.subs)*1.6*e.spacing)+int(6*max(ms, p.crackMS)*1e-3*float64(p.rate)))
+	// The slot holds the train and six body decays, down by 120 dB.
+	e.left = max(p.busyLen, int(float32(e.subs)*1.6*e.spacing)+int(6*ms*1e-3*float64(p.rate)))
 	p.active++
-	p.count[kind]++
 	p.total++
 	p.lastKind, p.lastSrc, p.lastStrength = kind, src, strength
 	p.last = p.now
 	return e
 }
 
-// subSpacing returns the samples to the next sub-event, from 0.65 to 1.55
-// times the median spacing. A click gap is log-normal, from the normal
+// subSpacing returns the steps to the next sub-event, from 0.65 to 1.55
+// times the median spacing. A crackle gap is log-normal, from the normal
 // value gapZ that follows the one before with the correlation gapRho. The
 // sum of three uniform values from -1 to 1 is about normal, with a
 // variance of 1.
 func (p *pops) subSpacing(e *popEvent) int {
-	if !shapes[e.kind].click {
+	if !shapes[e.kind].logNormal {
 		return max(1, int(e.spacing*(0.65+0.9*p.subDraw())))
 	}
 	n := 2*(p.subDraw()+p.subDraw()+p.subDraw()) - 3
@@ -922,11 +759,11 @@ func (p *pops) subSpacing(e *popEvent) int {
 	return max(1, int(gapMS*1e-3*p.rate*p.gapTab[i]))
 }
 
-// bang is the bang of unburnt fuel in an ignition cut: a pop with a
-// shorter pressure jump, so that its attack is sharper.
-func (p *pops) bang(paths int) {
+// bang is the bang of unburnt fuel in a limiter cut: a pop with a shorter
+// pressure jump, so that its attack is sharper.
+func (p *pops) bang(channels int) {
 	level := 1 - 0.65*p.noise.Unipolar()
-	if e := p.fire(paths, kindPop, srcLimiter, p.gain*bangGain*p.heatFactor()*p.level, level, level); e != nil {
+	if e := p.fire(channels, kindPop, srcLimiter, p.gain*bangGain*p.heatFactor(), level, level); e != nil {
 		e.ringLen -= e.jumpLen - max(1, e.jumpLen/3)
 		e.jumpLen = max(1, e.jumpLen/3)
 		e.jumpLeft = e.jumpLen
@@ -934,17 +771,14 @@ func (p *pops) bang(paths int) {
 	}
 }
 
-// tick runs once per sample. It sets the pressure jump of each path in
-// p.jump, and in p.live whether it sounds, and returns the crack for the
-// outlet.
-func (p *pops) tick() (crack float32) {
+// tick runs once per simulation step. It sets the pressure of the pops on
+// each channel in p.jump.
+func (p *pops) tick() {
 	if p.active == 0 {
-		return 0
+		return
 	}
 	p.sounded = true
-	p.jump = [MaxBanks]float32{}
-	p.live = [MaxBanks]bool{}
-	var env, clicks float32
+	p.jump = [MaxChannels]float32{}
 	for i := range p.ev {
 		e := &p.ev[i]
 		if e.left == 0 {
@@ -955,40 +789,19 @@ func (p *pops) tick() (crack float32) {
 			p.active--
 		}
 		// After the last sub-event and its ring of six body decays, the
-		// body is 120 dB down, so its stages do not run. The crack and the
-		// clicks decay on until they snap to zero, and then the event only
+		// body is 120 dB down, so its stages do not run, and the event only
 		// holds its slot for busyLen.
 		if e.ring > 0 || e.subs > 0 || e.jumpLeft > 0 {
 			p.ringBody(e)
-		} else if e.crackLvl == 0 && e.crackEnv == 0 && e.clickLvl == 0 {
-			continue
 		}
-		e.crackLvl *= p.crackDec
-		if e.crackLvl < snapLevel {
-			e.crackLvl = 0
-		}
-		e.crackEnv += (e.crackLvl - e.crackEnv) * p.crackAtt
-		if e.crackEnv < snapLevel {
-			e.crackEnv = 0
-		}
-		env += e.crackEnv
-		e.clickLvl *= p.clickDec
-		if e.clickLvl < snapLevel {
-			e.clickLvl = 0
-		}
-		clicks += e.clickLvl
 	}
-	n := p.noise.Bipolar()
-	crack = p.crackHP.Process(n)*env + p.clickBP.Process(n)*clicks
 	if p.active == 0 {
-		p.jump = [MaxBanks]float32{}
-		p.live = [MaxBanks]bool{}
+		p.jump = [MaxChannels]float32{}
 	}
-	return crack
 }
 
 // ringBody runs the sub-events, the pressure jump and the body of the
-// event for one sample, and adds the jump to its path.
+// event for one step, and adds the jump to its channel.
 func (p *pops) ringBody(e *popEvent) {
 	if e.subs > 0 {
 		e.next--
@@ -998,18 +811,12 @@ func (p *pops) ringBody(e *popEvent) {
 			e.jumpLeft = e.jumpLen
 			e.ring = e.ringLen
 			e.jumpAmp = e.amp * sh.subGain * u
-			if sh.click {
-				e.clickLvl = max(e.clickLvl, e.amp*p.crackRatio*sh.subCrack*u)
-			} else {
-				e.crackLvl += e.amp * p.crackRatio * sh.subCrack * u
-			}
 			e.subs--
 			e.next = p.subSpacing(e)
 		}
 	}
 	if e.ring > 0 {
 		e.ring--
-		p.live[e.path] = true
 	}
 	var g float32
 	if e.jumpLeft > 0 {
@@ -1022,5 +829,5 @@ func (p *pops) ringBody(e *popEvent) {
 	if g == 0 && j < snapLevel && j > -snapLevel {
 		j, e.jumpLP.Y = 0, 0
 	}
-	p.jump[e.path] += p.jumpMix*j + p.bodyGain*e.body.Process(j)
+	p.jump[e.channel] += p.jumpMix*j + p.bodyGain*e.body.Process(j)
 }

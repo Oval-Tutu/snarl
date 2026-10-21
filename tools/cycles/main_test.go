@@ -72,6 +72,20 @@ func TestScenariosWritesParsableRows(t *testing.T) {
 	if n := strings.Count(string(b), "\ncut "); n != 8 {
 		t.Errorf("cut.scn has %d cut holds, want 8:\n%s", n, b)
 	}
+	sc, err := scenario.ParseFile(filepath.Join(out, "close.scn"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var closes []float64
+	for i := 1; i < len(sc.Segments); i++ {
+		a, b := sc.Segments[i-1], sc.Segments[i]
+		if a.Kind == scenario.Hold && b.Kind == scenario.Hold && a.RPM0 == b.RPM0 && a.Throttle == 1 && b.Throttle == 0 {
+			closes = append(closes, b.RPM0)
+		}
+	}
+	if fmt.Sprint(closes) != "[700 1750 2750 3000]" {
+		t.Errorf("close.scn closes at %v", closes)
+	}
 }
 
 func TestThinPoints(t *testing.T) {

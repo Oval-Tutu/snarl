@@ -1,6 +1,7 @@
 package snarl
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -75,98 +76,92 @@ func TestTOMLErrors(t *testing.T) {
 
 func TestProfileErrors(t *testing.T) {
 	good := `name = "x"
-idle_rpm = 800
-redline_rpm = 6000
-[pulse]
-table = "i4-vtec"
-[[cylinder]]
-crank_deg = 0
-bank = 0
-primary_m = 0.4
-[[path]]
-collector_m = 1
-reflection = -0.4
-gain = 1
-[[formant]]
-kind = "peak"
-hz = 400
-q = 1
-gain_db = 12
-[[pop_formant]]
-kind = "lowpass"
-hz = 5000
-q = 0.7
+cylinders = 8
+idle_rpm = 690
+redline_rpm = 6500
+limiter_rpm = 6800
+tables = "v8-ls"
+[[channel]]
+impulse_response = "smooth_39.wav"
+[[channel]]
+impulse_response = "smooth_39.wav"
 `
 	if _, err := parseProfile(good); err != nil {
 		t.Fatalf("good profile: %v", err)
 	}
+	// set adds the line to the table, or to the top level for "".
+	set := func(table, line string) string {
+		if table == "" {
+			return strings.Replace(good, "tables = ", line+"\ntables = ", 1)
+		}
+		return strings.Replace(good, "[[channel]]", "["+table+"]\n"+line+"\n[[channel]]", 1)
+	}
 	bad := map[string]string{
-		"no path":       strings.Replace(good, "[[path]]", "[[nopath]]", 1),
-		"bad bank":      strings.Replace(good, "bank = 0", "bank = 1", 1),
-		"bad crank":     strings.Replace(good, "crank_deg = 0", "crank_deg = 720", 1),
-		"bad redline":   strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 700", 1),
-		"bad limiter":   good + "\nlimiter_kind = \"spark\"",
-		"bad fall":      strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nlimiter_fall_rpm_s = -1", 1),
-		"bad rise":      strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nlimiter_rise_rpm_s = 0", 1),
-		"bad scale":     strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nlimiter_load_scale = 0", 1),
-		"bad injector":  strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nlimiter_kind = \"injector\"", 1),
-		"bad pump":      strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nlimiter_pump_db = 1", 1),
-		"bad notch":     strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nlimiter_notch_db = 0", 1),
-		"bad bark":      strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nlimiter_bark_db = -1", 1),
-		"bad waver":     strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nfinal_gear_waver = 0.1", 1),
-		"bad crossing":  strings.Replace(good, "[[cylinder]]", "[exhaust]\ncrossover = \"some\"\n[[cylinder]]", 1),
-		"bad formant":   strings.Replace(good, `kind = "peak"`, `kind = "notch"`, 1),
-		"no table":      strings.Replace(good, `table = "i4-vtec"`, "", 1),
-		"bad table":     strings.Replace(good, `table = "i4-vtec"`, `table = "nonesuch"`, 1),
-		"path table":    strings.Replace(good, `table = "i4-vtec"`, `table = "../v8-ls"`, 1),
-		"bad pop q":     strings.Replace(good, "q = 0.7", "q = 0", 1),
-		"bad gain db":   strings.Replace(good, "gain_db = 12", "gain_db = 60", 1),
-		"bad pop ms":    strings.Replace(good, "[[cylinder]]", "[exhaust]\npop_delay_ms = 30\n[[cylinder]]", 1),
-		"bad jitter in": strings.Replace(good, "[[cylinder]]", "[noise]\ninput_jitter = 2\n[[cylinder]]", 1),
-		"bad am cut":    strings.Replace(good, "[[cylinder]]", "[noise]\nam_cutoff_hz = 9000\n[[cylinder]]", 1),
-		"bad am":        strings.Replace(good, "[[cylinder]]", "[noise]\nam = 1.5\n[[cylinder]]", 1),
-		"bad hf gain":   strings.Replace(good, "[[cylinder]]", "[noise]\nhf_gain = -0.1\n[[cylinder]]", 1),
-		"bad idle":      strings.Replace(good, "[[cylinder]]", "[idle]\nfade_rpm = 500\n[[cylinder]]", 1),
-		"bad hunt":      strings.Replace(good, "[[cylinder]]", "[idle]\nhunt = 0.5\n[[cylinder]]", 1),
-		"bad leveller":  strings.Replace(good, "[[cylinder]]", "[voice]\nleveller_db = 70\n[[cylinder]]", 1),
-		"bad weight":    strings.Replace(good, "[[cylinder]]", "[pops]\nweight_boom = -0.1\n[[cylinder]]", 1),
-		"no weight":     strings.Replace(good, "[[cylinder]]", "[pops]\nweight_pop = 0\nweight_boom = 0\nweight_crackle = 0\nweight_burble = 0\n[[cylinder]]", 1),
+		"bad redline":     strings.Replace(good, "redline_rpm = 6500", "redline_rpm = 600", 1),
+		"no cylinders":    strings.Replace(good, "cylinders = 8", "cylinders = 0", 1),
+		"unknown tables":  strings.Replace(good, `tables = "v8-ls"`, `tables = "nonesuch"`, 1),
+		"path tables":     strings.Replace(good, `tables = "v8-ls"`, `tables = "../v8-ls"`, 1),
+		"empty tables":    strings.Replace(good, `tables = "v8-ls"`, `tables = ""`, 1),
+		"one channel":     strings.Replace(good, "[[channel]]\nimpulse_response = \"smooth_39.wav\"\n", "", 1),
+		"no channel":      strings.ReplaceAll(good, "[[channel]]\nimpulse_response = \"smooth_39.wav\"\n", ""),
+		"wrong ir":        strings.Replace(good, `"smooth_39.wav"`, `"mild_exhaust.wav"`, 1),
+		"missing ir":      strings.Replace(good, `"smooth_39.wav"`, `"nonesuch.wav"`, 1),
+		"bad volume":      set("", "volume = 0"),
+		"loud volume":     set("", "volume = 1.5"),
+		"bad seed":        set("", "seed = -1"),
+		"bad close lag":   set("throttle", "close_lag_s = -0.1"),
+		"bad open lag":    set("throttle", "open_lag_s = 3"),
+		"bad cut":         set("limiter", "cut_ms = 600"),
+		"bad fall":        set("limiter", "fall_rpm_s = -1"),
+		"bad rise":        set("limiter", "rise_rpm_s = 0"),
+		"bad scale":       set("limiter", "load_scale = 0"),
+		"deep dip":        set("limiter", "cut_ms = 500\nfall_rpm_s = 20000"),
+		"bad waver":       set("limiter", "final_gear_waver = 0.1"),
+		"bad idle":        set("idle", "fade_rpm = 500"),
+		"bad hunt":        set("idle", "hunt = 0.5"),
+		"bad hunt hz":     set("idle", "hunt_hz = 0"),
+		"bad character":   set("pops", `character = "loud"`),
+		"bad density":     set("pops", "density = -1"),
+		"bad body":        set("pops", "body_hz = 0"),
+		"bad jump":        set("pops", "jump_ms = 0"),
+		"bad weight":      set("pops", "weight_boom = -0.1"),
+		"no weight":       set("pops", "weight_pop = 0\nweight_boom = 0\nweight_crackle = 0\nweight_burble = 0"),
+		"bad bangs":       set("pops", "limiter_bangs = 1"),
+		"unknown channel": strings.Replace(good, `impulse_response = "smooth_39.wav"`, "gain = 1", 1),
 	}
 	for name, src := range bad {
 		if _, err := parseProfile(src); err == nil {
 			t.Errorf("%s: no error", name)
 		}
 	}
-	// The removed keys are unknown keys, and the removed [mechanical] and
-	// [overrun] tables are unknown tables.
-	if _, err := parseProfile(strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nlimiter_jitter = 0.1", 1)); err == nil ||
-		!strings.Contains(err.Error(), "unknown key") {
-		t.Errorf("limiter_jitter: got %v, want an unknown key error", err)
+	if _, err := parseProfile(strings.Replace(good, `tables = "v8-ls"`, "", 1)); !errors.Is(err, ErrNoTables) {
+		t.Errorf("no tables: got %v, want ErrNoTables", err)
 	}
-	for _, kv := range []string{
-		"[exhaust]\noverlap = 1", "[overrun]\nlevel_db = -1", "[overrun]\nidle_level_db = -1", "part_load_db = -0.6",
-		"[idle]\nvariation = 0.1", "[idle]\ntiming_deg = 1", "[idle]\nimbalance = 0.2", "[idle]\nrock = 0.01",
-		"[noise]\nair = 0.03", "[noise]\nair_cutoff_hz = 1800", "[voice]\ntier1_db = 1", "[voice]\ntier1_idle_gain_db = 1",
-		"[noise]\nintake = 0.08", "[noise]\nintake_hz = 420", "[noise]\nintake_cam_gain = 1.2", "[noise]\nintake_cam_hz = 560",
-		"[mechanical]\ntick_gain = 0.01", "[mechanical]\ntick_hz = 3000", "[mechanical]\ntick_lp_hz = 9000",
-		"[mechanical]\nfan_ratio = 1.8", "[mechanical]\nfan_blades = 5", "[mechanical]\nfan_gain = 0.02",
-		"[voice]\nidle_gain_db = 1", "[voice]\nidle_gain_rpm = 3000", "[noise]\nam_redline = 0.25", "[noise]\nam_idle = 0.5",
-		"[noise]\njet = 0.02", "[noise]\njet_hz = 1500", "[exhaust]\noutlet_direct = 0.4", "[exhaust]\nsteepening = 0.3",
-		"[exhaust]\nlow_shelf_db = 0", "[exhaust]\nlow_shelf_hz = 250",
+	// The keys and tables of the model before the cycle tables are unknown.
+	for _, kv := range [][2]string{
+		{"", "limiter_kind = \"fuel\""},
+		{"", "limiter_ms = 50"},
+		{"", "limiter_fall_rpm_s = 6000"},
+		{"", "final_gear_waver = 0.003"},
+		{"", "cam_switch_rpm = 5800"},
+		{"pulse", "table = \"v8-ls\""},
+		{"exhaust", "speed_of_sound = 343"},
+		{"noise", "am = 1"},
+		{"voice", "output_db = 1"},
+		{"pops", "crack = 2.5"},
+		{"pops", "crack_ms = 16"},
+		{"cylinder", "crank_deg = 0"},
+		{"path", "collector_m = 1"},
+		{"formant", "hz = 400"},
+		{"pop_formant", "hz = 400"},
 	} {
-		_, err := parseProfile(strings.Replace(good, "[[cylinder]]", kv+"\n[[cylinder]]", 1))
-		if err == nil || !strings.Contains(err.Error(), "unknown key") && !strings.Contains(err.Error(), "unknown table") {
-			t.Errorf("%q: got %v, want an unknown key error", kv, err)
+		src := set(kv[0], kv[1])
+		if kv[0] == "cylinder" || kv[0] == "path" || kv[0] == "formant" || kv[0] == "pop_formant" {
+			src = good + "[[" + kv[0] + "]]\n" + kv[1] + "\n"
 		}
-	}
-	// The EngineLab path stages that the formant bank replaces are unknown
-	// path keys.
-	for _, kv := range []string{
-		"pipe_radius_m = 0.03", "outlet_radius_m = 0.03", "wall_loss_db = 2", "wall_loss_hz = 2000",
-		"chamber_m = 0.3", "chamber_area_ratio = 7",
-	} {
-		_, err := parseProfile(strings.Replace(good, "gain = 1\n", "gain = 1\n"+kv+"\n", 1))
-		if err == nil || !strings.Contains(err.Error(), "unknown key") {
+		_, err := parseProfile(src)
+		if err == nil || !strings.Contains(err.Error(), "unknown key") && !strings.Contains(err.Error(), "unknown table") &&
+			!strings.Contains(err.Error(), "unknown array") {
 			t.Errorf("%q: got %v, want an unknown key error", kv, err)
 		}
 	}

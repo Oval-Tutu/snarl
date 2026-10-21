@@ -9,9 +9,11 @@
 //	snarl-harness [-profile NAME] [-catalogue DIR] [-record DIR]
 //	snarl-harness [-profile NAME] [-catalogue DIR] -script LOG.csv
 //
-// The profile list is the six embedded profiles, then the catalogue profiles in
-// DIR sorted by id. By default, DIR is profiles/catalogue in the working
-// directory or the nearest parent up to the repository root.
+// The profile list is the five embedded profiles, then the catalogue
+// profiles in DIR that have cycle tables, sorted by id. The harness skips a
+// catalogue profile with no tables and notes it on screen. By default, DIR
+// is profiles/catalogue in the working directory or the nearest parent up
+// to the repository root.
 package main
 
 import (
@@ -68,7 +70,7 @@ const (
 	padDown     = ebiten.StandardGamepadButtonLeftBottom
 	padSelect   = ebiten.StandardGamepadButtonCenterLeft
 	padStart    = ebiten.StandardGamepadButtonCenterRight
-	legend      = "Throttle RT/Up/W  Shift RB,A/E up  LB,X/Q down  Profile D-pad L,R/Left,Right (all), 1-6 (embedded)  Gears Back/G\n" +
+	legend      = "Throttle RT/Up/W  Shift RB,A/E up  LB,X/Q down  Profile D-pad L,R/Left,Right (all), 1-5 (embedded)  Gears Back/G\n" +
 		"Ignition Start/Space  Buffer D-pad U,D/PgUp,PgDn  Record R  Own pops N  Pop character C  Meter and spectrum S"
 	keyboardName = "keyboard"
 )
@@ -76,7 +78,7 @@ const (
 // profileKeys select the embedded profiles, in the order of snarl.Profiles.
 var profileKeys = []ebiten.Key{
 	ebiten.KeyDigit1, ebiten.KeyDigit2, ebiten.KeyDigit3,
-	ebiten.KeyDigit4, ebiten.KeyDigit5, ebiten.KeyDigit6,
+	ebiten.KeyDigit4, ebiten.KeyDigit5,
 }
 
 type harness struct {

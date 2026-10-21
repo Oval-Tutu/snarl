@@ -1,0 +1,13 @@
+# v12-merlin: written by tools/cycles scenarios. Closing steps for the closing transient of the cycle tables:
+# full throttle for 1 s, then closed for 3 s, at each RPM. snarl does not read this file.
+hold 600 1 1
+hold 600 0 3
+sweep 600 1500 1 0.25
+hold 1500 1 1
+hold 1500 0 3
+sweep 1500 2500 1 0.25
+hold 2500 1 1
+hold 2500 0 3
+sweep 2500 3000 1 0.25
+hold 3000 1 1
+hold 3000 0 3

@@ -49,6 +49,9 @@ func loadProfile(name, catalogue string, overrides ...string) (snarl.Profile, er
 		return snarl.Profile{}, rerr
 	}
 	p, err = snarl.ParseProfileWith(data, overrides...)
+	if errors.Is(err, snarl.ErrNoTables) {
+		return snarl.Profile{}, fmt.Errorf("catalogue profile %s is skipped: %w. The catalogue is in the format before the cycle tables, and snarl renders a profile only from its tables (profiles/README.md)", name, err)
+	}
 	if err != nil {
 		return snarl.Profile{}, fmt.Errorf("profile %s: %w", name, err)
 	}

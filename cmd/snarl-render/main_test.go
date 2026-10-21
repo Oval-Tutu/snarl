@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/oval-tutu/snarl"
 	"github.com/oval-tutu/snarl/internal/scenario"
+	"github.com/oval-tutu/snarl/internal/wav"
 )
 
 func TestRenderWritesWAV(t *testing.T) {
@@ -143,7 +145,7 @@ func TestReplayMatchesScenario(t *testing.T) {
 	if !bytes.Equal(read("--replay", logPath), first) {
 		t.Error("two replays of one log differ")
 	}
-	muted := read("--set", "noise.am=0", "--set", "pops.density=0", "--replay", logPath)
+	muted := read("--set", "volume=0.4", "--set", "pops.density=0", "--replay", logPath)
 	if len(muted) != len(want) || bytes.Equal(muted, want) {
 		t.Error("--set did not change the replay")
 	}
@@ -153,7 +155,7 @@ func TestReplayProfileChange(t *testing.T) {
 	r := &replayer{rate: 8000, rows: []logRow{
 		{t: 0, profile: "v8-ls", tier: 1, snap: snarl.Snapshot{RPM: 3000, Flags: snarl.FlagRunning}},
 		{t: 0.1, profile: "v8-ls", tier: 1, snap: snarl.Snapshot{RPM: 3100, Flags: snarl.FlagRunning}},
-		{t: 0.2, profile: "f6-aircooled", tier: 2, snap: snarl.Snapshot{RPM: 3200, Flags: snarl.FlagRunning}},
+		{t: 0.2, profile: "i4-vtec", tier: 2, snap: snarl.Snapshot{RPM: 3200, Flags: snarl.FlagRunning}},
 	}}
 	e0, _, _ := r.at(0)
 	e1, s1, _ := r.at(0.15)
@@ -204,9 +206,10 @@ func TestParseLogErrors(t *testing.T) {
 	}
 }
 
-// TestCatalogueProfile checks that PROFILE, --set and --replay take a
-// catalogue id, with the catalogue that the default search finds, and
-// that a catalogue id fails without the catalogue.
+// TestCatalogueProfile checks that a catalogue id with no cycle tables,
+// from the catalogue that the default search finds, fails as PROFILE with
+// the note, that its rows of a log render silence with the note, and that
+// a catalogue id fails without the catalogue.
 func TestCatalogueProfile(t *testing.T) {
 	dir := t.TempDir()
 	const text = "hold 2000 1 0.1\nsweep 2000 1000 0 0.1\n"
@@ -223,35 +226,31 @@ func TestCatalogueProfile(t *testing.T) {
 	if err := os.WriteFile(logPath, []byte(logText(scn, id, 8000, 64)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	read := func(args ...string) []byte {
-		t.Helper()
-		out := filepath.Join(dir, "out.wav")
-		args = append([]string{"--out", out, "--rate", "8000", "--block", "64", "--format", "f32"}, args...)
-		if err := run(args, io.Discard); err != nil {
-			t.Fatal(err)
+	out := filepath.Join(dir, "out.wav")
+	err = run([]string{"--out", out, "--rate", "8000", id, scnPath}, io.Discard)
+	if !errors.Is(err, snarl.ErrNoTables) || !strings.Contains(err.Error(), "skipped") {
+		t.Errorf("catalogue PROFILE: got %v, want the ErrNoTables note", err)
+	}
+	var note bytes.Buffer
+	if err := run([]string{"--out", out, "--rate", "8000", "--format", "f32", "--replay", logPath}, &note); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(note.String(), "render silence") {
+		t.Errorf("no note for the skipped profile: %q", note.String())
+	}
+	a, err := wav.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range a.Mono() {
+		if v != 0 {
+			t.Fatal("the rows of the skipped profile are not silent")
 		}
-		b, err := os.ReadFile(out)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return b
 	}
-	want := read(id, scnPath)
-	if !bytes.Equal(read("--replay", logPath), want) {
-		t.Error("the replay of a catalogue log differs from the scenario render")
-	}
-	if !bytes.Equal(read("--catalogue", filepath.Join("..", "..", "profiles", "catalogue"), id, scnPath), want) {
-		t.Error("--catalogue differs from the default search")
-	}
-	if bytes.Equal(read("--set", "noise.am=0", "--set", "pops.density=0", id, scnPath), want) {
-		t.Error("--set did not change a catalogue render")
-	}
-	out := filepath.Join(dir, "o.wav")
 	for _, args := range [][]string{
 		{"--out", out, "--catalogue", filepath.Join(dir, "missing"), id, scnPath},
 		{"--out", out, "--catalogue", filepath.Join(dir, "missing"), "--replay", logPath},
 		{"--out", out, "es-nope", scnPath},
-		{"--out", out, "--set", "noise.bogus=1", id, scnPath},
 	} {
 		if err := run(args, io.Discard); err == nil {
 			t.Errorf("run(%q) did not fail", args)

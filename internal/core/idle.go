@@ -1,4 +1,4 @@
-package model
+package core
 
 import (
 	"math"
@@ -6,9 +6,10 @@ import (
 	"github.com/oval-tutu/snarl/internal/dsp"
 )
 
-// idle is the idle hunt: a slow RPM modulation at idle. It draws from its
-// own noise source, so that the rest of the model renders the same samples
-// when the hunt is zero.
+// idle is the idle wander: a slow modulation of the crank speed at idle,
+// as the free run at idle of the reference measures it. It draws from its
+// own noise source, so that the rest of the engine renders the same
+// samples when the wander is zero.
 type idle struct {
 	noise            dsp.Noise
 	wander           dsp.OnePole
@@ -18,7 +19,7 @@ type idle struct {
 	w, k             float32
 	phase            float32
 
-	// speed is the RPM factor of the chunk.
+	// speed is the crank speed factor of the control block.
 	speed float32
 }
 
@@ -38,18 +39,19 @@ func newIdle(s *Spec, seed uint32, chunkHz float64) idle {
 	}
 }
 
-// control runs once per chunk with the input RPM and the smoothed load.
-// The depth falls along a smoothstep over RPM from 1 at idle to 0 at the
-// fade RPM, smoothed over 50 ms. It follows the input RPM, not the
-// smoothed RPM, so that a start above the fade RPM renders exactly as with
-// no hunt. The depth also falls linearly with load to 0 at half load.
+// control runs once per control block with the input RPM and the
+// smoothed load. The depth falls along a smoothstep over RPM from 1 at
+// idle to 0 at the fade RPM, smoothed over 50 ms. It follows the input
+// RPM, not the smoothed RPM, so that a start above the fade RPM renders
+// exactly as with no wander. The depth also falls linearly with load to 0
+// at half load. The modulation is 0.7 times a sine at the hunt rate plus
+// 0.5 times a slow random wander with a standard deviation of 1, which
+// makes it irregular in depth and rate.
 func (d *idle) control(rpm, load float32) {
 	d.phase += d.phaseStep
 	if d.phase >= 1 {
 		d.phase--
 	}
-	// The wander, with a standard deviation of 1, makes the hunt
-	// irregular in depth and rate.
 	wander := d.wander.Process(d.noise.Bipolar()) * d.wanderScale
 	w := min(1, max(0, (d.fadeRPM-rpm)/(d.fadeRPM-d.idleRPM)))
 	d.w += (w*w*(3-2*w) - d.w) * d.k

@@ -15,6 +15,8 @@ import (
 )
 
 const (
+	// rate is the sample rate of the bank fits.
+	rate = 48000
 	// legacyTaps is the length of the impulse response of the pop stages.
 	legacyTaps = 1 << 16
 	// defaultIR is the impulse response of the EngineLab profiles: the

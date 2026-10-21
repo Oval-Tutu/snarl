@@ -15,6 +15,13 @@ import (
 // gridThrottles are the throttle rows of the grid.
 var gridThrottles = []float64{0, 0.25, 0.5, 0.75, 1}
 
+// closeOpenSeconds and closeSeconds are the full-throttle and the closed
+// holds of each closing step.
+const (
+	closeOpenSeconds = 1.0
+	closeSeconds     = 3.0
+)
+
 // gridOptions set the grid scenarios.
 type gridOptions struct {
 	step, settle, minHold float64
@@ -135,6 +142,21 @@ func gridFiles(name string, rpms []float64, o gridOptions) []gridFile {
 		}
 	}
 	files = append(files, gridFile{"cut.scn", b.String()})
+
+	// The closing steps: full throttle, then closed for closeSeconds, at the
+	// RPM of the ignition-off holds, for the closing transient.
+	b.Reset()
+	fmt.Fprintf(&b, "# %s: written by tools/cycles scenarios. Closing steps for the closing transient of the cycle tables:\n", name)
+	fmt.Fprintf(&b, "# full throttle for %g s, then closed for %g s, at each RPM. snarl does not read this file.\n", closeOpenSeconds, closeSeconds)
+	prev = 0
+	for _, r := range cut {
+		if prev > 0 {
+			fmt.Fprintf(&b, "sweep %g %g 1 0.25\n", prev, r)
+		}
+		fmt.Fprintf(&b, "hold %g 1 %g\nhold %g 0 %g\n", r, closeOpenSeconds, r, closeSeconds)
+		prev = r
+	}
+	files = append(files, gridFile{"close.scn", b.String()})
 
 	// The throttle step: full throttle, closed, full again, at the grid
 	// RPM nearest 60 per cent of the top.

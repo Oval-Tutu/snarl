@@ -366,7 +366,8 @@ func tableFit(w io.Writer, cfg *config, holds []pulseHold) ([]analysis.PulseRow,
 	return rows, picked, nil
 }
 
-// writePulseRows writes the pulse file that the model embeds.
+// writePulseRows writes the pulse file in the format of the pulse-train
+// model before the cycle tables.
 func writePulseRows(path string, cfg *config, rows []analysis.PulseRow, spreads []rowSpread, csvs []string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err

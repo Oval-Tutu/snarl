@@ -1,0 +1,49 @@
+# v12-412: written by tools/cycles scenarios. Closing steps for the closing transient of the cycle tables:
+# full throttle for 1 s, then closed for 3 s, at each RPM. snarl does not read this file.
+hold 3810 1 1
+hold 3810 0 3
+sweep 3810 4750 1 0.25
+hold 4750 1 1
+hold 4750 0 3
+sweep 4750 5750 1 0.25
+hold 5750 1 1
+hold 5750 0 3
+sweep 5750 6750 1 0.25
+hold 6750 1 1
+hold 6750 0 3
+sweep 6750 7750 1 0.25
+hold 7750 1 1
+hold 7750 0 3
+sweep 7750 8750 1 0.25
+hold 8750 1 1
+hold 8750 0 3
+sweep 8750 9750 1 0.25
+hold 9750 1 1
+hold 9750 0 3
+sweep 9750 10750 1 0.25
+hold 10750 1 1
+hold 10750 0 3
+sweep 10750 11750 1 0.25
+hold 11750 1 1
+hold 11750 0 3
+sweep 11750 12750 1 0.25
+hold 12750 1 1
+hold 12750 0 3
+sweep 12750 13750 1 0.25
+hold 13750 1 1
+hold 13750 0 3
+sweep 13750 14750 1 0.25
+hold 14750 1 1
+hold 14750 0 3
+sweep 14750 15750 1 0.25
+hold 15750 1 1
+hold 15750 0 3
+sweep 15750 16750 1 0.25
+hold 16750 1 1
+hold 16750 0 3
+sweep 16750 17750 1 0.25
+hold 17750 1 1
+hold 17750 0 3
+sweep 17750 18000 1 0.25
+hold 18000 1 1
+hold 18000 0 3

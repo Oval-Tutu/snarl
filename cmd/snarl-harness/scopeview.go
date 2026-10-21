@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
@@ -51,12 +52,19 @@ func cylinderCounts(ps []snarl.Profile, dir string) []int {
 	return n
 }
 
-// cylinders counts the [[cylinder]] tables of a profile file.
+// cylinders returns the top-level cylinders key of a profile file, or the
+// count of its [[cylinder]] tables in the format before the cycle tables.
 func cylinders(data []byte) int {
 	n := 0
 	for line := range bytes.Lines(data) {
-		if bytes.HasPrefix(bytes.TrimSpace(line), []byte("[[cylinder]]")) {
+		s := bytes.TrimSpace(line)
+		if bytes.HasPrefix(s, []byte("[[cylinder]]")) {
 			n++
+		}
+		if v, ok := bytes.CutPrefix(s, []byte("cylinders = ")); ok {
+			if c, err := strconv.Atoi(string(bytes.TrimSpace(v))); err == nil {
+				return c
+			}
 		}
 	}
 	return n
