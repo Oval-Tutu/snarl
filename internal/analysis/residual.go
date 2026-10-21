@@ -228,9 +228,79 @@ func vertex(d, a, b, c float64) float64 {
 // keeps 1/k of the noise, does not bias it. It returns false when x holds
 // fewer than three cycles or has no signal.
 func Residual(x []float64, rate int, rpm float64) (ResidualResult, bool) {
+	c, ok := residualCycles(x, rate, rpm)
+	if !ok {
+		return ResidualResult{}, false
+	}
+	a, sig, m, k, p := c.a, c.sig, c.m, c.k, c.p
+	ps := meanSq(sig)
+	scale := float64(k) / float64(k-1)
+	pr := meanSq(a) * scale
+	amPeak, amTrough := sectorPowers(a, m, k)
+
+	res := ResidualResult{
+		RPM:        float64(rate) * 120 / p,
+		Cycles:     k,
+		SignalDBFS: 10 * math.Log10(ps),
+		ResidualDB: powerRatioDB(pr, ps),
+		AtEdge:     c.atEdge,
+		AMPeakDB:   amPeak,
+		AMTroughDB: amTrough,
+	}
+	rb, size := welch(a, residualFFT)
+	sb, _ := welch(sig, residualFFT)
+	bands := append([][2]float64(nil), ResidualBands...)
+	if float64(rate)/2 > 24000 {
+		bands = append(bands, [2]float64{24000, float64(rate) / 2})
+	}
+	for _, b := range bands {
+		var er, es float64
+		for i := range rb {
+			f := float64(i) * c.rate / float64(size)
+			if f < b[0] || f >= b[1] {
+				continue
+			}
+			er += rb[i]
+			es += sb[i]
+		}
+		// Hann frames of n samples give a power sum of 3n/8 times the
+		// mean square per bin, and the bins from 1 to n/2-1 count twice.
+		norm := 2 / (float64(size) * 3 * float64(size) / 8)
+		er *= norm * scale
+		es *= norm
+		res.Bands = append(res.Bands, ResidualBand{Lo: b[0], Hi: b[1], DB: powerRatioDB(er, ps), InBandDB: powerRatioDB(er, es)})
+	}
+	return res, true
+}
+
+// meanSq returns the mean square of x.
+func meanSq(x []float64) float64 {
+	var e float64
+	for _, v := range x {
+		e += v * v
+	}
+	return e / float64(len(x))
+}
+
+// cycles are k whole engine cycles of a hold in the crank angle domain,
+// m samples each: the signal sig and its residual a, the cycle period p in
+// input samples and the sample rate of the angle domain in hertz.
+type cycles struct {
+	a, sig []float64
+	m, k   int
+	p      float64
+	rate   float64
+	atEdge bool
+}
+
+// residualCycles finds the cycle period of x, a hold at about rpm, resamples
+// whole cycles to the crank angle domain and subtracts the synchronous
+// average cycle, as Residual describes. It returns false when x holds fewer
+// than three cycles or has no signal.
+func residualCycles(x []float64, rate int, rpm float64) (cycles, bool) {
 	const h = residualHalfTaps
 	if rpm <= 0 || rate <= 0 || len(x) < 4*h {
-		return ResidualResult{}, false
+		return cycles{}, false
 	}
 	var mean float64
 	for _, v := range x {
@@ -244,7 +314,7 @@ func Residual(x []float64, rate int, rpm float64) (ResidualResult, bool) {
 	p0 := float64(rate) * 120 / rpm
 	k := int(float64(len(y)-2*h-2) / (p0 * (1 + residualSearch)))
 	if k < 3 {
-		return ResidualResult{}, false
+		return cycles{}, false
 	}
 
 	// The angle domain has the same number of samples per cycle for every
@@ -271,54 +341,17 @@ func Residual(x []float64, rate int, rpm float64) (ResidualResult, bool) {
 	p := p0 * (1 + r)
 
 	a := angular(y, p, m, k, sincAt)
-	var ps float64
-	for _, v := range a {
-		ps += v * v
-	}
-	ps /= float64(len(a))
-	if ps <= 0 {
-		return ResidualResult{}, false
+	if meanSq(a) <= 0 {
+		return cycles{}, false
 	}
 	sig := append([]float64(nil), a...)
-	scale := float64(k) / float64(k-1)
-	pr := subtractAverage(a, m, k) / float64(len(a)) * scale
-	amPeak, amTrough := sectorPowers(a, m, k)
-
-	res := ResidualResult{
-		RPM:        float64(rate) * 120 / p,
-		Cycles:     k,
-		SignalDBFS: 10 * math.Log10(ps),
-		ResidualDB: powerRatioDB(pr, ps),
-		AtEdge:     best <= -n || best >= n,
-		AMPeakDB:   amPeak,
-		AMTroughDB: amTrough,
-	}
-	// The angle domain has m samples per cycle of p input samples.
-	fa := float64(rate) * float64(m) / p
-	rb, size := welch(a, residualFFT)
-	sb, _ := welch(sig, residualFFT)
-	bands := append([][2]float64(nil), ResidualBands...)
-	if float64(rate)/2 > 24000 {
-		bands = append(bands, [2]float64{24000, float64(rate) / 2})
-	}
-	for _, b := range bands {
-		var er, es float64
-		for i := range rb {
-			f := float64(i) * fa / float64(size)
-			if f < b[0] || f >= b[1] {
-				continue
-			}
-			er += rb[i]
-			es += sb[i]
-		}
-		// Hann frames of n samples give a power sum of 3n/8 times the
-		// mean square per bin, and the bins from 1 to n/2-1 count twice.
-		norm := 2 / (float64(size) * 3 * float64(size) / 8)
-		er *= norm * scale
-		es *= norm
-		res.Bands = append(res.Bands, ResidualBand{Lo: b[0], Hi: b[1], DB: powerRatioDB(er, ps), InBandDB: powerRatioDB(er, es)})
-	}
-	return res, true
+	subtractAverage(a, m, k)
+	return cycles{
+		a: a, sig: sig, m: m, k: k, p: p,
+		// The angle domain has m samples per cycle of p input samples.
+		rate:   float64(rate) * float64(m) / p,
+		atEdge: best <= -n || best >= n,
+	}, true
 }
 
 // powerRatioDB returns a/b in decibels, at least floorDB minus 80.
