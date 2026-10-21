@@ -135,6 +135,12 @@ type PulseMeasure struct {
 	// ResidualDB is the power of the exhaust system sums that the fit does
 	// not explain, relative to their power with no DC.
 	ResidualDB float64
+
+	// The fit that MeasurePulseVariation continues: the firings of each
+	// exhaust system, the constant of each, and the steps of the stretch.
+	fires  [][]pulseFiring
+	consts []float64
+	s0, s1 int
 }
 
 // onsets returns the onsets of the pulses of one runner pressure p from
@@ -301,9 +307,11 @@ func placeFirings(ang []float64, s0 int, det [][]float64, spark []float64) [][]f
 	return out
 }
 
-// firing is one pulse onset in steps with its strength.
+// pulseFiring is one pulse onset in steps with its strength, and the
+// cylinder that fires it.
 type pulseFiring struct {
 	at, gain float64
+	cyl      int
 }
 
 // MeasurePulse fits the pulse of one firing to the runner pressures from
@@ -343,7 +351,7 @@ func MeasurePulse(d *RunnerData, t0, t1 float64, o PulseOptions) (PulseMeasure, 
 	for c, at := range det {
 		for _, u := range at {
 			g := strength(d.P[c], u, signs[c], means[c], s1, d.Rate)
-			fires[o.Banks[c]] = append(fires[o.Banks[c]], pulseFiring{u, g})
+			fires[o.Banks[c]] = append(fires[o.Banks[c]], pulseFiring{u, g, c})
 			sumPeak += g
 			n++
 		}
@@ -444,6 +452,10 @@ func MeasurePulse(d *RunnerData, t0, t1 float64, o PulseOptions) (PulseMeasure, 
 		Pre:        pre,
 		Pulse:      x[:m],
 		ResidualDB: 10 * math.Log10(res/ac),
+		fires:      fires,
+		consts:     x[m:],
+		s0:         s0,
+		s1:         s1,
 	}, nil
 }
 

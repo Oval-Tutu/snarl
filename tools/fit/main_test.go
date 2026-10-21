@@ -78,6 +78,75 @@ func ftoa(x float64) string {
 	return strconv.FormatFloat(x, 'f', 6, 64)
 }
 
+// TestPulseVariationMode checks --pulse --variation on a CSV whose first
+// cylinder fires at 0.9 and 1.1 of the pulse in turn and whose second
+// cylinder fires at 1: the report has the variation table, and the pulse
+// file has one spread line per row with the gain spread about the mean of
+// each cylinder, sqrt(0.1^2/2) = 0.071 relative to the mean gain of 1.
+func TestPulseVariationMode(t *testing.T) {
+	dir := t.TempDir()
+	dump := `{"cylinders": [{"exhaust_system": 0, "spark_deg": 0}, {"exhaust_system": 0, "spark_deg": 360}]}`
+	if err := os.WriteFile(filepath.Join(dir, "engine.json"), []byte(dump), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "holds-t100.scn"), []byte("hold 3000 1 2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var csv strings.Builder
+	csv.WriteString("time_s,rpm,runner_pressure_pa_0,runner_pressure_pa_1\n")
+	for s := range 20000 {
+		var p [2]float64
+		for c := range p {
+			k := (s - c*200) / 400
+			ms := float64((s-c*200)%400) / 10
+			g := 1.0
+			if c == 0 {
+				g = 0.9 + 0.2*float64(k%2)
+			}
+			if s >= c*200 && ms < 2 {
+				v := 1000 * g * (ms / 2) * (2 - ms)
+				p[c] += v
+				p[1-c] += 0.3 * v
+			}
+		}
+		csv.WriteString(strings.Join([]string{ftoa(float64(s) / 10000), "3000", ftoa(101325 + p[0]), ftoa(101325 + p[1])}, ",") + "\n")
+	}
+	path := filepath.Join(dir, "holds-t100.csv")
+	if err := os.WriteFile(path, []byte(csv.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "pulse.txt")
+	var w bytes.Buffer
+	err := run([]string{
+		"--pulse", "--variation", "--throttle", "1", "--points", "32", "--engine", filepath.Join(dir, "engine.json"),
+		"--scenarios", dir, "--out", out, path,
+	}, &w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(w.String(), "Cycle-to-cycle variation") {
+		t.Errorf("report has no variation table:\n%s", w.String())
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var spreads []string
+	for line := range strings.SplitSeq(string(data), "\n") {
+		if strings.HasPrefix(line, "spread ") {
+			spreads = append(spreads, line)
+		}
+	}
+	if len(spreads) != 1 {
+		t.Fatalf("spread lines %q, want one", spreads)
+	}
+	f := strings.Fields(spreads[0])
+	g, err := strconv.ParseFloat(f[len(f)-1], 64)
+	if err != nil || len(f) != 3 || f[1] != "3000" || g < 0.06 || g > 0.08 {
+		t.Errorf("spread line %q, want spread 3000 and a gain spread of 0.071 within 0.01", spreads[0])
+	}
+}
+
 // TestPopTarget checks that the pop target leaves out the collector, that
 // paths may differ in their collector, gain and listener distance, and
 // that a path with other pop stage keys is an error.

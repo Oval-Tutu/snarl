@@ -41,11 +41,20 @@
 // select as the pulse file that the model embeds
 // (internal/model/pulses/<profile>.txt).
 //
+// With --pulse --variation, it also measures the cycle-to-cycle variation
+// of each hold: with the pulse fixed, it fits a gain, a shift and a width
+// to each firing in turn, fits the pulse again with them, and reports the
+// spread of each over the firings about the mean of their cylinder, the
+// spread of the means of the cylinders, and the residuals of the sums and
+// of the part that does not repeat from cycle to cycle. With --out, the
+// pulse file gets one spread line per row with the firing gain spread,
+// which the model takes with [pulse] measured_variation.
+//
 // Usage:
 //
 //	go run ./tools/fit --ir IR.wav [--base ir] [--profile LEGACY.toml] [--out out/analysis/fit/v8.toml] > fit.md
 //	go run ./tools/fit --pop --profile LEGACY.toml [--out out/analysis/fit/v8-pop.toml] > fit.md
-//	go run ./tools/fit --pulse --throttle 1 --engine engine.json --scenarios scenarios/v8 [--out internal/model/pulses/v8.txt] holds-t100.csv [holds-t050.csv] > pulse.md
+//	go run ./tools/fit --pulse [--variation] --throttle 1 --engine engine.json --scenarios scenarios/v8 [--out internal/model/pulses/v8.txt] holds-t100.csv [holds-t050.csv] > pulse.md
 package main
 
 import (
@@ -87,6 +96,8 @@ type config struct {
 	points            int
 	throttle, minRPM  float64
 	maxRPM            float64
+	// variation adds the cycle-to-cycle variation of each hold.
+	variation bool
 }
 
 // smoothing names the smoothing of the target.
@@ -150,6 +161,7 @@ func run(args []string, w io.Writer) error {
 	fs.Float64Var(&cfg.throttle, "throttle", 0.5, "lowest throttle of the holds that the --pulse table follows")
 	fs.Float64Var(&cfg.minRPM, "min-rpm", 0, "lowest RPM of the holds that the --pulse table follows")
 	fs.Float64Var(&cfg.maxRPM, "max-rpm", 100000, "highest RPM of the holds that the --pulse table follows")
+	fs.BoolVar(&cfg.variation, "variation", false, "with --pulse, also fit a gain, a shift and a width to each firing and report their spreads")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

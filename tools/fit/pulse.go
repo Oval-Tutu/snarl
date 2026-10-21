@@ -40,6 +40,8 @@ type pulseHold struct {
 	throttle float64
 	m        analysis.PulseMeasure
 	trimmed  []float64
+	// v is the cycle-to-cycle variation, with --variation.
+	v analysis.PulseVariation
 }
 
 // readPulseOptions returns the pulse options of an engine dump: the
@@ -65,8 +67,9 @@ func readPulseOptions(path string) (analysis.PulseOptions, error) {
 }
 
 // measureHolds measures the pulse of every hold of the CSV, with the
-// scenario of the same name in the scenario directory.
-func measureHolds(csvPath, scnDir string, o analysis.PulseOptions) ([]pulseHold, error) {
+// scenario of the same name in the scenario directory, and with variation
+// its cycle-to-cycle variation.
+func measureHolds(csvPath, scnDir string, o analysis.PulseOptions, variation bool) ([]pulseHold, error) {
 	name := strings.TrimSuffix(filepath.Base(csvPath), filepath.Ext(csvPath))
 	sc, err := scenario.ParseFile(filepath.Join(scnDir, name+".scn"))
 	if err != nil {
@@ -90,11 +93,17 @@ func measureHolds(csvPath, scnDir string, o analysis.PulseOptions) ([]pulseHold,
 		if w.Kind != "hold" {
 			continue
 		}
-		m, err := analysis.MeasurePulse(d, w.Start, w.End, o)
+		var m analysis.PulseMeasure
+		var v analysis.PulseVariation
+		if variation {
+			m, v, err = analysis.MeasurePulseVariation(d, w.Start, w.End, o)
+		} else {
+			m, err = analysis.MeasurePulse(d, w.Start, w.End, o)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("%s %s: %w", name, w.Label, err)
 		}
-		out = append(out, pulseHold{label: name + " " + w.Label, throttle: w.Throttle, m: m, trimmed: m.Trimmed()})
+		out = append(out, pulseHold{label: name + " " + w.Label, throttle: w.Throttle, m: m, trimmed: m.Trimmed(), v: v})
 	}
 	return out, nil
 }
@@ -115,7 +124,7 @@ func runPulse(cfg *config, csvs []string, w io.Writer) error {
 	}
 	var holds []pulseHold
 	for _, c := range csvs {
-		h, err := measureHolds(c, cfg.scenarios, o)
+		h, err := measureHolds(c, cfg.scenarios, o, cfg.variation)
 		if err != nil {
 			return err
 		}
@@ -134,18 +143,40 @@ func runPulse(cfg *config, csvs []string, w io.Writer) error {
 			s.EndMS, h.m.Deg(s.EndMS), h.m.Deg(s.EndMS)/(720/float64(ncyl)))
 	}
 	fmt.Fprintln(w)
+	if cfg.variation {
+		variationTable(w, holds)
+	}
 	shapeTable(w, holds)
-	rows, err := tableFit(w, cfg, holds)
+	rows, picked, err := tableFit(w, cfg, holds)
 	if err != nil {
 		return err
 	}
+	var spreads []rowSpread
+	if cfg.variation {
+		spreads = rowSpreads(rows, holds, picked)
+	}
 	if cfg.out != "" {
-		if err := writePulseRows(cfg.out, cfg, rows, csvs); err != nil {
+		if err := writePulseRows(cfg.out, cfg, rows, spreads, csvs); err != nil {
 			return err
 		}
 		fmt.Fprintf(w, "Wrote `%s`.\n\n", cfg.out)
 	}
 	return nil
+}
+
+// variationTable writes the cycle-to-cycle variation of each hold.
+func variationTable(w io.Writer, holds []pulseHold) {
+	fmt.Fprint(w, "Cycle-to-cycle variation: a gain, a shift and a width fitted to each firing in turn, with the pulse fitted again between the sweeps. Gain is relative to the mean gain, the onset is against the crank angle from the RPM averaged over one engine cycle, and the width is relative to the pulse. Firing columns: the standard deviation of each firing about the mean of its cylinder. Cylinder columns: the standard deviation of the means of the cylinders. Residual columns: the power of the sums that the pulse does not explain, relative to their power with no DC, with every firing at the mean pulse (fixed), at the strengths of the pulse fit (strength), with a fitted gain (gain), and with a fitted gain, shift and width (firing). Cycle columns: the residual of the sum of the exhaust systems and of its first difference, the part that does not repeat from engine cycle to engine cycle (`snarl-compare --residual`), of the pressure and of the fitted firings, with the AM peak and trough of the residual of the first difference.\n\n")
+	fmt.Fprint(w, "| Hold | Throttle | Firing gain | Firing onset (deg / ms) | Firing width | Cylinder gain | Cylinder onset (deg) | Cylinder width | Fixed (dB) | Strength (dB) | Gain (dB) | Firing (dB) | Cycle (dB) | Cycle of slope (dB) | Slope AM (dB) | Fit cycle (dB) | Fit cycle of slope (dB) | Fit slope AM (dB) |\n|"+strings.Repeat(" --- |", 18)+"\n")
+	for i := range holds {
+		h := &holds[i]
+		v := &h.v
+		fmt.Fprintf(w, "| %s | %.2f | %.3f | %.2f / %.3f | %.3f | %.3f | %.2f | %.3f | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f | %+.1f / %+.1f | %.1f | %.1f | %+.1f / %+.1f |\n",
+			h.label, h.throttle, v.GainSD, v.TimingSDDeg, v.TimingSDDeg/(6*v.RPM)*1e3, v.WidthSD,
+			v.CylGainSD, v.CylTimingSDDeg, v.CylWidthSD, v.FixedDB, v.StrengthDB, v.GainDB, v.FiringDB, v.CycleDB, v.SlopeCycleDB,
+			v.SlopeAMPeakDB, v.SlopeAMTroughDB, v.FitCycleDB, v.FitSlopeCycleDB, v.FitSlopeAMPeakDB, v.FitSlopeAMTroughDB)
+	}
+	fmt.Fprintln(w)
 }
 
 // shapeTimes are the times in milliseconds after the pulse start of the
@@ -186,10 +217,40 @@ func (c *config) holdSpan() string {
 	return s
 }
 
+// rowSpread is the cycle-to-cycle variation of the firings at the RPM of
+// one row: the standard deviation of the gain, relative to the mean. The
+// file leaves out the onset spread: at idle, the fitted shift of a firing
+// also takes up changes of the pulse shape, so that a model with it has a
+// residual far above that of engine-sim.
+type rowSpread struct {
+	rpm, gain float64
+}
+
+// rowSpreads returns the variation of each row, the mean over the picked
+// holds within 1 per cent of its RPM, as PulseRows merges them.
+func rowSpreads(rows []analysis.PulseRow, holds []pulseHold, picked []int) []rowSpread {
+	out := make([]rowSpread, len(rows))
+	for r, row := range rows {
+		out[r].rpm = row.RPM
+		n := 0.0
+		for _, i := range picked {
+			h := &holds[i]
+			if math.Abs(h.m.RPM-row.RPM) <= 0.01*row.RPM {
+				out[r].gain += h.v.GainSD
+				n++
+			}
+		}
+		if n > 0 {
+			out[r].gain /= n
+		}
+	}
+	return out
+}
+
 // tableFit fits one table and one row per RPM to the holds that
 // --throttle, --min-rpm and --max-rpm select, reports the error of every
-// hold against both, and returns the rows.
-func tableFit(w io.Writer, cfg *config, holds []pulseHold) ([]analysis.PulseRow, error) {
+// hold against both, and returns the rows and the holds that they follow.
+func tableFit(w io.Writer, cfg *config, holds []pulseHold) ([]analysis.PulseRow, []int, error) {
 	var ps [][]float64
 	var rpm, step []float64
 	var picked []int
@@ -203,7 +264,7 @@ func tableFit(w io.Writer, cfg *config, holds []pulseHold) ([]analysis.PulseRow,
 		}
 	}
 	if len(ps) == 0 {
-		return nil, fmt.Errorf("no hold %s", cfg.holdSpan())
+		return nil, nil, fmt.Errorf("no hold %s", cfg.holdSpan())
 	}
 	tab, _, use := analysis.FitPulseTable(ps, rpm, step, cfg.points)
 	used := make([]bool, len(holds))
@@ -249,21 +310,23 @@ func tableFit(w io.Writer, cfg *config, holds []pulseHold) ([]analysis.PulseRow,
 		fmt.Fprintf(w, "| %s | %.2f | %.1f | %s |\n", h.label, h.throttle, in, out)
 	}
 	fmt.Fprintln(w)
-	return rows, nil
+	return rows, picked, nil
 }
 
 // writePulseRows writes the pulse file that the model embeds.
-func writePulseRows(path string, cfg *config, rows []analysis.PulseRow, csvs []string) error {
+func writePulseRows(path string, cfg *config, rows []analysis.PulseRow, spreads []rowSpread, csvs []string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(pulseFile(cfg.name, cfg.holdSpan(), csvs, rows)), 0o644)
+	return os.WriteFile(path, []byte(pulseFile(cfg.name, cfg.holdSpan(), csvs, rows, spreads)), 0o644)
 }
 
 // pulseFile returns the text of a pulse file: comments that name the
 // source, then one line per row with the word row, the RPM, the length in
-// milliseconds and the values.
-func pulseFile(name, holds string, csvs []string, rows []analysis.PulseRow) string {
+// milliseconds and the values, and with spreads one line per row with the
+// word spread, the RPM, the standard deviation of the firing gain and that
+// of the firing onset in milliseconds.
+func pulseFile(name, holds string, csvs []string, rows []analysis.PulseRow, spreads []rowSpread) string {
 	var s strings.Builder
 	fmt.Fprintf(&s, "# Pulse of %s, written by tools/fit --pulse: the engine-sim runner\n", name)
 	fmt.Fprintf(&s, "# pressure of one firing in the sum of the runners of its exhaust system,\n# measured in")
@@ -279,6 +342,14 @@ func pulseFile(name, holds string, csvs []string, rows []analysis.PulseRow) stri
 			fmt.Fprintf(&s, " %.4f", v)
 		}
 		s.WriteByte('\n')
+	}
+	if len(spreads) > 0 {
+		fmt.Fprintf(&s, "# The cycle-to-cycle variation of tools/fit --pulse --variation at each\n")
+		fmt.Fprintf(&s, "# row: the RPM and the standard deviation of the gain of a firing about\n")
+		fmt.Fprintf(&s, "# the mean of its cylinder, relative to the mean gain.\n")
+		for _, p := range spreads {
+			fmt.Fprintf(&s, "spread %.0f %.4f\n", p.rpm, p.gain)
+		}
 	}
 	return s.String()
 }
