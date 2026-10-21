@@ -31,6 +31,13 @@ type RuntimeOptions struct {
 	// InputBuffer is the capacity of the input buffer in samples at the
 	// synthesiser rate, a power of two. The default is 8192.
 	InputBuffer int
+	// Unlevelled leaves out the leveller, the volume and the clamp: Render
+	// returns the output filter output, in the units of PreLevelPower.
+	Unlevelled bool
+	// Side adds a side input (WriteInputSide), which takes every stage of
+	// the main input with the same random draws, and the gain that the
+	// leveller takes from the main input alone.
+	Side bool
 }
 
 const (
@@ -47,6 +54,11 @@ const (
 	// jitterTaps is the history of the jitter filter, 10 samples in
 	// Synthesizer::initialize.
 	jitterTaps = 10
+	// sideCeiling is the share of full scale that the side input keeps the
+	// output below, and sideReleaseSec the time constant in seconds over
+	// which its gain recovers.
+	sideCeiling    = 0.95
+	sideReleaseSec = 0.05
 )
 
 // Runtime runs the synthesiser of the port in float32 for real-time use. It
@@ -105,6 +117,28 @@ type Runtime struct {
 	rs     *dsp.Resampler
 	aa     bw4
 	lev    rtLeveller
+	// unlevelled skips the stages after the output filter, and prePower is
+	// the mean square of the last block before the leveller.
+	unlevelled bool
+	prePower   float64
+	invBlock   float32
+	// sections are the 1900 Hz input filter sections at rest.
+	sections [2]sos
+
+	// The side input: per channel its input ring and stage states, and the
+	// convolutions, the dry sum and the output of a block. sideOn is true
+	// while the side input runs.
+	side       []rtSide
+	sideGroups []rtGroup
+	sideDry    []float32
+	sideOut    []float32
+	sideAA     bw4
+	sideOn     bool
+	// sideGain is the gain of the side input that keeps the output below
+	// sideCeiling, and sideRelease its recovery per sample. invVolume is the
+	// reciprocal of the volume.
+	sideGain, sideRelease  float32
+	sideCeiling, invVolume float32
 
 	audio                         AudioParameters
 	airNoise, airDry, dFFMix, wet float32
@@ -129,6 +163,17 @@ type rtChannel struct {
 	dc        float32
 	previous  float32
 	group     int
+}
+
+// rtSide is the side input of one channel. It reads its jitter at the
+// positions of the main input of the channel.
+type rtSide struct {
+	ring      []float32
+	input     [2]sos
+	lastInput float64
+	jitter    jitterHistory
+	dc        float32
+	previous  float32
 }
 
 // NewRuntime returns a Runtime with the parameters of New and the
@@ -180,6 +225,8 @@ func NewRuntime(p Parameters, irs [][]int16, volumes []float64, o RuntimeOptions
 			maxLevel: float32(p.InitialAudioParameters.LevelerMaxGain),
 		},
 		invRandMax2: float32(2.0 / RandMax),
+		unlevelled:  o.Unlevelled,
+		invBlock:    1 / float32(o.Block),
 	}
 	r.SetInputSampleRate(p.InputSampleRate)
 	dt := float32(1) / float32(rate)
@@ -189,12 +236,25 @@ func NewRuntime(p Parameters, irs [][]int16, volumes []float64, o RuntimeOptions
 	r.dcBeta = 1 - r.dcAlpha
 
 	sections := inputSections(float64(float32(1900.0)), rate)
+	r.sections = sections
 	jitterLP := newBW4(p.InitialAudioParameters.InputSampleNoiseFrequencyCutoff, rate)
 	for i := range r.channels {
 		c := &r.channels[i]
 		c.ring = make([]float32, o.InputBuffer)
 		c.input = sections
 		c.jitter = rtJitter{lp: jitterLP, gen: newMinstdRand0()}
+	}
+	if o.Side {
+		r.side = make([]rtSide, p.InputChannelCount)
+		for i := range r.side {
+			r.side[i] = rtSide{ring: make([]float32, o.InputBuffer), input: sections}
+		}
+		r.sideDry = make([]float32, o.Block)
+		r.sideOut = make([]float32, o.Block)
+		r.sideAA = r.aa
+		r.sideGain = 1
+		r.sideCeiling = sideCeiling * math.MaxInt16
+		r.sideRelease = float32(-math.Expm1(-1 / (sideReleaseSec * rate)))
 	}
 	r.air = newBW4(p.InitialAudioParameters.AirNoiseFrequencyCutoff, rate)
 	r.airCutoff = p.InitialAudioParameters.AirNoiseFrequencyCutoff
@@ -214,6 +274,13 @@ func NewRuntime(p Parameters, irs [][]int16, volumes []float64, o RuntimeOptions
 			g = len(taps)
 			taps = append(taps, h)
 			r.groups = append(r.groups, rtGroup{conv: conv, in: make([]float32, o.Block), out: make([]float32, o.Block)})
+			if o.Side {
+				sc, err := dsp.NewConvolver(h, o.Block)
+				if err != nil {
+					return nil, err
+				}
+				r.sideGroups = append(r.sideGroups, rtGroup{conv: sc, in: make([]float32, o.Block), out: make([]float32, o.Block)})
+			}
 		}
 		r.channels[i].group = g
 	}
@@ -282,6 +349,10 @@ func (r *Runtime) SetAudioParameters(a AudioParameters) {
 	r.conv = float32(a.Convolution)
 	r.dryAmount = 1 - r.conv
 	r.volume = float32(a.Volume)
+	r.invVolume = 0
+	if r.volume > 0 {
+		r.invVolume = 1 / r.volume
+	}
 	r.jitterScale = float32(a.InputSampleNoise)
 	r.lev.target = float32(a.LevelerTarget)
 	if cutoff := float64(float32(a.AirNoiseFrequencyCutoff)); cutoff != r.airCutoff {
@@ -328,6 +399,24 @@ func (r *Runtime) Overflows() int { return r.overflow }
 // that the samples fall at the same times. When the input buffer is full,
 // WriteInput drops the new samples and counts them.
 func (r *Runtime) WriteInput(data []float64) {
+	r.WriteInputSide(data, nil)
+}
+
+// WriteInputSide writes one sample per channel of the main input, as
+// WriteInput, and of the side input of a Runtime with RuntimeOptions.Side.
+// A nil side stops the side input, and the next side input starts again
+// from rest. Without RuntimeOptions.Side it ignores side.
+func (r *Runtime) WriteInputSide(data, side []float64) {
+	if r.side == nil {
+		side = nil
+	}
+	switch {
+	case side == nil:
+		r.sideOn = false
+	case !r.sideOn:
+		r.resetSide()
+		r.sideOn = true
+	}
 	r.writeOffset += r.step
 	size := float64(r.inputRing)
 	if r.writeOffset >= size {
@@ -338,24 +427,11 @@ func (r *Runtime) WriteInput(data []float64) {
 	n := 0
 	for i := range r.channels {
 		c := &r.channels[i]
-		last := c.lastInput
-		x := data[i]
-		w := r.written
-		n = 0
-		for t := t0; t <= distance; t += 1.0 {
-			if t >= size {
-				t -= size
-			}
-			f := t * r.invStep
-			s := float32(last*(1-f) + x*f)
-			s = float32(c.input[1].f(c.input[0].f(float64(s))))
-			if w-r.read <= r.mask {
-				c.ring[w&r.mask] = s
-				w++
-			}
-			n++
+		n = r.writeRing(c.ring, &c.input, &c.lastInput, data[i], t0, distance)
+		if side != nil {
+			sc := &r.side[i]
+			r.writeRing(sc.ring, &sc.input, &sc.lastInput, side[i], t0, distance)
 		}
-		c.lastInput = x
 	}
 	r.lastOffset = r.writeOffset
 	r.writeIndex += n
@@ -365,6 +441,56 @@ func (r *Runtime) WriteInput(data []float64) {
 	kept := min(n, r.mask+1-(r.written-r.read))
 	r.overflow += n - kept
 	r.written += kept
+}
+
+// writeRing interpolates the input of one channel from its last sample to
+// x over the input times t0 to distance, low-passes it at 1900 Hz, writes
+// it to the ring from the write position, and returns the samples.
+func (r *Runtime) writeRing(ring []float32, input *[2]sos, lastInput *float64, x, t0, distance float64) int {
+	size := float64(r.inputRing)
+	last := *lastInput
+	w := r.written
+	n := 0
+	for t := t0; t <= distance; t += 1.0 {
+		if t >= size {
+			t -= size
+		}
+		f := t * r.invStep
+		s := float32(last*(1-f) + x*f)
+		s = float32(input[1].f(input[0].f(float64(s))))
+		if w-r.read <= r.mask {
+			ring[w&r.mask] = s
+			w++
+		}
+		n++
+	}
+	*lastInput = x
+	return n
+}
+
+// resetSide sets the side input to rest.
+func (r *Runtime) resetSide() {
+	for i := range r.side {
+		s := &r.side[i]
+		clear(s.ring)
+		*s = rtSide{ring: s.ring, input: r.sections}
+	}
+	for g := range r.sideGroups {
+		r.sideGroups[g].conv.Reset()
+		clear(r.sideGroups[g].in)
+	}
+	clear(r.sideDry)
+	clear(r.sideOut)
+	r.sideAA = bw4{g: r.aa.g, a1: r.aa.a1, a2: r.aa.a2, a3: r.aa.a3, a4: r.aa.a4}
+	r.sideGain = 1
+}
+
+// abs32 returns the magnitude of x.
+func abs32(x float32) float32 {
+	if x < 0 {
+		return -x
+	}
+	return x
 }
 
 func (r *Runtime) inputDistance(s1, s0 float64) float64 {
@@ -416,6 +542,10 @@ func (r *Runtime) pre(n int) {
 			clear(r.groups[g].in)
 		}
 		clear(r.dry)
+		for g := range r.sideGroups {
+			clear(r.sideGroups[g].in)
+		}
+		clear(r.sideDry)
 	}
 	if n == 0 {
 		return
@@ -469,9 +599,44 @@ func (r *Runtime) pre(n int) {
 			}
 		}
 		c.dc, c.previous = dc, previous
+		if r.sideOn {
+			r.preSide(ci, c.group, start, js, air, nc)
+		}
 	}
 	r.read += n
 	r.fill += n
+}
+
+// preSide runs the stages before the convolution on the side input of
+// channel ci for the samples of pre, with the jitter positions js and the
+// air noise of the main input.
+func (r *Runtime) preSide(ci, group, start int, js, air []float32, nc int) {
+	s := &r.side[ci]
+	in := r.sideGroups[group].in[start : start+len(js)]
+	dry := r.sideDry[start : start+len(js)]
+	dc, previous := s.dc, s.previous
+	alpha, beta, invDt := r.dcAlpha, r.dcBeta, r.invDt
+	airNoise, airDry, mix, wet := r.airNoise, r.airDry, r.dFFMix, r.wet
+	dryAmount := r.dryAmount
+	dryOn := dryAmount != 0
+	read, mask, ring := r.read, r.mask, s.ring
+	for i, p := range js {
+		fIn := s.jitter.f(ring[(read+i)&mask], p)
+		dc = alpha*fIn + beta*dc
+		fAc := fIn - dc
+		fP := (fIn - previous) * invDt
+		previous = fIn
+		rMixed := airNoise*air[i*nc+ci] + airDry
+		vIn := fP*mix + fAc*rMixed*wet
+		if vIn < float32Min && vIn > -float32Min {
+			vIn = 0
+		}
+		in[i] += vIn
+		if dryOn {
+			dry[i] += dryAmount * vIn
+		}
+	}
+	s.dc, s.previous = dc, previous
 }
 
 // finish runs the convolution and the stages after it on a full block,
@@ -486,6 +651,18 @@ func (r *Runtime) finish() {
 			out[i] += r.conv * v
 		}
 	}
+	if r.sideOn {
+		side := r.sideOut
+		copy(side, r.sideDry)
+		for g := range r.sideGroups {
+			gr := &r.sideGroups[g]
+			gr.conv.Process(gr.in, gr.out)
+			for i, v := range gr.out[:len(side)] {
+				side[i] += r.conv * v
+			}
+		}
+		r.sideAA.block(side, side)
+	}
 	r.post()
 	r.fill = 0
 	if r.rs != nil {
@@ -496,12 +673,62 @@ func (r *Runtime) finish() {
 	r.outPos = 0
 }
 
+// PreLevelPower returns the mean square of the last rendered block after
+// the output filter and before the leveller, in the units of the
+// Unlevelled output.
+func (r *Runtime) PreLevelPower() float64 { return r.prePower }
+
+// LevellerGain returns the gain of the leveller after the last rendered
+// sample.
+func (r *Runtime) LevellerGain() float32 { return r.lev.attenuation }
+
 // post runs the output filter, the leveller, the volume and the clamp on
-// the block in out.
+// the block in out. The side input takes the gain that the leveller takes
+// from the main input.
 func (r *Runtime) post() {
 	out := r.out
 	r.aa.block(out, out)
+	var sq float32
+	for _, s := range out {
+		sq += s * s
+	}
+	r.prePower = float64(sq * r.invBlock)
+	if r.unlevelled {
+		if r.sideOn {
+			for i, s := range r.sideOut {
+				out[i] += s
+			}
+		}
+		return
+	}
 	volume := r.volume
+	if r.sideOn {
+		// The side input takes the leveller gain of the main input. Its own
+		// gain g keeps the sum below sideCeiling: it falls at once to what a
+		// peak needs and recovers with the time constant of sideRelease, so
+		// that a loud side input does not clip and does not duck the main
+		// input.
+		side := r.sideOut[:len(out)]
+		ceiling := r.sideCeiling * r.invVolume
+		g := r.sideGain
+		for i, s := range out {
+			v := r.lev.f(s)
+			p := r.lev.attenuation * side[i]
+			room := ceiling - abs32(v)
+			if ap := abs32(p); ap*g > room {
+				g = 0
+				if room > 0 {
+					g = room * reciprocal(ap)
+				}
+			}
+			w := (v + g*p) * volume
+			g += (1 - g) * r.sideRelease
+			w = min(max(w, math.MinInt16), math.MaxInt16)
+			out[i] = w * (1.0 / 32768)
+		}
+		r.sideGain = g
+		return
+	}
 	for i, s := range out {
 		v := r.lev.f(s) * volume
 		v = min(max(v, math.MinInt16), math.MaxInt16)
@@ -588,15 +815,20 @@ func (b *bw4) block(x, y []float32) {
 // rtJitter is JitterFilter in float. The caller draws the positions and
 // runs them through lp.
 type rtJitter struct {
+	jitterHistory
+	gen minstdRand0
+	lp  bw4
+}
+
+// jitterHistory is the sample history of a JitterFilter.
+type jitterHistory struct {
 	history [jitterTaps]float32
 	offset  int
-	gen     minstdRand0
-	lp      bw4
 }
 
 // f ports JitterFilter::fast_f after the noise filter: s is the filtered
 // position. The floor and the ceiling avoid the math package.
-func (j *rtJitter) f(sample, s float32) float32 {
+func (j *jitterHistory) f(sample, s float32) float32 {
 	j.history[j.offset] = sample
 	j.offset++
 	if j.offset >= jitterTaps {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -132,6 +133,16 @@ func ReadImpulseResponse(path string) ([]int16, error) {
 		return nil, err
 	}
 	return toInt16(a.Channels[0], path)
+}
+
+// DecodeImpulseResponse reads the first channel of a 16-bit PCM WAV file
+// from r. name names the file in errors.
+func DecodeImpulseResponse(r io.Reader, name string) ([]int16, error) {
+	a, err := wav.Read(r)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", name, err)
+	}
+	return toInt16(a.Channels[0], name)
 }
 
 // ReadOutput reads the engine-sim synthesiser output of the dump.
