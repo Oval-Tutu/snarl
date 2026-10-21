@@ -121,23 +121,15 @@ func (b *FormantBank) BandsDB(bands [][2]float64, rate float64) []float64 {
 func (b *FormantBank) BandMaxErrorDB(h []float64, rate int, bankRate, lo, hi float64) float64 {
 	var bands [][2]float64
 	for _, band := range ThirdOctaveBands(48000) {
-		if c := math.Sqrt(band[0] * band[1]); c >= math.Min(lo, 50)*0.99 && c <= math.Max(hi, 2000)*1.01 {
+		if c := BandCentre(band); c >= math.Min(lo, 50)*0.99 && c <= math.Max(hi, 2000)*1.01 {
 			bands = append(bands, band)
 		}
 	}
 	ref, m := IRResponse(h, rate, bands), b.BandsDB(bands, bankRate)
-	var off float64
-	n := 0
-	for i, band := range bands {
-		if c := math.Sqrt(band[0] * band[1]); c >= 50*0.99 && c <= 2000*1.01 {
-			off += ref[i] - m[i]
-			n++
-		}
-	}
-	off /= float64(max(n, 1))
+	off := MatchOffset(bands, ref, m, 50*0.99, 2000*1.01)
 	var worst float64
 	for i, band := range bands {
-		if c := math.Sqrt(band[0] * band[1]); c >= lo*0.99 && c <= hi*1.01 {
+		if c := BandCentre(band); c >= lo*0.99 && c <= hi*1.01 {
 			worst = math.Max(worst, math.Abs(m[i]+off-ref[i]))
 		}
 	}

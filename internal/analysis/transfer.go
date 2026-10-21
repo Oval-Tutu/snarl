@@ -198,3 +198,23 @@ func ThirdOctaveBands(rate int) [][2]float64 {
 	}
 	return out
 }
+
+// BandCentre returns the geometric centre of the band in hertz.
+func BandCentre(b [2]float64) float64 {
+	return math.Sqrt(b[0] * b[1])
+}
+
+// MatchOffset returns the mean of ref minus m over the bands whose centre
+// lies from lo to hi: the offset that matches the mean of m to that of ref
+// there.
+func MatchOffset(bands [][2]float64, ref, m []float64, lo, hi float64) float64 {
+	var off float64
+	n := 0
+	for i, b := range bands {
+		if c := BandCentre(b); c >= lo && c <= hi {
+			off += ref[i] - m[i]
+			n++
+		}
+	}
+	return off / float64(max(n, 1))
+}

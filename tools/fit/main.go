@@ -311,8 +311,7 @@ func kindName(k string) string {
 func thirdOctaves(lo, hi float64) [][2]float64 {
 	var out [][2]float64
 	for _, b := range analysis.ThirdOctaveBands(48000) {
-		c := math.Sqrt(b[0] * b[1])
-		if c >= lo*0.99 && c <= hi*1.01 {
+		if c := analysis.BandCentre(b); c >= lo*0.99 && c <= hi*1.01 {
 			out = append(out, b)
 		}
 	}
@@ -324,7 +323,7 @@ func thirdOctaves(lo, hi float64) [][2]float64 {
 func bandBase(bands [][2]float64, rate float64) []float64 {
 	c := make([]float64, len(bands))
 	for i, b := range bands {
-		c[i] = math.Sqrt(b[0] * b[1])
+		c[i] = analysis.BandCentre(b)
 	}
 	return analysis.HarmonicBaseDB(c, rate, inputLowPassHz)
 }
@@ -335,25 +334,19 @@ func bandBase(bands [][2]float64, rate float64) []float64 {
 // 50 Hz to 2 kHz. The largest difference leaves out bands whose level
 // (ref plus base) is below the floor.
 func bandErrors(bands [][2]float64, ref, base, m []float64, floor, hi float64) (rmsDB, maxDB float64) {
-	var off float64
-	n := 0
-	for i, b := range bands {
-		if c := math.Sqrt(b[0] * b[1]); c >= 50 && c <= 2000 {
-			off += ref[i] - m[i]
-			n++
-		}
-	}
-	off /= float64(max(n, 1))
+	off := analysis.MatchOffset(bands, ref, m, 50, 2000)
 	peak := math.Inf(-1)
 	for i := range bands {
 		peak = math.Max(peak, ref[i]+base[i])
 	}
 	var s float64
+	n := 0
 	for i, b := range bands {
-		c := math.Sqrt(b[0] * b[1])
+		c := analysis.BandCentre(b)
 		d := m[i] + off - ref[i]
 		if c >= 50 && c <= 2000 {
 			s += d * d
+			n++
 		}
 		if c >= 50 && c <= hi*1.01 && (floor >= 0 || ref[i]+base[i]-peak >= floor) {
 			maxDB = math.Max(maxDB, math.Abs(d))
@@ -395,18 +388,10 @@ func responseTable(w io.Writer, cfg *config, bands [][2]float64, irBands, base [
 	fmt.Fprint(w, "\n|"+strings.Repeat(" --- |", 1+len(names))+"\n")
 	offs := make([]float64, len(cols))
 	for k, c := range cols {
-		var s float64
-		n := 0
-		for i, b := range bands {
-			if cc := math.Sqrt(b[0] * b[1]); cc >= 50 && cc <= 2000 {
-				s += irBands[i] - c[i]
-				n++
-			}
-		}
-		offs[k] = s / float64(max(n, 1))
+		offs[k] = analysis.MatchOffset(bands, irBands, c, 50, 2000)
 	}
 	for i, b := range bands {
-		fmt.Fprintf(w, "| %.0f |", math.Sqrt(b[0]*b[1]))
+		fmt.Fprintf(w, "| %.0f |", analysis.BandCentre(b))
 		for k, c := range cols {
 			fmt.Fprintf(w, " %.1f |", c[i]+offs[k]+base[i]-peak)
 		}
@@ -437,7 +422,7 @@ func stageTable(w io.Writer, bands [][2]float64, paths []analysis.LegacyPath, e 
 		for k, c := range cols {
 			n := 0
 			for j, b := range bands {
-				if cc := math.Sqrt(b[0] * b[1]); cc >= 50 && cc <= 2000 {
+				if cc := analysis.BandCentre(b); cc >= 50 && cc <= 2000 {
 					means[k] += c[j]
 					n++
 				}
@@ -445,7 +430,7 @@ func stageTable(w io.Writer, bands [][2]float64, paths []analysis.LegacyPath, e 
 			means[k] /= float64(max(n, 1))
 		}
 		for j, b := range bands {
-			fmt.Fprintf(w, "| %.0f |", math.Sqrt(b[0]*b[1]))
+			fmt.Fprintf(w, "| %.0f |", analysis.BandCentre(b))
 			for k, c := range cols {
 				fmt.Fprintf(w, " %.1f |", c[j]-means[k])
 			}

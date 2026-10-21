@@ -324,8 +324,7 @@ func writePulseRows(path string, cfg *config, rows []analysis.PulseRow, spreads 
 // pulseFile returns the text of a pulse file: comments that name the
 // source, then one line per row with the word row, the RPM, the length in
 // milliseconds and the values, and with spreads one line per row with the
-// word spread, the RPM, the standard deviation of the firing gain and that
-// of the firing onset in milliseconds.
+// word spread, the RPM and the standard deviation of the firing gain.
 func pulseFile(name, holds string, csvs []string, rows []analysis.PulseRow, spreads []rowSpread) string {
 	var s strings.Builder
 	fmt.Fprintf(&s, "# Pulse of %s, written by tools/fit --pulse: the engine-sim runner\n", name)
