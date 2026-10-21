@@ -49,6 +49,11 @@ type engine struct {
 	Bank, PopBank analysis.FormantBank
 	PopDelayMS    float64
 
+	// PulseTable is the pulse table of the tuned profile closest in
+	// layout, and Overlap the collector overlap of that profile.
+	PulseTable string
+	Overlap    float64
+
 	// Calibration results.
 	LevellerDB, OutputDB, SweepLUFS float64
 }
@@ -117,6 +122,7 @@ func run(args []string) error {
 	}
 	for i := range all {
 		e := &all[i]
+		e.PulseTable, e.Overlap = pulseFor(len(e.Cylinders))
 		if err := calibrate(e); err != nil {
 			return fmt.Errorf("%s: %w", e.ID, err)
 		}

@@ -28,9 +28,7 @@ const (
 // order. The engine values go before them and the cylinders and paths
 // after them.
 const sections = `[pulse]
-width_deg = 160
-attack = 4
-decay = 7
+table = "%s"
 part_load_db = -0.8
 cycle_variation = 0.04
 jitter = 0.003
@@ -41,7 +39,7 @@ timing_variation_deg = 2
 speed_of_sound = 565
 crossover = "%s"
 coupling = %s
-overlap = 1.0
+overlap = %s
 formant_gain_db = %s
 pop_formant_gain_db = %s
 pop_delay_ms = %s
@@ -90,6 +88,24 @@ const pathDefaults = `reflection = -0.4
 damping_hz = 2500
 `
 
+// pulseFor returns the pulse table and the collector overlap of the tuned
+// profile closest in layout to an engine of n cylinders: inline4 up to 5
+// cylinders, flat6 for 6 and 7, v8 for 8 and 9, and flat12 from 10. The
+// engine-sim catalogue references of just ref-set have a CSV row per 100
+// steps, which cannot resolve a pulse, so every catalogue profile takes a
+// tuned table.
+func pulseFor(n int) (table string, overlap float64) {
+	switch {
+	case n <= 5:
+		return "inline4", 0
+	case n <= 7:
+		return "flat6", 1
+	case n <= 9:
+		return "v8", 1
+	}
+	return "flat12", 1
+}
+
 func num(x float64) string {
 	return strconv.FormatFloat(round(x, 4), 'f', -1, 64)
 }
@@ -110,7 +126,7 @@ func profileTOML(e *engine) string {
 	fmt.Fprintf(&b, "seed = %d\n", seed(e.ID))
 	fmt.Fprintf(&b, "idle_rpm = %s\nredline_rpm = %s\n", num(e.IdleRPM), num(e.RedlineRPM))
 	fmt.Fprintf(&b, "limiter_rpm = %s\nlimiter_kind = %q\nlimiter_ms = %s\n\n", num(e.LimiterRPM), e.LimiterKind, num(e.LimiterMS))
-	fmt.Fprintf(&b, sections, e.Crossover, num(e.Coupling),
+	fmt.Fprintf(&b, sections, e.PulseTable, e.Crossover, num(e.Coupling), num(e.Overlap),
 		num(round(e.Bank.GainDB, 2)), num(round(e.PopBank.GainDB, 2)), num(round(e.PopDelayMS, 3)),
 		num(e.HFGain), num(e.AM), num(e.InputJitter),
 		num(e.IdleRPM+1400), num(e.LevellerDB), num(e.OutputDB))

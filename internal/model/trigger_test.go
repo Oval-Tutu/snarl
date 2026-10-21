@@ -30,6 +30,7 @@ func newPopRig(t testing.TB, seed uint32, mod func(*Spec)) *popRig {
 	t.Helper()
 	s := DefaultSpec()
 	s.Name = "p"
+	s.Pulse.Table = "inline4"
 	s.IdleRPM, s.RedlineRPM = 800, 6800
 	s.Pops.Density = 0.2
 	if mod != nil {

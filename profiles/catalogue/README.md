@@ -119,8 +119,10 @@ Neither source has these values, so every profile has the same ones. They are ne
 
 | Section | Values |
 | --- | --- |
-| `[pulse]` | `width_deg` 160, `attack` 4, `decay` 7, `part_load_db` -0.8, `cycle_variation` 0.04, `jitter` 0.003, `gain_variation` 0.12, `timing_variation_deg` 2 |
-| `[exhaust]` | `speed_of_sound` 565, `overlap` 1.0 |
+| `[pulse]` | `part_load_db` -0.8, `cycle_variation` 0.04, `jitter` 0.003, `gain_variation` 0.12, `timing_variation_deg` 2 |
+| `[exhaust]` | `speed_of_sound` 565 |
+
+The pulse table and the collector overlap are those of the tuned profile closest in layout: `inline4` (overlap 0) up to 5 cylinders, `flat6` for 6 and 7, `v8` for 8 and 9, and `flat12` from 10 (overlap 1). The pulse tables are from engine-sim (measured) by `tools/fit --pulse` on the runner pressure of the tuned profile scripts. A catalogue engine has no table of its own, because `just ref-set` writes one CSV row per 100 steps, and the pulse measurement needs one row per step.
 | `[noise]` | `am_cutoff_hz` 2000 |
 | `[pops]` | `density` 0.15, `character` sport, `gain` 1, `body_hz` 200, `body_ms` 35, `jump_ms` 3, `crack` 2.5, `crack_ms` 16, weights pop 0.4, boom 0.2, crackle 0.3, burble 0.1 |
 | `[overrun]` | `level_db` -1.2, `idle_level_db` -1.2 |

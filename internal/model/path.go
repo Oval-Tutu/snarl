@@ -28,7 +28,18 @@ type path struct {
 	// with a live pop jump sets it to popTail. When it reaches 0, the pop
 	// stages clear, so that the next pop starts from silence.
 	popLeft, popTail int
+	// quiet counts the samples after the jump in which the output of the
+	// pop stages stays below popQuiet.
+	quiet int
 }
+
+const (
+	// popQuiet is the pop output, 100 dB below full scale, below which a
+	// pop has rung out, and popQuietLen the samples that it must stay
+	// there.
+	popQuiet    = 1e-5
+	popQuietLen = 64
+)
 
 func newPath(p PathSpec, s *Spec, rate float64) path {
 	colD := max(1, int(math.Round(2*p.CollectorM/s.Exhaust.SpeedOfSound*rate)))
@@ -71,10 +82,26 @@ func (p *path) process(x float32) float32 {
 }
 
 // popProcess runs the pop stages for one sample of the pop jump j of the
-// path and returns the pop output. live is true while the pop jump of the
-// path sounds. The stages run from then until popTail samples after the
-// last live sample. Outside them, the output is zero.
+// path and returns the pop output: popPre, then the pop bank of the path.
+// The calibration and PopSignals use it. The engine runs popPre on each
+// path and one pop bank on their sum, which gives the same output, since
+// the pop bank is linear and time-invariant and the same on every path.
 func (p *path) popProcess(j float32, live bool) float32 {
+	y := p.popPre(j, live)
+	if p.popLeft == 0 && !live {
+		p.pop.reset()
+	}
+	return p.pop.process(y)
+}
+
+// popPre runs the pop stages before the pop bank for one sample of the pop
+// jump j of the path: the collector, the path gain and the pop delay with
+// the air delay. live is true while the pop jump of the path sounds. The
+// stages run from then until the output has stayed below popQuiet for
+// popQuietLen samples plus the pop delay, so that the delay line holds
+// nothing above it either, and at most popTail samples after the last
+// live sample. Outside them, the output is zero.
+func (p *path) popPre(j float32, live bool) float32 {
 	if live {
 		p.popLeft = p.popTail
 	}
@@ -83,19 +110,59 @@ func (p *path) popProcess(j float32, live bool) float32 {
 	}
 	y := j + p.colG*p.popColLP.Process(p.popCol.Read(p.colD-1))
 	p.popCol.Write(y)
-	y = p.gain * p.pop.process(y)
+	y *= p.gain
+	if !live && y < popQuiet && y > -popQuiet {
+		p.quiet++
+	} else {
+		p.quiet = 0
+	}
+	if p.quiet > p.popD+popQuietLen {
+		p.popLeft = 1
+	}
 	if p.popAir != nil {
 		p.popAir.Write(y)
 		y = p.popAir.Read(p.popD)
 	}
 	p.popLeft--
 	if p.popLeft == 0 {
+		p.quiet = 0
 		p.popCol.Reset()
 		p.popColLP.Y = 0
-		p.pop.reset()
 		if p.popAir != nil {
 			p.popAir.Reset()
 		}
+	}
+	return y
+}
+
+// popBank is the pop bank that the engine runs once on the sum of the pop
+// stages of its paths. It runs while a path runs its pop stages, and after
+// that until its output has stayed below popQuiet for popQuietLen
+// samples, when it clears, so that the next pop starts from silence.
+type popBank struct {
+	f     formants
+	on    bool
+	quiet int
+}
+
+// process filters the sum x of the pop stages of the paths. run is true
+// while a path runs its pop stages.
+func (b *popBank) process(x float32, run bool) float32 {
+	if !run && !b.on {
+		return 0
+	}
+	y := b.f.process(x)
+	switch {
+	case run:
+		b.on, b.quiet = true, 0
+	case y < popQuiet && y > -popQuiet:
+		b.quiet++
+		if b.quiet > popQuietLen {
+			b.on, b.quiet = false, 0
+			b.f.reset()
+		}
+	default:
+		b.quiet = 0
 	}
 	return y
 }

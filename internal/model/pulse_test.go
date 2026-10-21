@@ -2,59 +2,49 @@ package model
 
 import (
 	"math"
+	"strings"
 	"testing"
 )
 
-// pulseTrace runs one voice of y from the pulse position pos, in pulse
+// pulseTrace runs one voice of y from the pulse position pos, in table
 // steps, with gain 1 and no other voice, and returns its output per sample
 // from the first sample until the voice ends.
 func pulseTrace(y *Synth, pos float32) []float32 {
+	for i := range y.voices {
+		y.voices[i].active = false
+	}
 	v := &y.voices[0]
-	*v = voice{pos: pos, gain: 1, active: true, bank: 0}
+	*v = voice{tab: y.tab, pos: pos, gain: 1, active: true, bank: 0}
+	y.act = append(y.act[:0], 0)
 	var out []float32
 	for v.active {
-		var bank [MaxBanks]float32
-		y.pulses(&bank)
+		y.bankBuf[0][0] = 0
+		y.renderVoices(1)
 		if v.active {
-			out = append(out, bank[0])
+			out = append(out, y.bankBuf[0][0])
 		}
 	}
 	return out
 }
 
-// TestPulseEdges checks the start and the end of the pulse of each pulse
-// shape of the tuned profiles at 800, 3000 and 6000 RPM at 48 kHz. A pulse
-// that starts the fraction f of a sample after a sample follows the
-// envelope at its exact position, so that the fraction is not lost: every
-// sample is the envelope minus its end value along the pulse, within 2e-5
-// of the peak. The envelope starts at zero with no slope, so the first
-// sample is at most 1e-3 of the peak. The pulse ends at most -60 dB below
-// its peak, and its peak stays within 0.05 dB of 1. The slow attack keeps
-// the decay of the pulse near its end steeper than with the earlier sharp
-// attack, so the last sample is up to -65 dB below the peak.
-func TestPulseEdges(t *testing.T) {
-	// The pulse shapes of flat12, inline4 (and its cam attack), flat6 and
-	// v8: width in degrees, attack and decay.
-	shapes := []struct {
-		name                 string
-		width, attack, decay float64
-	}{
-		{"flat12", 120, 4, 7.5},
-		{"inline4", 150, 4, 7.5},
-		{"inline4 cam", 150, 6, 7.5},
-		{"flat6", 150, 4, 7},
-		{"v8", 170, 4, 6.5},
-	}
-	for _, sh := range shapes {
+// TestPulseTable checks the pulse of each tuned table at 800, 3000 and
+// 6000 RPM at 48 kHz. A pulse that starts the fraction f of a sample after
+// a sample follows the table at its exact position, by linear
+// interpolation, so that the fraction is not lost: every sample is the
+// row of the chunk at its position within 1e-4 (-80 dB of the peak), the
+// float32 rounding of the position over up to 1200 samples. The table starts and ends
+// at zero, so the first sample is at most one table step of the rise, the
+// last value is zero, and the peak magnitude is within 0.5 dB of 1. The
+// pulse lasts the row length.
+func TestPulseTable(t *testing.T) {
+	for _, name := range []string{"flat12", "flat6", "inline4", "v8"} {
 		s := DefaultSpec()
-		s.Name = sh.name
+		s.Name = name
+		s.Pulse.Table = name
 		s.IdleRPM, s.RedlineRPM = 800, 7000
-		s.Pulse.WidthDeg, s.Pulse.Attack, s.Pulse.Decay = sh.width, sh.attack, sh.decay
 		s.Pulse.Jitter, s.Pulse.CycleVariation = 0, 0
 		s.Cylinders = []CylinderSpec{{CrankDeg: 0}}
 		s.Paths = []PathSpec{{CollectorM: 0.5, Gain: 1}}
-		ea := 1 - math.Exp(-sh.attack)
-		end1 := ea * ea * math.Exp(-sh.decay)
 		for _, rpm := range []float32{800, 3000, 6000} {
 			y, err := New(&s, rate)
 			if err != nil {
@@ -64,45 +54,145 @@ func TestPulseEdges(t *testing.T) {
 			for range 200 {
 				y.control(&c, chunk)
 			}
+			tab := append([]float32(nil), y.tab...)
 			step := float64(y.step)
-			norm := float64(y.liveNorm)
-			// env is the pulse at x pulse steps after its start.
-			env := func(x float64) float64 {
-				u := x / pulseLen
-				s := 1 - math.Exp(-sh.attack*u)
-				return (s*s*math.Exp(-sh.decay*u) - end1*u) * norm
+			at := func(x float64) float64 {
+				i := int(x)
+				if i >= len(tab)-1 {
+					return 0
+				}
+				return float64(tab[i]) + float64(tab[i+1]-tab[i])*(x-float64(i))
 			}
 			for _, f := range []float64{0, 0.3, 0.9} {
 				tr := pulseTrace(y, float32(-f*step))
 				var peak, worst float64
 				for k, v := range tr {
-					peak = max(peak, float64(v))
+					peak = max(peak, math.Abs(float64(v)))
 					want := 0.0
 					if x := (float64(k) - f) * step; x >= 0 {
-						want = env(x)
+						want = at(x)
 					}
 					worst = max(worst, math.Abs(float64(v)-want))
 				}
-				if math.Abs(float64(tr[0])) > 1e-3*peak {
-					t.Errorf("%s %.0f RPM, start %.1f: first sample %.1e of the peak, want at most 1e-3", sh.name, rpm, f, float64(tr[0])/peak)
+				ms := float64(len(tr)) / rate * 1e3
+				t.Logf("%-7s %4.0f RPM, start %.1f sample late: %4d samples (%.2f ms), peak %+.2f dB, worst error %.1e",
+					name, rpm, f, len(tr), ms, 20*math.Log10(peak), worst)
+				if worst > 1e-4 {
+					t.Errorf("%s %.0f RPM, start %.1f: a sample is %.1e from the table at its position, want at most 1e-4", name, rpm, f, worst)
 				}
-				last := tr[len(tr)-1]
-				for i := len(tr) - 1; last == 0 && i > 0; i-- {
-					last = tr[i-1]
+				if first := math.Abs(float64(tr[0])); first > 1.01*math.Abs(float64(tab[1]))+1e-9 {
+					t.Errorf("%s %.0f RPM, start %.1f: first sample %.3f, want at most the first table step %.3f", name, rpm, f, first, tab[1])
 				}
-				endDB := 20 * math.Log10(math.Abs(float64(last))/peak)
-				t.Logf("%-11s %4.0f RPM, start %.1f sample late: %4d samples, peak %+.3f dB, end %6.1f dB re peak, worst error %.1e",
-					sh.name, rpm, f, len(tr), 20*math.Log10(peak), endDB, worst)
-				if worst > 2e-5 {
-					t.Errorf("%s %.0f RPM, start %.1f: a sample is %.1e from the envelope at its position, want at most 2e-5", sh.name, rpm, f, worst)
-				}
-				if endDB > -60 {
-					t.Errorf("%s %.0f RPM, start %.1f: the pulse ends at %.1f dB re peak, want at most -60 dB", sh.name, rpm, f, endDB)
-				}
-				if math.Abs(20*math.Log10(peak)) > 0.05 {
-					t.Errorf("%s %.0f RPM, start %.1f: peak %+.3f dB, want within 0.05 dB of 0", sh.name, rpm, f, 20*math.Log10(peak))
+				if math.Abs(20*math.Log10(peak)) > 0.5 {
+					t.Errorf("%s %.0f RPM, start %.1f: peak %+.2f dB, want within 0.5 dB of 0", name, rpm, f, 20*math.Log10(peak))
 				}
 			}
+			if tab[0] != 0 || tab[len(tab)-1] != 0 {
+				t.Errorf("%s %.0f RPM: table runs from %.3f to %.3f, want 0 to 0", name, rpm, tab[0], tab[len(tab)-1])
+			}
 		}
+	}
+}
+
+// TestPulseRows checks the row blend between the rows of a table: at the
+// RPM of a row the pulse is that row, half way between two rows it is
+// their mean, a blend that a firing took does not change, and the cam
+// switch sets the weight between the two rows around it.
+func TestPulseRows(t *testing.T) {
+	p, err := loadPulse("inline4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := DefaultSpec()
+	s.Name = "rows"
+	s.Pulse.Table = "inline4"
+	s.IdleRPM, s.RedlineRPM = 800, 8400
+	s.Pulse.Jitter = 0
+	s.Cylinders = []CylinderSpec{{CrankDeg: 0}}
+	s.Paths = []PathSpec{{CollectorM: 0.5, Gain: 1}}
+	y, err := New(&s, rate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	set := func(rpm float32) {
+		y.rpm = rpm
+		y.controlPulse()
+	}
+	set(float32(p.rpm[2]))
+	if &y.tab[0] != &p.v[2][0] {
+		t.Error("at the RPM of a row, the pulse is not that row")
+	}
+	set(float32((p.rpm[2] + p.rpm[3]) / 2))
+	for i := range y.tab {
+		if d := y.tab[i] - (p.v[2][i]+p.v[3][i])/2; d > 1e-6 || d < -1e-6 {
+			t.Fatalf("half way between rows, value %d is %.4f, want the mean %.4f", i, y.tab[i], (p.v[2][i]+p.v[3][i])/2)
+		}
+	}
+	want := float32(float64(len(y.tab)-1) / ((p.lenSec[2] + p.lenSec[3]) / 2 * rate))
+	if math.Abs(float64(y.step/want-1)) > 1e-5 {
+		t.Errorf("half way between rows, step %.5f, want %.5f", y.step, want)
+	}
+	// A firing keeps its table when the RPM moves on: the blends are fixed,
+	// so no table changes under a sounding pulse.
+	held := y.tab
+	vals := append([]float32(nil), held...)
+	set(float32(p.rpm[2]*0.3 + p.rpm[3]*0.7))
+	for i := range vals {
+		if held[i] != vals[i] {
+			t.Fatal("a blend changed after a firing took it")
+		}
+	}
+	if &y.tab[0] == &held[0] {
+		t.Error("the blend did not move with the RPM")
+	}
+	// The cam switch lies between two rows: the cam crossfade sets the
+	// weight there, not the RPM.
+	y.camRPM = float32((p.rpm[4] + p.rpm[5]) / 2)
+	y.camMix = 0
+	set(float32(p.rpm[4]*0.2 + p.rpm[5]*0.8))
+	if &y.tab[0] != &p.v[4][0] {
+		t.Error("below the cam switch with no crossfade, the pulse is not the row below it")
+	}
+	y.camMix = 1
+	set(float32(p.rpm[4]*0.8 + p.rpm[5]*0.2))
+	if &y.tab[0] != &p.v[5][0] {
+		t.Error("with the full crossfade, the pulse is not the row above the cam switch")
+	}
+}
+
+// TestPulseFile checks the parser of the pulse files: every embedded file
+// parses, and bad files give errors.
+func TestPulseFile(t *testing.T) {
+	ents, err := pulseFiles.ReadDir("pulses")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range ents {
+		name := strings.TrimSuffix(e.Name(), ".txt")
+		p, err := loadPulse(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("%-8s %d rows of %d values, from %.0f to %.0f RPM", name, len(p.rpm), p.points(), p.rpm[0], p.rpm[len(p.rpm)-1])
+	}
+	row := func(rpm, ms string) string {
+		return "row " + rpm + " " + ms + strings.Repeat(" 0.5", 20) + "\n"
+	}
+	for what, data := range map[string]string{
+		"empty":        "# nothing\n",
+		"short row":    "row 1000 5 0 1 0\n",
+		"no row word":  strings.Replace(row("1000", "5"), "row", "rpm", 1),
+		"falling rpm":  row("2000", "5") + row("1000", "5"),
+		"long pulse":   row("1000", "500"),
+		"zero rpm":     row("0", "5"),
+		"bad number":   strings.Replace(row("1000", "5"), "0.5", "x", 1),
+		"other length": row("1000", "5") + "row 2000 5" + strings.Repeat(" 0.5", 21) + "\n",
+	} {
+		if _, err := parsePulse(data); err == nil {
+			t.Errorf("%s: no error", what)
+		}
+	}
+	if _, err := loadPulse("../flat6"); err == nil {
+		t.Error("a table name with a path gave no error")
 	}
 }

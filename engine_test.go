@@ -423,19 +423,24 @@ func TestOutputCalibration(t *testing.T) {
 // TestLevellerSweep. In the windows of snarl-compare --gap, which start at
 // 0 s, the engine-sim references hold 1.3 LU and 1.3 dB
 // (flat12), 3.0 LU and 2.3 dB (flat6), 2.3 LU and 2.3 dB (inline4) and
-// 1.7 LU and 2.2 dB (v8). With the formant bank and the smooth pulse,
-// snarl holds 2.1 LU and 1.7 dB (flat12), 2.8 LU and 1.3 dB (flat6),
-// 5.7 LU and 2.8 dB (inline4) and 3.4 LU and 1.5 dB (v8). The bounds are
-// the engine-sim bands plus 1, or the snarl bands plus 0.5 where those
-// are wider. The loudness band of inline4 and v8 is wider than in
-// engine-sim, because the crest factor of their pulse train rises to 10
-// to 11.5 dB at the top of the sweep and below 1500 RPM, against 7 to
-// 9 dB in engine-sim, and the leveller holds the peak, not the loudness.
+// 1.7 LU and 2.2 dB (v8). With the measured engine-sim pulse, snarl holds
+// 2.5 LU and 2.6 dB (flat12), 5.3 LU and 1.8 dB (flat6), 3.9 LU and 1.5
+// dB (inline4) and 3.9 LU and 1.2 dB (v8). The bounds are the engine-sim
+// bands plus 1, or the snarl bands plus 0.5 where those are wider. The
+// inline4 bound falls from 6.2 LU with the computed envelope: the measured
+// pulse fills the interval between firings at high RPM as in engine-sim,
+// so the crest factor at the top of the sweep is near engine-sim, against
+// 10 to 11.5 dB with the envelope. The flat6 bound rises from 4.0 LU: the
+// closed-throttle idle is 3 dB below the knee of the leveller, and the
+// overrun level is close to the full-throttle level, so the full-throttle
+// sweep below 1500 RPM is below the knee too, 5 LU under the rest of the
+// sweep with the long, smooth measured flat6 pulse there, where engine-sim
+// lifts the full-throttle pulse 11 dB over its closed-throttle idle.
 var levellerBands = map[string]struct{ lu, db float64 }{
-	"flat12":  {2.6, 2.3},
-	"flat6":   {4.0, 3.3},
-	"inline4": {6.2, 3.3},
-	"v8":      {3.9, 3.2},
+	"flat12":  {3.0, 3.1},
+	"flat6":   {5.8, 3.3},
+	"inline4": {4.4, 3.3},
+	"v8":      {4.4, 3.2},
 }
 
 // TestLevellerSweep checks the level of the full-throttle sweep-wot
@@ -867,10 +872,10 @@ var limiterByEar = map[string]bool{"v8": true}
 // bounces with no pops is within 1.5 dB of the engine-sim reference for
 // the level in a cut and the re-fire bark, and within 3 dB for the notch.
 // No overrun effect plays: the band above 3 kHz is at most 1.5 dB louder
-// than full throttle 150 RPM below the limiter. The crack of the ignition
-// cut bangs of flat12 lifts the band by 1.2 dB, because the smooth pulse
-// leaves the engine little power above 3 kHz. The output stays finite and
-// below full scale.
+// than full throttle 150 RPM below the limiter, and at most 3.5 dB for
+// flat12, whose ignition cut bangs crack above 3.8 kHz: with the measured
+// pulse they lift the band by 3.0 dB, against 1.2 dB with the computed
+// envelope. The output stays finite and below full scale.
 func TestLimiterBounce(t *testing.T) {
 	t.Parallel()
 	for _, name := range Profiles() {
@@ -941,8 +946,12 @@ func TestLimiterBounce(t *testing.T) {
 				t.Errorf("cut %+.1f dB, notch %+.1f dB and bark %+.1f dB, want %+.1f, %+.1f and %+.1f from engine-sim",
 					cut, notch, bark, ref0.cut, ref0.notch, ref0.bark)
 			}
-			if hf > 1.5 {
-				t.Errorf("band above 3 kHz %.1f dB above full throttle below the limiter", hf)
+			hfMost := 1.5
+			if sp.LimiterKind == "ignition" && sp.Pops.Density > 0 {
+				hfMost = 3.5
+			}
+			if hf > hfMost {
+				t.Errorf("band above 3 kHz %.1f dB above full throttle below the limiter, want at most %.1f", hf, hfMost)
 			}
 		})
 	}

@@ -68,6 +68,10 @@ var overDB = [numKinds]float64{kindPop: 4.8, kindBoom: 4.5, kindCrackle: 1.5, ki
 
 const ownNorm = 1 / 0.675
 
+// snapLevel is the level, 400 dB below full scale, below which a decaying
+// pop level snaps to zero.
+const snapLevel = 1e-20
+
 // The calibration of the kind gains renders calDraws pops of up to calSec
 // of each kind on each path. calTrimDB raises the gains, because the
 // median of the random pops in an engine is about 0.5 dB below the mean
@@ -945,6 +949,12 @@ func (p *pops) tick() (crack float32) {
 		if e.left == 0 {
 			p.active--
 		}
+		// After the last sub-event and its ring of six body decays, the
+		// event is 120 dB down and only holds its slot for busyLen, so its
+		// stages do not run.
+		if e.ring == 0 && e.subs == 0 && e.jumpLeft == 0 {
+			continue
+		}
 		if e.subs > 0 {
 			e.next--
 			if e.next == 0 {
@@ -972,11 +982,25 @@ func (p *pops) tick() (crack float32) {
 			g = e.jumpAmp
 		}
 		j := e.jumpLP.Process(g)
+		// The decaying levels snap to zero far below audibility, before
+		// they reach subnormal values, which cost a hundred times more.
+		if g == 0 && j < snapLevel && j > -snapLevel {
+			j, e.jumpLP.Y = 0, 0
+		}
 		p.jump[e.path] += p.jumpMix*j + p.bodyGain*e.body.Process(j)
 		e.crackLvl *= p.crackDec
+		if e.crackLvl < snapLevel {
+			e.crackLvl = 0
+		}
 		e.crackEnv += (e.crackLvl - e.crackEnv) * p.crackAtt
+		if e.crackEnv < snapLevel {
+			e.crackEnv = 0
+		}
 		env += e.crackEnv
 		e.clickLvl *= p.clickDec
+		if e.clickLvl < snapLevel {
+			e.clickLvl = 0
+		}
 		clicks += e.clickLvl
 	}
 	n := p.noise.Bipolar()

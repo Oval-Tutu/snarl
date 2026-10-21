@@ -22,11 +22,9 @@ limiter_notch_db = -2
 limiter_bark_db = 2
 
 [pulse]
-# attack sets a smooth rise, so that the harmonics fall above 2 kHz as in
-# engine-sim.
-width_deg = 150
-attack = 4
-decay = 7
+# The pulse table from engine-sim (measured): tools/fit --pulse on the
+# runner pressure of the flat-6 script.
+table = "flat6"
 cycle_variation = 0.03
 jitter = 0.003
 gain_variation = 0.02
@@ -36,7 +34,7 @@ timing_variation_deg = 0.5
 crossover = "full"
 overlap = 1.0
 # Gains of the formant bank and the pop bank at the end of the file.
-formant_gain_db = -14.80
+formant_gain_db = -19.00
 pop_formant_gain_db = -8.72
 pop_delay_ms = 0.566
 
@@ -73,8 +71,8 @@ rock = 0.02
 [voice]
 # leveller_db puts the closed-throttle idle 3 dB below the knee of the
 # leveller.
-leveller_db = 19.0
-output_db = 0.27
+leveller_db = 23.5
+output_db = 0.17
 
 [[cylinder]] # 1
 crank_deg = 0
@@ -114,54 +112,33 @@ damping_hz = 2500
 gain = 0.85
 listener_m = 0.25
 
-# Formant bank: tools/fit --base ir --hi 16000 on the engine-sim impulse
-# response minimal_muffling_02 of the flat6 script, 8 sections, weighted
-# error 0.96 dB from 40 Hz to 16 kHz.
+# Formant bank: tools/fit --base ir --hi 16000 --tolerance 1.5 on the
+# engine-sim impulse response minimal_muffling_02 of the flat6 script, 4
+# sections, weighted error 1.44 dB from 40 Hz to 16 kHz. Against the 1 dB
+# fit of 8 sections, it leaves out the narrow notches at 134 and 189 Hz
+# and the narrow peak at 933 Hz, and costs 20 fewer multiply-adds per
+# sample.
 [[formant]]
 kind = "highpass"
-hz = 106.6
-q = 0.495
+hz = 97.8
+q = 1.309
 
 [[formant]]
 kind = "peak"
-hz = 133.8
-q = 9.691
-gain_db = -6.56
+hz = 254.8
+q = 1.500
+gain_db = 16.85
 
 [[formant]]
 kind = "peak"
-hz = 189.2
-q = 6.833
-gain_db = -15.61
-
-[[formant]]
-kind = "peak"
-hz = 205.7
-q = 0.747
-gain_db = 21.05
-
-[[formant]]
-kind = "peak"
-hz = 422.4
-q = 0.835
-gain_db = 22.38
-
-[[formant]]
-kind = "peak"
-hz = 535.6
-q = 0.525
-gain_db = -23.05
-
-[[formant]]
-kind = "peak"
-hz = 932.7
-q = 10.485
-gain_db = 5.01
+hz = 393.7
+q = 3.219
+gain_db = 9.75
 
 [[formant]]
 kind = "lowpass"
-hz = 1777.2
-q = 1.170
+hz = 1973.9
+q = 0.963
 
 # Pop bank: tools/fit --pop on the EngineLab pop stages of this profile at
 # a73b874 (testdata/legacy/flat6.toml), 7 sections.

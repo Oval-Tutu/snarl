@@ -97,16 +97,20 @@ func TestStaticLayerFloor(t *testing.T) {
 
 // staticFixFloor is the highest floor in dB that TestStaticFixFloor
 // accepts at the idle and the 3000 RPM holds of holds-t100. With the
-// engine-sim noise AM, derivative mix and input jitter, the floor is
-// -24.1 and -24.0 dB (flat12), -20.5 and -31.1 dB (flat6), -27.6 and
-// -26.1 dB (inline4) and -17.7 and -24.6 dB (v8), against -4.9 and -8.6 dB,
-// -16.4 and -29.2 dB, -24.9 and -29.1 dB and -16.5 and -26.6 dB in the
-// engine-sim references. The bounds are about 1 dB above the snarl floors.
+// engine-sim noise AM, derivative mix, input jitter and measured pulse,
+// the floor is -24.3 and -21.1 dB (flat12), -20.9 and -22.3 dB (flat6),
+// -30.7 and -29.1 dB (inline4) and -22.5 and -27.5 dB (v8), against -4.9
+// and -8.6 dB, -16.4 and -29.2 dB, -24.9 and -29.1 dB and -16.5 and -26.6
+// dB in the engine-sim references. The bounds are about 1 dB above the
+// snarl floors. The flat6 floor at 3000 RPM rises from -31.1 dB with the
+// computed envelope: the measured flat6 pulse lasts 9.5 ms there, so the
+// cycle-to-cycle gain variation and the slow jitter put their noise
+// between the low harmonics.
 var staticFixFloor = map[string][2]float64{
-	"flat12":  {-23, -23},
-	"flat6":   {-19.5, -30},
-	"inline4": {-26.5, -25},
-	"v8":      {-16.5, -23.5},
+	"flat12":  {-23, -20},
+	"flat6":   {-19.5, -21},
+	"inline4": {-29.5, -28},
+	"v8":      {-21.5, -26.5},
 }
 
 // TestStaticFixFloor measures the noise floor between the harmonics and

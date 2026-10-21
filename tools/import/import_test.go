@@ -115,3 +115,14 @@ func TestPopKey(t *testing.T) {
 		t.Error("paths with other chambers gave no note")
 	}
 }
+
+// TestPulseFor checks that every cylinder count takes the pulse table and
+// the collector overlap of the tuned profile closest in layout.
+func TestPulseFor(t *testing.T) {
+	for n, want := range map[int]string{1: "inline4", 4: "inline4", 5: "inline4", 6: "flat6", 8: "v8", 9: "v8", 10: "flat12", 16: "flat12"} {
+		table, overlap := pulseFor(n)
+		if table != want || (table == "inline4") != (overlap == 0) {
+			t.Errorf("%d cylinders: table %s and overlap %g, want %s with the overlap of that profile", n, table, overlap, want)
+		}
+	}
+}

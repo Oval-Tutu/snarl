@@ -77,6 +77,8 @@ func TestProfileErrors(t *testing.T) {
 	good := `name = "x"
 idle_rpm = 800
 redline_rpm = 6000
+[pulse]
+table = "inline4"
 [[cylinder]]
 crank_deg = 0
 bank = 0
@@ -115,6 +117,9 @@ q = 0.7
 		"bad waver":     strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nfinal_gear_waver = 0.1", 1),
 		"bad crossing":  strings.Replace(good, "[[cylinder]]", "[exhaust]\ncrossover = \"some\"\n[[cylinder]]", 1),
 		"bad formant":   strings.Replace(good, `kind = "peak"`, `kind = "notch"`, 1),
+		"no table":      strings.Replace(good, `table = "inline4"`, "", 1),
+		"bad table":     strings.Replace(good, `table = "inline4"`, `table = "nonesuch"`, 1),
+		"path table":    strings.Replace(good, `table = "inline4"`, `table = "../v8"`, 1),
 		"bad pop q":     strings.Replace(good, "q = 0.7", "q = 0", 1),
 		"bad gain db":   strings.Replace(good, "gain_db = 12", "gain_db = 60", 1),
 		"bad pop ms":    strings.Replace(good, "[[cylinder]]", "[exhaust]\npop_delay_ms = 30\n[[cylinder]]", 1),

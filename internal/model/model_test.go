@@ -64,6 +64,7 @@ func TestLoadLevel(t *testing.T) {
 func limiterSpec(kind string) Spec {
 	s := DefaultSpec()
 	s.Name = "lim"
+	s.Pulse.Table = "inline4"
 	s.IdleRPM, s.RedlineRPM, s.LimiterRPM = 800, 6800, 7000
 	s.LimiterKind = kind
 	s.Cylinders = []CylinderSpec{{CrankDeg: 0, PrimaryM: 0.4}, {CrankDeg: 180, PrimaryM: 0.4}, {CrankDeg: 360, PrimaryM: 0.4}, {CrankDeg: 540, PrimaryM: 0.4}}

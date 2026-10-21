@@ -99,16 +99,13 @@ type FormantSpec struct {
 	GainDB float64 `toml:"gain_db"`
 }
 
-// PulseSpec is the shape of one exhaust pulse.
+// PulseSpec is the shape and the level of one exhaust pulse.
 type PulseSpec struct {
-	// WidthDeg is the pulse length in crank degrees.
-	WidthDeg float64 `toml:"width_deg"`
-	// Attack and Decay are the rates a and b of the envelope
-	// (1-exp(-a x))exp(-b x), where x runs from 0 to 1 over the width.
-	Attack float64 `toml:"attack"`
-	Decay  float64 `toml:"decay"`
-	// CamAttack replaces Attack above the cam switch RPM.
-	CamAttack float64 `toml:"cam_attack"`
+	// Table names the pulse table, from engine-sim (measured): the runner
+	// pressure of one firing at each RPM of the measured holds, which
+	// tools/fit --pulse writes to internal/model/pulses/<table>.txt from
+	// the engine-sim CSV of a profile script.
+	Table string `toml:"table"`
 	// CamGain is the extra pulse gain above the cam switch RPM.
 	CamGain float64 `toml:"cam_gain"`
 	// PartLoadDB is the pulse level at load 0.5 in decibels, relative to
@@ -281,7 +278,7 @@ func DefaultSpec() Spec {
 		LimiterBarkDB:    1,
 		FinalGearWaver:   0.003,
 		Pulse: PulseSpec{
-			WidthDeg: 160, Attack: 25, Decay: 7, PartLoadDB: -0.6,
+			PartLoadDB:     -0.6,
 			CycleVariation: 0.08, Jitter: 0.003,
 			GainVariation: 0.06, TimingVariationDeg: 1.5,
 		},
@@ -313,7 +310,7 @@ func (s *Spec) Validate() error {
 	if s.Name == "" {
 		return errors.New("profile has no name")
 	}
-	for _, check := range []func() error{s.validateEngine, s.validateLimiter, s.validateIdle, s.validateCylinders, s.validatePaths, s.validateFormants} {
+	for _, check := range []func() error{s.validateEngine, s.validatePulse, s.validateLimiter, s.validateIdle, s.validateCylinders, s.validatePaths, s.validateFormants} {
 		if err := check(); err != nil {
 			return fmt.Errorf("profile %s: %w", s.Name, err)
 		}
@@ -329,8 +326,6 @@ func (s *Spec) validateEngine() error {
 		return errors.New("idle_rpm, redline_rpm and limiter_ms must be positive, and redline above idle")
 	case s.Exhaust.Crossover != "none" && s.Exhaust.Crossover != "full" && s.Exhaust.Crossover != "partial":
 		return fmt.Errorf("crossover %q is not none, full or partial", s.Exhaust.Crossover)
-	case s.Pulse.WidthDeg <= 0 || s.Pulse.WidthDeg > 360 || s.Pulse.Attack <= 0 || s.Pulse.Decay <= 0:
-		return errors.New("pulse width_deg must be up to 360, and width_deg, attack and decay positive")
 	case s.Exhaust.SpeedOfSound <= 0 || s.Exhaust.Coupling < 0 || s.Exhaust.Coupling > 0.5:
 		return errors.New("speed_of_sound must be positive and coupling from 0 to 0.5")
 	case s.Pops.BodyHz <= 0 || s.Pops.BodyMS <= 0 || s.Pops.CrackMS <= 0 || s.Pops.JumpMS <= 0:
@@ -357,6 +352,12 @@ func (s *Spec) validateEngine() error {
 		return errors.New("noise hf_gain must be from 0 to 0.1 and input_jitter from 0 to 1")
 	}
 	return nil
+}
+
+// validatePulse reports a pulse table that is not known.
+func (s *Spec) validatePulse() error {
+	_, err := loadPulse(s.Pulse.Table)
+	return err
 }
 
 // validateFormants reports the first bad section of the formant bank and

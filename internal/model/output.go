@@ -38,10 +38,14 @@ const (
 type output struct {
 	pre, gain float32
 	engDC     dsp.DCBlock
-	lev       leveller
-	dc        dsp.DCBlock
-	lp        dsp.Biquad
-	lim       limiter
+	// noEngDC is true when the formant bank has a high pass, which removes
+	// the DC before the leveller, so that engDC does not run.
+	noEngDC bool
+	lev     leveller
+	dc      dsp.DCBlock
+	lp      dsp.Biquad
+	useLP   bool
+	lim     limiter
 }
 
 // leveller is the engine-sim peak leveller. The peak follows the input
@@ -160,18 +164,31 @@ func newOutput(levDB, gainDB, rate float64) output {
 		lim:   newLimiter(rate),
 	}
 	o.lp.SetLowPass(0.45*rate, 0.7071, rate)
+	o.useLP = 0.45*rate < audibleHz
 	return o
 }
+
+// audibleHz is the highest frequency that the output low pass must keep
+// out. At a sample rate of 44.4 kHz and up, 0.45 times the rate is above
+// it, so the low pass does not run.
+const audibleHz = 20000
 
 // level runs the leveller gain, the DC block and the leveller for one
 // engine sample.
 func (o *output) level(x float32) float32 {
-	return o.lev.process(o.engDC.Process(x * o.pre))
+	x *= o.pre
+	if !o.noEngDC {
+		x = o.engDC.Process(x)
+	}
+	return o.lev.process(x)
 }
 
 // process runs the rest of the output stage for one sample of the levelled
 // engine and the pops.
 func (o *output) process(x float32) float32 {
-	x = o.lp.Process(o.dc.Process(x))
+	x = o.dc.Process(x)
+	if o.useLP {
+		x = o.lp.Process(x)
+	}
 	return dsp.SoftClip(o.lim.process(x * o.gain))
 }
