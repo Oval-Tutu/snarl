@@ -230,6 +230,55 @@ listen:
         echo "Wrote ${n} blind files and key.txt to ${dir}"
     done
 
+# Build out/listen-overnight/<profile>.wav for the four tuned profiles: the
+# sweep-wot render of the snarl-render binary at the path before, the tier 1
+# render of the current tree, and the engine-sim reference, in that order with
+# 1 s of silence between them. A plain gain takes each part from its measured
+# integrated loudness to -16 LUFS. Writes a spectrogram <profile>.png beside
+# each file, and README.txt with the start time and the measured loudness of
+# each part.
+listen-overnight before: (_listen-overnight before "flat12") (_listen-overnight before "inline4") (_listen-overnight before "flat6") (_listen-overnight before "v8")
+    cat out/listen-overnight/flat12.line out/listen-overnight/inline4.line out/listen-overnight/flat6.line out/listen-overnight/v8.line > out/listen-overnight/README.txt
+    rm out/listen-overnight/flat12.line out/listen-overnight/inline4.line out/listen-overnight/flat6.line out/listen-overnight/v8.line
+    @echo "Wrote out/listen-overnight"
+
+_listen-overnight before profile: (_command "snarl-render")
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v ffmpeg >/dev/null; then
+        echo "Error: ffmpeg is not on PATH. Run this recipe in nix develop." >&2
+        exit 1
+    fi
+    out=out/listen-overnight
+    work="$(mktemp -d)"
+    trap 'rm -rf "${work}"' EXIT
+    mkdir -p "${out}"
+    scn="scenarios/{{ profile }}/sweep-wot.scn"
+    ref="out/reference/engine-sim/{{ profile }}/sweep-wot.wav"
+    "{{ before }}" -rate 48000 -format f32 -tier 1 -out "${work}/before.wav" "{{ profile }}" "${scn}"
+    go run ./cmd/snarl-render -rate 48000 -format f32 -tier 1 -out "${work}/after.wav" "{{ profile }}" "${scn}"
+    lb="$(ffmpeg -nostdin -hide_banner -i "${work}/before.wav" -af ebur128=framelog=quiet -f null - 2>&1 | grep -E '^ +I:')"
+    la="$(ffmpeg -nostdin -hide_banner -i "${work}/after.wav" -af ebur128=framelog=quiet -f null - 2>&1 | grep -E '^ +I:')"
+    le="$(ffmpeg -nostdin -hide_banner -i "${ref}" -af ebur128=framelog=quiet -f null - 2>&1 | grep -E '^ +I:')"
+    lb="${lb#*I:}" la="${la#*I:}" le="${le#*I:}"
+    lb="${lb%LUFS}" la="${la%LUFS}" le="${le%LUFS}"
+    lb="${lb// /}" la="${la// /}" le="${le// /}"
+    nb="$(ffprobe -v error -select_streams a:0 -show_entries stream=duration_ts -of default=nw=1:nk=1 "${work}/before.wav")"
+    na="$(ffprobe -v error -select_streams a:0 -show_entries stream=duration_ts -of default=nw=1:nk=1 "${work}/after.wav")"
+    fmt="aformat=sample_fmts=flt:sample_rates=48000:channel_layouts=mono"
+    # Fade each part in over 10 ms and out over 80 ms, so that the joins do
+    # not click.
+    fade="afade=t=in:d=0.01,areverse,afade=t=in:d=0.08,areverse"
+    ffmpeg -nostdin -hide_banner -loglevel error -y -i "${work}/before.wav" -i "${work}/after.wav" -i "${ref}" \
+        -filter_complex "[0:a]${fmt},volume='pow(10,(-16-(${lb}))/20)',${fade}[a];[1:a]${fmt},volume='pow(10,(-16-(${la}))/20)',${fade}[b];[2:a]${fmt},volume='pow(10,(-16-(${le}))/20)',${fade}[c];aevalsrc=0:s=48000:d=1,${fmt}[s1];aevalsrc=0:s=48000:d=1,${fmt}[s2];[a][s1][b][s2][c]concat=n=5:v=0:a=1" \
+        -c:a pcm_f32le "${out}/{{ profile }}.wav"
+    ffmpeg -nostdin -hide_banner -loglevel error -y -i "${out}/{{ profile }}.wav" -lavfi "showspectrumpic=s=1600x600:scale=log:fscale=log:legend=1" "${out}/{{ profile }}.png"
+    ta=$(( (nb + 48000) * 1000 / 48000 ))
+    te=$(( (nb + na + 96000) * 1000 / 48000 ))
+    printf '{{ profile }}.wav: before at 0.000 s (%s LUFS), after at %d.%03d s (%s LUFS), engine-sim at %d.%03d s (%s LUFS)\n' \
+        "${lb}" $(( ta / 1000 )) $(( ta % 1000 )) "${la}" $(( te / 1000 )) $(( te % 1000 )) "${le}" > "${out}/{{ profile }}.line"
+    echo "Wrote ${out}/{{ profile }}.wav"
+
 # Stop with an error when the command in cmd/<name> does not exist yet.
 _command name:
     #!/usr/bin/env bash
