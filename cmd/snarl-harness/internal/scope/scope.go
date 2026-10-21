@@ -8,6 +8,7 @@ import (
 	"math"
 
 	"github.com/oval-tutu/snarl/cmd/snarl-harness/internal/record"
+	"github.com/oval-tutu/snarl/internal/analysis"
 )
 
 // Spectrum and meter settings.
@@ -141,7 +142,7 @@ func (s *Scope) spectrum() {
 	for i := range s.buf {
 		s.buf[i] = complex(float64(s.hist[(s.pos+i)%Size])*s.window[i], 0)
 	}
-	FFT(s.buf)
+	analysis.FFT(s.buf)
 	// A sine of amplitude a peaks at a*Size/4 under the Hann window.
 	const scale = 16.0 / (Size * Size)
 	for b := range Bands {

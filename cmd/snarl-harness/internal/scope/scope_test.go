@@ -2,7 +2,6 @@ package scope
 
 import (
 	"math"
-	"math/cmplx"
 	"testing"
 
 	"github.com/oval-tutu/snarl"
@@ -27,27 +26,6 @@ func feed(s *Scope, f, a, seconds float64) {
 		}
 	}
 	s.Update()
-}
-
-func TestFFTMatchesDFT(t *testing.T) {
-	t.Parallel()
-	const n = 64
-	x := make([]complex128, n)
-	for i := range x {
-		x[i] = complex(math.Sin(float64(i)*0.7)+0.3*math.Cos(float64(i)*2.1), 0)
-	}
-	want := make([]complex128, n)
-	for k := range want {
-		for i, v := range x {
-			want[k] += v * cmplx.Exp(complex(0, -2*math.Pi*float64(k*i)/n))
-		}
-	}
-	FFT(x)
-	for k := range x {
-		if cmplx.Abs(x[k]-want[k]) > 1e-9 {
-			t.Fatalf("bin %d = %v, want %v", k, x[k], want[k])
-		}
-	}
 }
 
 func TestBandMapping(t *testing.T) {
