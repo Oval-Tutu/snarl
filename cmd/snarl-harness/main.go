@@ -37,11 +37,12 @@ import (
 	"github.com/oval-tutu/snarl/cmd/snarl-harness/internal/drive"
 	"github.com/oval-tutu/snarl/cmd/snarl-harness/internal/pads"
 	"github.com/oval-tutu/snarl/cmd/snarl-harness/internal/record"
+	"github.com/oval-tutu/snarl/cmd/snarl-harness/internal/scope"
 	"github.com/oval-tutu/snarl/cmd/snarl-harness/internal/stream"
 )
 
 const (
-	screenW, screenH = 960, 520
+	screenW, screenH = 960, 620
 	tps              = 60
 	// flashTicks is the length of the pop flash on screen.
 	flashTicks = tps / 4
@@ -68,7 +69,7 @@ const (
 	padSelect   = ebiten.StandardGamepadButtonCenterLeft
 	padStart    = ebiten.StandardGamepadButtonCenterRight
 	legend      = "Throttle RT/Up/W  Shift RB,A/E up  LB,X/Q down  Profile D-pad L,R/Left,Right (all), 1-4 (tuned)  Gears Back/G\n" +
-		"Ignition Start/Space  Buffer D-pad U,D/PgUp,PgDn  Record R  Own pops N  Pop character C"
+		"Ignition Start/Space  Buffer D-pad U,D/PgUp,PgDn  Record R  Own pops N  Pop character C  Meter and spectrum S"
 	keyboardName = "keyboard"
 )
 
@@ -100,6 +101,14 @@ type harness struct {
 	pops      snarl.PopReport
 	flash     int
 
+	// scope measures the played audio, and hideScope hides it.
+	// cylinders are the cylinder counts of the profiles, 0 when unknown.
+	// scopeUpdate and scopeDraw are the mean times of the scope.
+	scope                  *scope.Scope
+	hideScope              bool
+	cylinders              []int
+	scopeUpdate, scopeDraw time.Duration
+
 	quit   context.Context // Done on an interrupt signal.
 	rec    *record.Recorder
 	recDir string
@@ -111,6 +120,7 @@ func newHarness(quit context.Context, profile, catalogue, recDir string, recordN
 		pads:    pads.NewReader(),
 		drive:   drive.New(drive.DefaultGears),
 		src:     stream.New(),
+		scope:   scope.New(stream.SampleRate, stream.Block),
 		running: true,
 		buffer:  defaultBuffer,
 		quit:    quit,
@@ -120,6 +130,8 @@ func newHarness(quit context.Context, profile, catalogue, recDir string, recordN
 	if h.profiles, h.profile, h.note, err = loadProfiles(profile, catalogue); err != nil {
 		return nil, err
 	}
+	h.cylinders = cylinderCounts(h.profiles, catalogue)
+	h.src.SetTap(h.scope)
 	h.ctx = audio.NewContext(stream.SampleRate)
 	h.swapEngine()
 	if recordNow {
@@ -138,10 +150,10 @@ func (h *harness) toggleRecord() {
 		}
 		h.rec = r
 		h.rec.Snapshot(h.profiles[h.profile].Name, snarl.Tier1, h.snap)
-		h.src.SetTap(r)
+		h.src.SetTap(tee{h.scope, r})
 		return
 	}
-	h.src.SetTap(nil)
+	h.src.SetTap(h.scope)
 	res, err := h.rec.Stop()
 	h.rec = nil
 	h.recMsg = fmt.Sprintf("Saved %s and %s: %v", res.CSVPath, filepath.Base(res.WAVPath), res)
@@ -220,6 +232,12 @@ func (h *harness) Update() error {
 	h.updateSwitches()
 	if keyJust(ebiten.KeyR) {
 		h.toggleRecord()
+	}
+	if keyJust(ebiten.KeyS) {
+		h.hideScope = !h.hideScope
+	}
+	if !h.hideScope {
+		h.updateScope()
 	}
 
 	dt := 1.0 / float64(ebiten.TPS())
@@ -492,6 +510,10 @@ func (h *harness) Draw(screen *ebiten.Image) {
 	}
 	next()
 	next()
+	if !h.hideScope {
+		y = h.drawScope(screen, y)
+		next()
+	}
 	say(8, "%s", legend)
 }
 
