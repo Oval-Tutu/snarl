@@ -4,7 +4,7 @@ Measured at `2547fc0` on the branch `upstream-profiles`: snarl tier 1 at 48 kHz,
 
 ## Answer
 
-engine-sim against itself scores 100 on every calibration: 21 comparisons of the five engine-sim engines, with a second render or with the two halves of each hold. The current snarl scores 24 to 45 on the holds, 54 to 69 on the overrun and 73 to 88 on the full-throttle sweep. The sweep figure is an upper bound, because a sweep has no cycle measures and the sweep floors are loose. The target of 90 is far away on every engine.
+engine-sim against itself scores 100 on every calibration: 21 comparisons of the five engine-sim engines, with a second render or with the two halves of each hold. The current snarl scores 19 to 45 on the holds (24 to 45 for the five engine-sim engines), 54 to 69 on the overrun and 73 to 88 on the full-throttle sweep. The sweep figure is an upper bound, because a sweep has no cycle measures and the sweep floors are loose. The target of 90 is far away on every engine.
 
 | Engine | Holds t000 | Holds t050 | Holds t100 | Sweep | Overrun |
 | --- | --- | --- | --- | --- | --- |
