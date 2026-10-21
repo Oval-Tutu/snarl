@@ -53,7 +53,9 @@ func newIdle(s *Spec, seed uint32, chunkHz float64) idle {
 // fade RPM, smoothed over 50 ms. It follows the input RPM, not the
 // smoothed RPM, so that a start above the fade RPM renders exactly as with
 // every depth at zero. The variation, hunt and rocking also fall linearly
-// with load to 0 at full load.
+// with load to 0 at half load: in engine-sim, the firing gain spread at
+// idle at half throttle is that at full throttle (tools/fit --pulse
+// --variation), and only the closed throttle adds to it.
 func (d *idle) control(rpm, load float32) {
 	d.phase += d.phaseStep
 	if d.phase >= 1 {
@@ -73,7 +75,7 @@ func (d *idle) control(rpm, load float32) {
 		return
 	}
 	d.imbalance = d.imbal * w
-	depth := w * (1 - load)
+	depth := w * max(0, 1-2*load)
 	lfo := 0.7*dsp.Sine(d.phase) + 0.5*wander
 	d.speed = 1 + d.hunt*depth*lfo
 	q := d.phase + 0.25

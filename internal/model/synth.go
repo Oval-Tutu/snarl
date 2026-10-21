@@ -55,6 +55,9 @@ const (
 	// engLevelSec is the time constant in seconds of the engine level
 	// that the pops follow.
 	engLevelSec = 0.05
+	// sqrt3 is the ratio of the half width of a uniform spread to its
+	// standard deviation.
+	sqrt3 = 1.7320508075688772
 	// waverHz1 and waverHz2 are the rates of the two slow sines of the
 	// final gear waver. Their ratio is not a simple fraction, so that the
 	// waver does not repeat audibly.
@@ -128,6 +131,9 @@ type Synth struct {
 	// blend of two rows that the firings of the chunk take.
 	pt  *pulseTable
 	tab []float32
+	// measVar is the share of the measured variation of the table, and
+	// spreadG the half width of the uniform firing gain for the chunk.
+	measVar, spreadG float32
 
 	banks    int
 	cross    [MaxBanks][MaxBanks]float32
@@ -241,6 +247,7 @@ func New(s *Spec, rate int) (*Synth, error) {
 		invRate120: float32(1 / (120 * fs)),
 		banks:      s.Banks(),
 		cycleVar:   float32(s.Pulse.CycleVariation),
+		measVar:    float32(s.Pulse.MeasuredVariation),
 		jitter:     float32(s.Pulse.Jitter),
 		redline:    float32(s.RedlineRPM),
 		camRPM:     float32(s.CamSwitchRPM),
@@ -673,6 +680,11 @@ func (y *Synth) controlPulse() {
 	}
 	l := t.lenSec[a] + (t.lenSec[b]-t.lenSec[a])*w
 	y.tab = t.at(a, b, w)
+	if y.measVar > 0 {
+		// A uniform spread from -h to h has a standard deviation of
+		// h/sqrt(3).
+		y.spreadG = y.measVar * float32(sqrt3*(t.gainSD[a]+(t.gainSD[b]-t.gainSD[a])*w))
+	}
 	y.step = float32(float64(len(y.tab)-1) / (l * y.rate))
 	y.stepPerCycle = 0
 	if y.inc > 0 {
@@ -693,7 +705,7 @@ func (y *Synth) fire(cyl, at int) {
 		}
 	} else {
 		g, late = y.idle.firing()
-		g *= 1 + y.cycleVar*y.noise.Bipolar()
+		g *= 1 + (y.cycleVar+y.spreadG)*y.noise.Bipolar()
 	}
 	// The cylinder fires its voices in turn, so that a pulse that lasts
 	// longer than one engine cycle rings on under the next.

@@ -25,10 +25,15 @@ limiter_bark_db = 2
 # The pulse table from engine-sim (measured): tools/fit --pulse on the
 # runner pressure of the flat-6 script.
 table = "flat6"
-cycle_variation = 0.03
+# The firing gain spread of the table (measured_variation 1) replaces
+# cycle_variation. gain_variation and timing_variation_deg are sqrt(3)
+# times the median spread of the cylinder means of the measured holds
+# (tools/fit --pulse --variation): 0.009 in gain and 0.77 degrees.
+cycle_variation = 0
+measured_variation = 1
 jitter = 0.003
-gain_variation = 0.02
-timing_variation_deg = 0.5
+gain_variation = 0.016
+timing_variation_deg = 1.33
 
 [exhaust]
 crossover = "full"
@@ -62,8 +67,14 @@ level_db = -1.2
 idle_level_db = -0.75
 
 [idle]
+# No timing_deg: in engine-sim (tools/fit --pulse --variation), the onset
+# spread of the firings is no larger at the closed-throttle idle than at
+# full throttle. With timing_deg 3, the residual of the closed-throttle
+# idle with no hunt is -10.1 dB and the part from 0.5 to 2 kHz -23.4 dB,
+# against -16.1 and -27.7 dB in engine-sim: the delay spread turns the
+# upper harmonics into noise. With 0, they are -14.8 and -28.7 dB.
 variation = 0.12
-timing_deg = 3
+timing_deg = 0
 imbalance = 0.06
 hunt = 0.005
 rock = 0.02

@@ -27,7 +27,17 @@ cam_switch_rpm = 5700
 table = "inline4"
 cam_gain = 0.25
 part_load_db = -0.9
-cycle_variation = 0.03
+# The firing gain spread of the table (measured_variation 1) replaces
+# cycle_variation. The cylinders of the engine-sim inline-4 are nearly the
+# same (tools/fit --pulse --variation: a spread of 0.004 in gain and 0.09
+# degrees in onset), but gain_variation and timing_variation_deg keep
+# their values: with the measured spreads (0.007 and 0.16 degrees), the
+# centroid of the holds from 7000 to 8400 RPM is 1238 to 1693 Hz, against
+# 1069 to 1506 Hz with these and 909 to 1088 Hz in engine-sim. The fixed
+# spread stands in for the two exhaust systems of the engine-sim script,
+# which the one path of the profile leaves out.
+cycle_variation = 0
+measured_variation = 1
 jitter = 0.003
 gain_variation = 0.25
 timing_variation_deg = 5

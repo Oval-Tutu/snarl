@@ -112,8 +112,17 @@ type PulseSpec struct {
 	// full load at the same RPM. The pulse level rises smoothly with load
 	// from the overrun level at load 0 to full load at load 1.
 	PartLoadDB float64 `toml:"part_load_db"`
-	// CycleVariation is the random per-firing gain spread.
+	// CycleVariation is the random per-firing gain spread: each firing has
+	// a gain from 1-CycleVariation to 1+CycleVariation, on top of the
+	// measured spread.
 	CycleVariation float64 `toml:"cycle_variation"`
+	// MeasuredVariation is the share, from 0 to 2, of the cycle-to-cycle
+	// variation of the pulse table that the firings take: the spread of the
+	// firing gain and of the firing onset of engine-sim (measured), which
+	// tools/fit --pulse --variation writes with the rows. Each firing draws
+	// a gain and an onset from uniform spreads with these standard
+	// deviations at its RPM. Zero, the default, turns it off.
+	MeasuredVariation float64 `toml:"measured_variation"`
 	// Jitter is the slow random RPM and gain wander, as a fraction.
 	Jitter float64 `toml:"jitter"`
 	// GainVariation is the fixed per-cylinder gain spread.
@@ -229,7 +238,7 @@ type OverrunSpec struct {
 // imbalance, a slow idle hunt and a slow rocking. Each effect has its full
 // depth at idle and falls along a smoothstep over RPM to zero at FadeRPM.
 // The variation, hunt and rocking also fall linearly with load to zero at
-// full load. Above FadeRPM, the output does not change with these
+// half load. Above FadeRPM, the output does not change with these
 // settings.
 type IdleSpec struct {
 	// FadeRPM is the RPM at which the effects reach zero.
@@ -346,6 +355,8 @@ func (s *Spec) validateEngine() error {
 		return errors.New("overrun level_db and idle_level_db must be from -40 to 6")
 	case s.Pulse.PartLoadDB >= 0 || s.Pulse.PartLoadDB < -20:
 		return errors.New("pulse part_load_db must be from -20 to below 0")
+	case s.Pulse.MeasuredVariation < 0 || s.Pulse.MeasuredVariation > 2:
+		return errors.New("pulse measured_variation must be from 0 to 2")
 	case s.Noise.AMCutoffHz < 100 || s.Noise.AMCutoffHz > 8000 || s.Noise.AM < 0 || s.Noise.AM > 1:
 		return errors.New("noise am_cutoff_hz must be from 100 to 8000 and am from 0 to 1")
 	case s.Noise.HFGain < 0 || s.Noise.HFGain > 0.1 || s.Noise.InputJitter < 0 || s.Noise.InputJitter > 1:

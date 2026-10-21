@@ -28,10 +28,15 @@ limiter_bark_db = 2
 # The pulse table from engine-sim (measured): tools/fit --pulse on the
 # runner pressure of the v8 script.
 table = "v8"
-cycle_variation = 0.04
+# The firing gain spread of the table (measured_variation 1) replaces
+# cycle_variation. gain_variation and timing_variation_deg are sqrt(3)
+# times the median spread of the cylinder means of the measured holds
+# (tools/fit --pulse --variation): 0.052 in gain and 1.5 degrees.
+cycle_variation = 0
+measured_variation = 1
 jitter = 0.004
-gain_variation = 0.12
-timing_variation_deg = 2
+gain_variation = 0.091
+timing_variation_deg = 2.6
 
 [exhaust]
 crossover = "partial"
@@ -66,6 +71,10 @@ level_db = -0.9
 idle_level_db = -0.9
 
 [idle]
+# variation matches the extra firing gain spread of the closed throttle in
+# engine-sim (tools/fit --pulse --variation): 0.187 at the closed-throttle
+# idle against 0.081 at full throttle, sqrt(3) times the root of the
+# difference of their squares is 0.29.
 variation = 0.28
 timing_deg = 2
 imbalance = 0.5

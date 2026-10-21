@@ -24,7 +24,7 @@ import (
 // by about -60 dB from cycle to cycle.
 var silentEngine = []string{
 	"noise.am=0", "noise.input_jitter=0",
-	"pulse.cycle_variation=0", "pulse.jitter=0",
+	"pulse.cycle_variation=0", "pulse.measured_variation=0", "pulse.jitter=0",
 	"idle.variation=0", "idle.timing_deg=0", "idle.hunt=0", "idle.rock=0", "idle.imbalance=0",
 	"pops.density=0", "voice.leveller_db=-40",
 }

@@ -345,7 +345,184 @@ The sum over the 16 states falls by 19 per cent, from 4.42 to 3.56. Every median
 | Subnormal values of the decaying pop levels snap to zero at 1e-20 | flat12 limiter 0.465 to 0.429. In the profile, the pop tick fell from 17 to 7 per cent and the one-poles from 13 to 4 per cent |
 | Each voice runs over the chunk in one loop, from its firing sample | flat12 limiter 0.43 to 0.38 |
 | Formant bank tolerance 1.5 dB (5, 4, 3 and 3 fewer sections, 25, 20, 15 and 15 fewer multiply-adds) | flat12 limiter: the formant bank fell from 14 to 3 per cent of the profile |
-| No output low pass at 44.4 kHz and up | flat12 limiter 0.338 to 0.323 |
+| No output low pass from about 44.45 kHz (0.45 times the rate at least 20 kHz) | flat12 limiter 0.338 to 0.323 |
 | One jitter offset for every path, no engine DC block after a bank high pass, one bounds check in the voice loop | flat12 limiter 0.318 to 0.298 (fixed blocks) |
 | One pop bank on the sum of the paths, the pop stages stop 100 dB down, a rung-out pop slot skips its stages | within the run-to-run spread (2 per cent or less) |
 | Tried and dropped: the stages one at a time over the chunk, and a binomial in place of the jitter low pass | both slower, by about 20 and 10 per cent on the flat12 limiter |
+
+### Final (phase 4e)
+
+"Before" is `89b5f6a` (the "After" of phase 4d). "After" is the working tree with these changes:
+
+- `tools/fit --pulse --variation` (new) measures the cycle-to-cycle variation of the engine-sim runner pressure. With the mean pulse of each hold fixed, it fits a gain, a shift and a width to each firing in turn by damped Gauss-Newton steps, fits the pulse again with them, and repeats. It reports the spread of each value about the mean of its cylinder, the spread of the cylinder means, and the part of the pressure that does not repeat from cycle to cycle. With `--out`, it writes one `spread` line per row of the pulse table with the firing gain spread. Reports: `out/phase4e/pulse/<profile>.md` (the table holds) and `out/phase4e/var/<profile>.md` (with `holds-t000`).
+- `[pulse] measured_variation` (new, default 0): the share of the measured firing gain spread that each firing draws, uniform, at its RPM. The tuned profiles set 1 and `cycle_variation` 0. flat6 and v8 set `gain_variation` and `timing_variation_deg` to the measured cylinder spreads. flat12 and inline4 keep theirs (see the centroid below).
+- The idle character falls with load to zero at half load, not at full load: in engine-sim, the firing gain spread at idle at half throttle is that at full throttle, and only the closed throttle adds to it.
+- flat6 `[idle] timing_deg` 3 to 0: engine-sim has no extra onset spread at the closed-throttle idle.
+- The comment in `internal/model/output.go` and the "Output low pass" row of `docs/scoping.md` give the true limit: the low pass does not run when 0.45 times the rate is at least 20 kHz, from about 44.45 kHz.
+
+Renders, gap tables and analyses: `out/phase4e/head/<profile>/` and `out/phase4e/after/<profile>/` (`gap-<scenario>.md` and `<scenario>/`). New test: `TestIdleNoise` (`idlenoise_test.go`).
+
+#### Answer
+
+The excess noise of the closed-throttle idle after phase 4d is not static. It is the approved idle hunt, a pitch wander that the residual counts as noise because the engine-sim references hold the crank speed on the dynamometer. With `idle.hunt=0`, the v8 closed-throttle residual falls from -1.2 to -10.6 dB (engine-sim -11.3 dB), all of it below 500 Hz, and the parts above 2 kHz do not move. Above 2 kHz, the snarl idle noise is never more than 1 dB above engine-sim at any idle hold, and at most holds it is 1 to 9 dB below. Three changes bring the residual with no hunt within 2 dB of engine-sim at every idle hold of flat12, flat6 and v8:
+
+1. The measured firing gain spread (0.08, 0.06, 0.03 and 0.58 at idle for v8, flat6, inline4 and flat12) gives the idle at half and full throttle its engine-sim residual: v8 -18.3 dB against -16.7 dB, flat12 -6.1 against -6.0 dB, flat6 -17.2 against -16.7 dB.
+2. The idle character stops at half load, so the idle at half throttle has the residual of full throttle, as in engine-sim (v8 -18.0 against -3.2 dB before).
+3. Without the flat6 idle timing spread, the flat6 closed-throttle residual is -14.8 dB, against -10.1 dB with it and -16.1 dB in engine-sim. The timing spread turned the upper harmonics into noise: the part from 0.5 to 2 kHz was -23.4 dB, against -27.7 dB in engine-sim. This is the one change that removes a static-like noise.
+
+Gaps that remain:
+
+- inline4 is 5 to 6 dB cleaner than engine-sim at every idle hold: the engine-sim inline-4 pressure changes its shape from firing to firing (cycle residual -23.9 dB at full throttle), and the gain spread alone gives -29 dB.
+- The AM trough at idle is 4 to 12 dB deeper: the engine-sim impulse response spreads each firing over 45 ms or more, and the formant bank rings for a few milliseconds. The engine-sim pressure itself has a trough of -42.7 dB (v8, full-throttle idle).
+- The v8 residual at 2000 to 6000 RPM is still 4 to 10 dB above engine-sim, from the approved slow `[pulse] jitter`: with `pulse.jitter=0` it is -19.5 to -30.2 dB against -26.0 to -30.3 dB.
+- The centroid gap at high RPM is not a missing cycle-to-cycle change of the pulse: from 2000 RPM up, the engine-sim firing gain spread is 0.01 to 0.07 (0.10 to 0.43 for flat12), the onset spread 0.06 to 1.3 degrees and the width spread 0.024 or less. The measured spread lowers the flat12 centroid by 50 to 120 Hz, to 1643 to 1791 Hz from 4000 RPM (engine-sim 1251 to 1403 Hz). The v8 hold at 5000 RPM stays at 1460 Hz against 1049 Hz.
+- The flat6 loudness band of the sweep stays at 5.2 LU. More leveller gain narrows it only to 3.6 LU, with the closed-throttle idle 9 dB over the knee.
+
+#### Idle noise
+
+The idle hold (`snarl-compare --residual`) of the three hold scenarios: residual, its parts from 2 to 6 kHz and from 6 to 16 kHz relative to the whole signal, and the AM peak and trough, in dB. "After, no hunt" is the working tree with `idle.hunt=0`. The hunt only acts at closed throttle.
+
+| Profile | Throttle | engine-sim | Before | After | After, no hunt |
+| --- | --- | --- | --- | --- | --- |
+| flat12 | 0 | -3.2, -28.1, -30.5, +4.8 / -5.4 | -2.6, -31.9, -33.8, +7.0 / -6.5 | -2.0, -31.0, -32.6, +5.4 / -4.0 | -2.5, -31.2, -32.6, +4.0 / -6.5 |
+| flat12 | 0.5 | -6.2, -28.3, -30.7, +4.1 / -7.5 | -7.2, -32.0, -33.6, +7.9 / -7.9 | -6.0, -31.1, -32.4, +4.2 / -9.7 | same |
+| flat12 | 1 | -6.0, -28.4, -30.3, +4.1 / -6.8 | -23.9, -32.0, -33.5, +6.6 / -10.1 | -6.1, -30.9, -32.2, +4.0 / -9.3 | same |
+| flat6 | 0 | -16.1, -29.2, -37.8, +6.5 / -6.1 | -3.7, -30.0, -41.1, +8.7 / -21.7 | -4.3, -30.1, -41.1, +8.2 / -21.0 | -14.8, -29.8, -41.3, +6.5 / -14.6 |
+| flat6 | 0.5 | -16.7, -25.2, -33.2, +6.9 / -6.8 | -7.7, -30.3, -41.3, +8.9 / -19.5 | -17.3, -29.9, -41.3, +6.8 / -13.0 | same |
+| flat6 | 1 | -16.7, -25.2, -33.1, +5.4 / -6.5 | -20.0, -30.2, -41.7, +7.7 / -11.8 | -17.2, -30.2, -41.7, +6.6 / -13.2 | same |
+| inline4 | 0 | -23.0, -50.3, -52.9, +6.8 / -19.2 | -29.9, -54.5, -56.7, +5.9 / -15.2 | -28.3, -54.4, -56.7, +5.8 / -16.2 | same |
+| inline4 | 0.5 | -23.7, -48.0, -50.3, +10.6 / -15.0 | -29.9, -54.4, -56.7, +5.7 / -15.2 | -28.5, -54.4, -56.7, +6.0 / -16.3 | same |
+| inline4 | 1 | -23.9, -48.2, -50.1, +11.2 / -15.9 | -30.2, -54.2, -56.5, +5.3 / -14.3 | -28.8, -54.2, -56.5, +5.6 / -15.1 | same |
+| v8 | 0 | -11.3, -27.7, -35.3, +7.0 / -10.4 | -1.2, -29.4, -36.1, +8.3 / -14.2 | -1.4, -29.4, -36.3, +8.3 / -13.6 | -9.9, -29.0, -36.2, +8.5 / -19.8 |
+| v8 | 0.5 | -16.8, -26.5, -34.7, +5.3 / -9.7 | -3.2, -29.0, -36.0, +8.8 / -20.4 | -18.1, -29.2, -36.3, +8.3 / -21.4 | same |
+| v8 | 1 | -16.7, -26.4, -34.7, +5.6 / -9.4 | -21.2, -29.1, -36.2, +8.6 / -21.1 | -18.3, -29.2, -36.3, +7.9 / -21.3 | same |
+
+The mutes of the v8 closed-throttle idle at `89b5f6a`, each with `--set` (residual, its parts from 20 to 500 Hz, 0.5 to 2 kHz, 2 to 6 kHz and 6 to 16 kHz, in dB, `out/phase4e/mute/`):
+
+| Render | Residual | 20-500 | 0.5-2k | 2-6k | 6-16k |
+| --- | --- | --- | --- | --- | --- |
+| Profile | -1.2 | -1.5 | -21.5 | -29.4 | -36.1 |
+| `idle.hunt=0` | -10.6 | -10.9 | -23.8 | -28.9 | -36.1 |
+| `idle.variation=0` | -1.3 | -1.5 | -21.6 | -29.3 | -36.1 |
+| Every `[idle]` depth 0 | -21.1 | -23.7 | -27.2 | -29.1 | -36.2 |
+| `pulse.jitter=0` | -1.3 | -1.5 | -21.4 | -29.3 | -36.1 |
+| `noise.am=0` | -1.3 | -1.6 | -21.6 | -29.6 | -36.3 |
+| `noise.input_jitter=0` | -1.2 | -1.5 | -22.8 | -48.3 | -65.9 |
+| Every random and noise layer 0 | -71.6 | -75.0 | -81.4 | -88.0 | -84.6 |
+| engine-sim | -11.3 | -11.9 | -22.7 | -27.7 | -35.3 |
+
+The input jitter gives the noise above 2 kHz at idle. The noise AM gives less than 1 dB of any band at idle. The hunt gives the residual below 500 Hz.
+
+#### Measured variation
+
+From `tools/fit --pulse --variation` on the per-step engine-sim CSVs. Firing columns: the standard deviation of each firing about the mean of its cylinder. "Cycle of slope": the residual of the first difference of the pressure sum, the part that does not repeat from cycle to cycle.
+
+| Profile | Firing gain, idle (t000 / t100) | Firing gain, 2000 RPM up (t100) | Firing onset, idle (t000 / t100) | Firing onset, 2000 RPM up | Firing width | Cylinder gain | Cylinder onset | Cycle of slope, idle t100 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| flat12 | 0.635 / 0.580 | 0.43 to 0.10 | 2.34 / 0.52 deg | 0.44 to 0.76 deg | 0.06 or less | 0.009 to 0.122 | 0.04 to 0.11 deg | -5.7 dB |
+| flat6 | 0.064 / 0.058 | 0.010 to 0.070 | 0.81 / 0.98 deg | 0.17 to 1.33 deg | 0.01 or less | 0.003 to 0.043 | 0.23 to 1.03 deg | -17.6 dB |
+| inline4 | 0.056 / 0.028 | 0.011 to 0.016 | 0.39 / 0.33 deg | 0.06 to 0.16 deg | 0.01 or less | 0.000 to 0.007 | 0.04 to 0.22 deg | -21.4 dB |
+| v8 | 0.187 / 0.081 | 0.013 to 0.019 | 1.10 / 0.81 deg | 0.08 to 0.26 deg | 0.04 or less | 0.040 to 0.108 | 0.37 to 2.33 deg | -16.7 dB |
+
+The model takes the firing gain spread of the full-throttle holds (with the half-throttle holds for flat6) and leaves out the onset and the width. A rigid onset spread of 0.2 ms at the v8 idle raises its residual at full throttle to -10.6 dB, against -18.4 dB with the gain spread alone and -16.7 dB in engine-sim: at idle the fitted shift also takes up changes of the shape of the pulse. The extra gain spread of the closed throttle in engine-sim matches the approved v8 and flat12 `[idle] variation`: sqrt(3) times the root of the difference of the squares is 0.29 and 0.45, against 0.28 and 0.4.
+
+#### flat12
+
+| Measure | engine-sim | Before | After |
+| --- | --- | --- | --- |
+| Loudness band, `sweep-wot` | 1.3 LU | 2.7 LU | 2.9 LU |
+| Peak band, `sweep-wot` | 1.3 dB | 2.7 dB | 2.4 dB |
+| Crest factor | 7.0 to 8.3 dB | 6.3 to 9.0 dB | 6.7 to 10.3 dB |
+| Centroid | 1251 to 1525 Hz | 1363 to 1907 Hz | 1418 to 1791 Hz |
+| Power above 2.84 kHz | -25.6 to -30.3 dB | -23.2 to -30.0 dB | -23.6 to -28.9 dB |
+| Strongest order, top hold (6800 RPM) | 2 (227 Hz) | 3 (340 Hz) | 3 (340 Hz) |
+| Residual | -6.0 to -12.8 dB | -15.7 to -23.9 dB | -5.7 to -15.9 dB |
+| AM peak / trough | +3.0 to +4.7 / -5.8 to -12.5 dB | +3.9 to +6.6 / -5.0 to -10.1 dB | +3.8 to +5.6 / -5.8 to -9.3 dB |
+| Residual 6-16 kHz | -29.0 to -33.8 dB | -26.5 to -33.5 dB | -26.9 to -32.2 dB |
+
+#### flat6
+
+| Measure | engine-sim | Before | After |
+| --- | --- | --- | --- |
+| Loudness band, `sweep-wot` | 3.0 LU | 5.2 LU | 5.2 LU |
+| Peak band, `sweep-wot` | 2.3 dB | 1.8 dB | 2.1 dB |
+| Crest factor | 3.6 to 10.0 dB | 4.6 to 10.9 dB | 4.7 to 11.1 dB |
+| Centroid | 846 to 1168 Hz | 739 to 1106 Hz | 725 to 1092 Hz |
+| Power above 2.84 kHz | -26.5 to -39.0 dB | -33.0 to -39.6 dB | -33.0 to -39.5 dB |
+| Strongest order, top hold (6600 RPM) | 3 (330 Hz) | 3 (330 Hz) | 3 (330 Hz) |
+| Residual | -16.7 to -32.4 dB | -20.0 to -26.2 dB | -17.2 to -26.3 dB |
+| AM peak / trough | +2.5 to +5.4 / -2.8 to -6.5 dB | +4.0 to +7.7 / -7.6 to -11.8 dB | +4.4 to +6.6 / -7.3 to -13.2 dB |
+| Residual 6-16 kHz | -33.1 to -45.9 dB | -41.3 to -47.7 dB | -41.3 to -47.7 dB |
+
+#### inline4
+
+| Measure | engine-sim | Before | After |
+| --- | --- | --- | --- |
+| Loudness band, `sweep-wot` | 2.3 LU | 4.1 LU | 4.1 LU |
+| Peak band, `sweep-wot` | 2.3 dB | 1.5 dB | 1.5 dB |
+| Crest factor | 3.8 to 8.3 dB | 3.7 to 8.9 dB | 3.7 to 8.8 dB |
+| Centroid | 337 to 1088 Hz | 290 to 1499 Hz | 290 to 1506 Hz |
+| Power above 2.84 kHz | -34.2 to -51.7 dB | -31.2 to -54.6 dB | -31.2 to -54.6 dB |
+| Strongest order, top hold (8400 RPM) | 4 (560 Hz) | 2 (280 Hz) | 2 (280 Hz) |
+| Residual | -23.9 to -41.8 dB | -17.1 to -35.8 dB | -17.6 to -36.0 dB |
+| AM peak / trough | +4.3 to +11.2 / -5.9 to -18.3 dB | +4.1 to +8.9 / -6.7 to -16.6 dB | +4.1 to +9.3 / -6.9 to -16.6 dB |
+| Residual 6-16 kHz | -37.4 to -55.0 dB | -34.3 to -57.9 dB | -34.3 to -58.0 dB |
+
+#### v8
+
+| Measure | engine-sim | Before | After |
+| --- | --- | --- | --- |
+| Loudness band, `sweep-wot` | 1.7 LU | 3.9 LU | 3.9 LU |
+| Peak band, `sweep-wot` | 2.2 dB | 1.6 dB | 1.7 dB |
+| Crest factor | 5.6 to 8.5 dB | 5.3 to 12.7 dB | 5.3 to 12.8 dB |
+| Centroid | 868 to 1049 Hz | 990 to 1460 Hz | 985 to 1460 Hz |
+| Power above 2.84 kHz | -28.2 to -36.3 dB | -26.2 to -37.1 dB | -26.4 to -37.0 dB |
+| Strongest order, top hold (6000 RPM) | 4 (400 Hz) | 4 (400 Hz) | 4 (400 Hz) |
+| Residual | -16.7 to -30.3 dB | -16.4 to -22.3 dB | -17.1 to -22.4 dB |
+| AM peak / trough | +2.4 to +5.6 / -3.0 to -9.4 dB | +4.7 to +8.6 / -8.3 to -21.1 dB | +5.2 to +8.3 / -9.1 to -21.3 dB |
+| Residual 6-16 kHz | -34.7 to -42.4 dB | -32.5 to -43.6 dB | -32.7 to -43.5 dB |
+
+#### Centroid and residual at high RPM
+
+- flat12, full-throttle holds from 4000 to 6800 RPM: centroid 1643 to 1791 Hz (before 1696 to 1907 Hz, engine-sim 1251 to 1403 Hz), residual -6.1 to -15.9 dB (before -15.7 to -21.9 dB, engine-sim -6.8 to -12.8 dB). With the measured cylinder spreads in place of `gain_variation` 0.3 and `timing_variation_deg` 6, the centroid is 1876 to 2002 Hz, so flat12 keeps its fixed spreads. With those measured cylinder spreads, the centroid is 2162 to 2637 Hz with no firing spread, and 478 to 531 Hz with `noise.input_jitter=0`: the input jitter carries the treble.
+- inline4, holds from 7000 to 8400 RPM: centroid 1069 to 1506 Hz (engine-sim 909 to 1088 Hz), and 1238 to 1693 Hz with the measured cylinder spreads, so inline4 keeps its fixed spreads too.
+- v8, holds from 4000 to 6000 RPM: centroid 1083 to 1460 Hz (engine-sim 868 to 1049 Hz), residual -17.1 to -20.0 dB (engine-sim -26.0 to -30.3 dB). The firing spread changes neither by more than 1 dB or 10 Hz.
+
+#### flat6 loudness band
+
+The band widened in phase 4d because the windows of the sweep from 981 to 1684 RPM are under the knee of the leveller and have a high crest factor: the window at 1157 RPM has a peak of -9.4 dBFS and a crest factor of 9.2 dB, against -7.3 to -9.1 dBFS and 4.7 to 8.0 dB from 2900 RPM up. With the computed envelope of phase 4c, the same window had a peak of -7.8 dBFS. The closed-throttle idle is 3 dB under the knee and the approved overrun level holds full throttle within about 1 dB of it, so the full-throttle sweep at 1000 to 1700 RPM is under the knee too. engine-sim has the opposite: its peak at 1157 RPM is -3.5 dBFS, 1.8 to 2.3 dB over its windows from 5000 RPM up, and its waveform has single high peaks at low RPM, so its leveller lets the sparse pulses overshoot the target. With `voice.leveller_db` 26.5, 29.5 and 35.5 (+3, +6 and +12 dB), the band is 4.1, 3.6 and 3.6 LU: above the knee the window at 1157 RPM keeps a crest factor of 9.7 dB. So 3.1 LU needs a change of the approved overrun level or of the idle below the knee, and `leveller_db` stays.
+
+#### What the images show
+
+- v8 `holds-t000`: in the closed-throttle idle (0 to 3 s), the snarl noise from 3 to 18 kHz comes in vertical stripes at each firing. The engine-sim noise there is smoother and ends near 15 kHz ([v8 holds-t000 after](../../out/phase4e/after/v8/holds-t000/spectrogram.png) against [engine-sim v8](../../out/analysis/engine-sim/v8/holds-t000/spectrogram.png)). This is the deeper AM trough of the table. engine-sim has more power from 20 to 130 Hz at every hold.
+- flat12 `sweep-wot`: the irregular texture of the engine-sim flat-12 from 20 Hz to 1 kHz is now in snarl, from the measured firing gain spread ([flat12 after](../../out/phase4e/after/flat12/sweep-wot/spectrogram.png) against [engine-sim flat12](../../out/analysis/engine-sim/flat12/sweep-wot/spectrogram.png)).
+- flat6 `sweep-wot` waveform: the snarl peak envelope is lower over the first 1.2 s and has no spikes, where the engine-sim envelope has single high peaks at low RPM and falls a little ([flat6 after](../../out/phase4e/after/flat6/sweep-wot/waveform.png) against [engine-sim flat6](../../out/analysis/engine-sim/flat6/sweep-wot/waveform.png)).
+
+#### Cost
+
+`BenchmarkStates` and `BenchmarkRender` with 20000 blocks per run, 8 runs each, with the test binaries of `89b5f6a` and of the working tree in turn, two rounds of 4 (`out/phase4e/bench-head-*.txt` and `bench-new-*.txt`). Median per cent of real time per 256-frame block on the AMD Ryzen 9 7940HS:
+
+| Profile | State | Before | After |
+| --- | --- | --- | --- |
+| flat12 | wot4000 | 0.237 | 0.227 |
+| flat12 | idle | 0.215 | 0.215 |
+| flat12 | overrun | 0.233 | 0.227 |
+| flat12 | limiter | 0.297 (highest run 0.378) | 0.292 (highest run 0.324) |
+| flat6 | wot4000 | 0.209 | 0.216 |
+| flat6 | idle | 0.199 | 0.206 |
+| flat6 | overrun | 0.205 | 0.213 |
+| flat6 | limiter | 0.230 | 0.234 |
+| inline4 | wot4000 | 0.213 | 0.209 |
+| inline4 | idle | 0.208 | 0.210 |
+| inline4 | overrun | 0.211 | 0.208 |
+| inline4 | limiter | 0.216 | 0.219 |
+| v8 | wot4000 | 0.246 | 0.247 |
+| v8 | idle | 0.232 | 0.230 |
+| v8 | overrun | 0.235 | 0.237 |
+| v8 | limiter | 0.243 | 0.241 |
+| flat12 | `BenchmarkRender` | 0.250 | 0.226 |
+| flat6 | `BenchmarkRender` | 0.218 | 0.212 |
+| inline4 | `BenchmarkRender` | 0.214 | 0.213 |
+| v8 | `BenchmarkRender` | 0.247 | 0.238 |
+
+Every median is at or below 0.30 per cent. The changes are within the run-to-run spread: the firing spread is one table read and one multiply-add per control block, and it uses the existing gain draw of each firing. `Render` allocates nothing, and the tests pass with `-race` (`internal/model` in short mode, which skips its static tests).

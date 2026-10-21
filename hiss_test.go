@@ -170,19 +170,24 @@ func hissProfile(t *testing.T, name string, overrides ...string) (Profile, strin
 // engine-sim references: at the high holds, the engine-sim 4 to 12 kHz
 // level is at most -26.6 dB (flat12), -39.2 dB (flat6), -35.0 dB (inline4),
 // -34.3 dB (v8) and -21.0 dB (es-v12-60-aero, at its top hold). With the
-// measured engine-sim pulse, the worst snarl holds are -23.1 and 23.3 dB
-// (flat12), -36.6 and 27.6 dB (flat6), -32.2 and 22.9 dB (inline4), -28.6
-// and 25.5 dB (v8), -21.6 and 31.8 dB (es-v12-60-aero) and -32.3 and 29.1
-// dB (el-v12-60-aero). The bounds are about 1 dB from them. The measured
+// measured engine-sim pulse and the measured firing gain spread of the
+// tuned profiles, the worst snarl holds are -24.3 and 10.8 dB (flat12),
+// -36.2 and 26.7 dB (flat6), -32.3 and 25.1 dB (inline4), -28.7 and 27.8
+// dB (v8), -21.6 and 31.8 dB (es-v12-60-aero) and -32.3 and 29.1 dB
+// (el-v12-60-aero). The bounds are about 1 dB from them. The measured
 // pulse is smooth and long, so the cycle-to-cycle variation of its gain
 // and the slow jitter put more noise below 500 Hz than the computed
-// envelope did: the flat6 HNR falls from 36.6 to 27.6 dB at 4000 RPM, and
-// the flat12 4 to 12 kHz level at 4000 and 5000 RPM is 3 dB above
-// engine-sim, where the input jitter meets the overlapping pulses. The v8
-// hold at 5000 RPM is 5.7 dB above engine-sim.
+// envelope did: the flat6 HNR falls from 36.6 to 26.7 dB at the top hold.
+// The engine-sim flat12 varies its firing gain by 0.14 to 0.25 (standard
+// deviation) from 4000 to 6000 RPM, and its HNR from 20 to 500 Hz is 10.5
+// to 19.3 dB at the high holds (hiss-analysis.md), so the flat12 bound
+// follows engine-sim, not the 22.5 dB of the profile before. The flat12 4
+// to 12 kHz level at 4000 and 5000 RPM is 3 dB above engine-sim, where the
+// input jitter meets the overlapping pulses. The v8 hold at 5000 RPM is
+// 5.6 dB above engine-sim.
 var hissBounds = map[string]struct{ hf, hnr float64 }{
-	"flat12":         {-22.5, 22.5},
-	"flat6":          {-35.5, 27},
+	"flat12":         {-22.5, 9},
+	"flat6":          {-35.5, 26},
 	"inline4":        {-31, 22},
 	"v8":             {-27.5, 24.5},
 	"es-v12-60-aero": {-20.5, 29.5},

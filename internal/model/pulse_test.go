@@ -160,6 +160,71 @@ func TestPulseRows(t *testing.T) {
 	}
 }
 
+// TestPulseSpread checks the measured firing gain spread: with
+// measured_variation 1, the half width of the uniform firing gain is
+// sqrt(3) times the spread of the row at its RPM and the blend of two rows
+// between them, with 0.5 half of that, and with 0 none. The firing gains
+// of the voices then have the standard deviation of the row.
+func TestPulseSpread(t *testing.T) {
+	p, err := loadPulse("v8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.gainSD[0] <= 0 {
+		t.Fatal("the v8 table has no spread")
+	}
+	s := DefaultSpec()
+	s.Name = "spread"
+	s.Pulse.Table = "v8"
+	s.IdleRPM, s.RedlineRPM = 675, 6000
+	s.Pulse.Jitter, s.Pulse.CycleVariation = 0, 0
+	s.Cylinders = []CylinderSpec{{CrankDeg: 0}}
+	s.Paths = []PathSpec{{CollectorM: 0.5, Gain: 1}}
+	for _, share := range []float64{0, 0.5, 1} {
+		s.Pulse.MeasuredVariation = share
+		y, err := New(&s, rate)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range []struct {
+			rpm, sd float64
+		}{
+			{p.rpm[1], p.gainSD[1]},
+			{(p.rpm[1] + p.rpm[2]) / 2, (p.gainSD[1] + p.gainSD[2]) / 2},
+		} {
+			y.rpm = float32(c.rpm)
+			y.controlPulse()
+			want := share * math.Sqrt(3) * c.sd
+			if math.Abs(float64(y.spreadG)-want) > 1e-6 {
+				t.Errorf("share %.1f, %.0f RPM: half width %.5f, want %.5f", share, c.rpm, y.spreadG, want)
+			}
+		}
+	}
+	// The gains of many firings at the RPM of the first row.
+	s.Pulse.MeasuredVariation = 1
+	y, err := New(&s, rate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	y.rpm = float32(p.rpm[0])
+	y.controlPulse()
+	y.amp = 1
+	var sum, sq float64
+	const n = 4000
+	for range n {
+		y.fire(0, 0)
+		g := float64(y.voices[0].gain + y.voices[1].gain)
+		y.voices[0].gain, y.voices[1].gain = 0, 0
+		sum += g
+		sq += g * g
+	}
+	mean := sum / n
+	sd := math.Sqrt(sq/n-mean*mean) / mean
+	if math.Abs(sd/p.gainSD[0]-1) > 0.1 {
+		t.Errorf("firing gain spread %.4f, want %.4f within 10 per cent", sd, p.gainSD[0])
+	}
+}
+
 // TestPulseFile checks the parser of the pulse files: every embedded file
 // parses, and bad files give errors.
 func TestPulseFile(t *testing.T) {
@@ -187,6 +252,10 @@ func TestPulseFile(t *testing.T) {
 		"zero rpm":     row("0", "5"),
 		"bad number":   strings.Replace(row("1000", "5"), "0.5", "x", 1),
 		"other length": row("1000", "5") + "row 2000 5" + strings.Repeat(" 0.5", 21) + "\n",
+		"spread count": row("1000", "5") + row("2000", "5") + "spread 1000 0.1\n",
+		"spread rpm":   row("1000", "5") + "spread 1200 0.1\n",
+		"spread gain":  row("1000", "5") + "spread 1000 1.5\n",
+		"spread value": row("1000", "5") + "spread 1000 x\n",
 	} {
 		if _, err := parsePulse(data); err == nil {
 			t.Errorf("%s: no error", what)

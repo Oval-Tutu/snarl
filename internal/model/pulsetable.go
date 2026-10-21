@@ -5,6 +5,7 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,6 +24,11 @@ var pulseFiles embed.FS
 type pulseTable struct {
 	rpm, lenSec []float64
 	v           [][]float32
+	// gainSD is the cycle-to-cycle variation of the firings at the RPM of
+	// each row, from engine-sim (measured): the standard deviation of the
+	// gain of a firing about the mean of its cylinder, relative to the mean
+	// gain. It is 0 when the file has no spread lines.
+	gainSD []float64
 	// blend holds the blends of each two neighbouring rows: blend[a][j]
 	// is row a and row a+1 weighted j/blendSteps. A voice takes one blend
 	// when it fires and keeps it, so that no table changes under a pulse
@@ -56,16 +62,34 @@ func loadPulse(name string) (*pulseTable, error) {
 	return t, nil
 }
 
-// parsePulse parses a pulse table file: # comments, and one line per row
-// with the word row, the RPM, the length in milliseconds and the values.
+// parsePulse parses a pulse table file: # comments, one line per row with
+// the word row, the RPM, the length in milliseconds and the values, and
+// optionally one line per row with the word spread, the RPM of the row
+// and the standard deviation of the firing gain.
 func parsePulse(data string) (*pulseTable, error) {
 	t := &pulseTable{}
+	var spread [][2]float64
 	sc := bufio.NewScanner(strings.NewReader(data))
 	sc.Buffer(make([]byte, 1<<16), 1<<20)
 	for sc.Scan() {
 		line, _, _ := strings.Cut(sc.Text(), "#")
 		f := strings.Fields(line)
 		if len(f) == 0 {
+			continue
+		}
+		if f[0] == "spread" && len(f) == 3 {
+			var s [2]float64
+			for i := range s {
+				v, err := strconv.ParseFloat(f[1+i], 64)
+				if err != nil {
+					return nil, err
+				}
+				s[i] = v
+			}
+			if s[1] < 0 || s[1] > 1 {
+				return nil, errors.New("want a spread gain from 0 to 1")
+			}
+			spread = append(spread, s)
 			continue
 		}
 		if f[0] != "row" || len(f) < 3+16 {
@@ -102,6 +126,18 @@ func parsePulse(data string) (*pulseTable, error) {
 	}
 	if len(t.rpm) == 0 {
 		return nil, errors.New("no row")
+	}
+	t.gainSD = make([]float64, len(t.rpm))
+	if len(spread) > 0 {
+		if len(spread) != len(t.rpm) {
+			return nil, fmt.Errorf("%d spread lines for %d rows", len(spread), len(t.rpm))
+		}
+		for i, s := range spread {
+			if math.Abs(s[0]-t.rpm[i]) > 0.5 {
+				return nil, fmt.Errorf("spread line %d is at %g RPM, its row at %g RPM", i+1, s[0], t.rpm[i])
+			}
+			t.gainSD[i] = s[1]
+		}
 	}
 	t.blend = make([][][]float32, len(t.rpm)-1)
 	for a := range t.blend {

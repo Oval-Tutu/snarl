@@ -26,7 +26,15 @@ limiter_bark_db = 0
 # The pulse table from engine-sim (measured): tools/fit --pulse on the
 # runner pressure of the flat-12 script.
 table = "flat12"
-cycle_variation = 0.07
+# The firing gain spread of the table (measured_variation 1) replaces
+# cycle_variation. The cylinder means of the engine-sim flat-12 spread by
+# 0.022 in gain and 0.07 degrees in onset (tools/fit --pulse --variation),
+# but gain_variation and timing_variation_deg keep their values: with the
+# measured spreads (0.038 and 0.12 degrees), the centroid of the holds
+# from 4000 to 6800 RPM is 1876 to 2002 Hz, against 1643 to 1791 Hz with
+# these and 1251 to 1403 Hz in engine-sim.
+cycle_variation = 0
+measured_variation = 1
 jitter = 0.003
 gain_variation = 0.3
 timing_variation_deg = 6

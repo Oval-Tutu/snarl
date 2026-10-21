@@ -169,8 +169,8 @@ func newOutput(levDB, gainDB, rate float64) output {
 }
 
 // audibleHz is the highest frequency that the output low pass must keep
-// out. At a sample rate of 44.4 kHz and up, 0.45 times the rate is above
-// it, so the low pass does not run.
+// out. When 0.45 times the sample rate is at least audibleHz, that is from
+// about 44.45 kHz, the low pass does not run.
 const audibleHz = 20000
 
 // level runs the leveller gain, the DC block and the leveller for one
