@@ -493,6 +493,11 @@ func (y *Synth) control(c *Control, n int) {
 	y.throttle += (thr - y.throttle) * y.kCtl
 	y.load += (load - y.load) * y.kCtl
 	y.master += (b2f(c.Running) - y.master) * y.kMaster
+	if !c.Running && y.master < snapLevel {
+		// The decay stops on a subnormal value, which would slow every
+		// stage after the voices.
+		y.master = 0
+	}
 	limiting := y.limit(rpm, thr, c.Gear, c.Final, n)
 	over := c.Overrun && thr < 0.05 && !limiting
 	k := y.kCtl
@@ -705,7 +710,9 @@ func (y *Synth) fire(cyl, at int) {
 		}
 	} else {
 		g, late = y.idle.firing()
-		g *= 1 + (y.cycleVar+y.spreadG)*y.noise.Bipolar()
+		// A spread above 1 clips at zero, so that no firing has a negative
+		// pressure.
+		g *= max(0, 1+(y.cycleVar+y.spreadG)*y.noise.Bipolar())
 	}
 	// The cylinder fires its voices in turn, so that a pulse that lasts
 	// longer than one engine cycle rings on under the next.

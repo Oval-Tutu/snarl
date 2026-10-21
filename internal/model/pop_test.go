@@ -353,6 +353,76 @@ func TestCrackleClicks(t *testing.T) {
 	}
 }
 
+// TestCalibrationRate checks that the kind gains put the pops of the
+// calibration draws, rendered at 48 kHz through the output stage as the
+// engine renders them, at their targets within 0.05 dB. The pop bank has a
+// 15 kHz peak of +40 dB and no low pass, so that a calibration at half the
+// rate, or through a low pass that the engine skips, misses the target of
+// the pop by about 0.1 dB.
+func TestCalibrationRate(t *testing.T) {
+	s := popSpec()
+	s.PopFormants = []FormantSpec{
+		{Kind: "peak", Hz: 704.3, Q: 1.618, GainDB: 24.48},
+		{Kind: "peak", Hz: 15000, Q: 1, GainDB: 40},
+	}
+	g := freshGains(&s)
+	n := int(calSec * rate)
+	for k := range numKinds {
+		var lg float64
+		for d := range calDraws {
+			_, crack, out := PopSignals(&s, 0, k, d, rate, n)
+			o := newOutput(0, 0, rate)
+			x := make([]float32, n)
+			for j := range n {
+				v := o.dc.Process(out[j] + crack[j])
+				if o.useLP {
+					v = o.lp.Process(v)
+				}
+				x[j] = v
+			}
+			lg += math.Log10(spanRMS(x, int(0.01*rate)))
+		}
+		got := 20 * (math.Log10(float64(g[0][0][k])) + lg/calDraws)
+		if want := overDB[k] + calTrimDB; math.Abs(got-want) > 0.05 {
+			t.Errorf("kind %d: %.2f dB at 48 kHz, want %.2f dB", k, got, want)
+		} else {
+			t.Logf("kind %d: %.2f dB at 48 kHz, want %.2f dB", k, got, want)
+		}
+	}
+}
+
+// TestCrackDecay checks a crack that decays slower than the body: crack_ms
+// 100 and body_ms 30. The crack decays smoothly until it is 120 dB down: no
+// 5 ms window falls more than 6 dB below the window before it. A new pop in
+// the slot starts with no crack envelope from the pop before.
+func TestCrackDecay(t *testing.T) {
+	s := popSpec()
+	s.Pops.CrackMS, s.Pops.BodyMS = 100, 30
+	p := newPops(&s, rate, chunk/float64(rate))
+	e := p.fire(1, kindPop, srcOwn, 1, 1, 1)
+	const win = rate / 200
+	var prev, top float64
+	for i := 0; e.left >= win; i++ {
+		var en float64
+		for range win {
+			c := float64(p.tick())
+			en += c * c
+		}
+		top = max(top, en)
+		if i > 0 && prev >= 1e-12*top && en < prev/4 {
+			t.Fatalf("at %d ms, the crack falls by more than 6 dB from %.1f dB below its peak",
+				(i+1)*5, 10*math.Log10(top/prev))
+		}
+		prev = en
+	}
+	for e.left > 0 {
+		p.tick()
+	}
+	if q := p.fire(1, kindPop, srcOwn, 1, 1, 1); q != e || q.crackEnv != 0 {
+		t.Errorf("the next pop in the slot starts with a crack envelope of %g", q.crackEnv)
+	}
+}
+
 // clickStats are the medians of the clicks in a signal, measured on the
 // signal above 1 kHz.
 type clickStats struct {

@@ -61,6 +61,57 @@ func TestLoadLevel(t *testing.T) {
 	}
 }
 
+// TestIgnitionOff checks that the master gain and the firing gain reach
+// zero after the ignition goes off while the crank still turns, so that no
+// subnormal gain reaches the voices and the filters after them.
+func TestIgnitionOff(t *testing.T) {
+	s := limiterSpec("fuel")
+	y, err := New(&s, rate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]float32, 256)
+	c := Control{RPM: 3000, Throttle: 0.3, Load: 0.3, Running: true, Gear: 3}
+	for range rate / 256 {
+		y.Render(buf, c)
+	}
+	c.Running = false
+	for range 3 * rate / 256 {
+		y.Render(buf, c)
+	}
+	if y.master != 0 || y.amp != 0 {
+		t.Errorf("master %g, firing gain %g 3 s after the ignition went off, want 0", y.master, y.amp)
+	}
+}
+
+// TestFiringGainSign checks that no firing gain is negative with the
+// largest measured variation on the flat12 table at idle, where the
+// measured spread is widest, and a cycle variation on top.
+func TestFiringGainSign(t *testing.T) {
+	s := limiterSpec("fuel")
+	s.Pulse.Table = "flat12"
+	s.Pulse.MeasuredVariation, s.Pulse.CycleVariation = 2, 0.2
+	y, err := New(&s, rate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]float32, 64)
+	c := Control{RPM: 900, Running: true, Gear: 3}
+	fired := 0
+	for range 10 * rate / 64 {
+		y.Render(buf, c)
+		for _, k := range y.act {
+			fired++
+			if g := y.voices[k].gain; g < 0 {
+				t.Fatalf("firing gain %g", g)
+			}
+		}
+	}
+	if fired == 0 {
+		t.Fatal("no firing")
+	}
+}
+
 func limiterSpec(kind string) Spec {
 	s := DefaultSpec()
 	s.Name = "lim"

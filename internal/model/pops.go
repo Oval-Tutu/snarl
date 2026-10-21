@@ -325,6 +325,7 @@ type pops struct {
 	bodyGain   float32
 	bodyHz     float64
 	bodyMS     float64
+	crackMS    float64
 	crackDec   float32
 	crackAtt   float32
 	crackRatio float32
@@ -370,6 +371,7 @@ func newPops(s *Spec, rate, chunkSeconds float64) pops {
 		bodyGain:   6.4,
 		bodyHz:     p.BodyHz,
 		bodyMS:     p.BodyMS,
+		crackMS:    p.CrackMS,
 		crackDec:   dsp.DecayCoef(20, p.CrackMS*1e-3, rate),
 		crackAtt:   dsp.TimeCoef(0.0001, rate),
 		// The crack level is a small share of the body, as measured.
@@ -423,16 +425,15 @@ func newPops(s *Spec, rate, chunkSeconds float64) pops {
 // calibrate sets the kind gains for the exhaust paths of the spec. It
 // renders calDraws pops of each kind at unit gain into each path, from a
 // copy of the pop model, and measures the RMS level over the span that
-// holds 90 per cent of the energy, through the DC block and the low pass
-// of the output stage, with no output gain or limiter. The gain is set
-// from the mean level in decibels. The body frequency, body decay and
-// sub-event count of the pops cover their spreads in even steps, and the
-// sub-events follow a low-discrepancy sequence. The render runs at half
-// the sample rate, which keeps the level of the body and the crack and
-// halves the cost. It allocates. New runs it through calibrateCached,
-// once per spec and sample rate.
+// holds 90 per cent of the energy, through the DC block of the output
+// stage and its low pass when the engine runs it, with no output gain or
+// limiter. The gain is set from the mean level in decibels. The body
+// frequency, body decay and sub-event count of the pops cover their
+// spreads in even steps, and the sub-events follow a low-discrepancy
+// sequence. The render runs at the sample rate, so that the pop bank has
+// the sections that play. It allocates. New runs it through
+// calibrateCached, once per spec and sample rate.
 func (p *pops) calibrate(s *Spec, rate float64) {
-	rate /= 2
 	buf := make([]float32, int(calSec*rate))
 	step := int(0.005 * rate)
 	c := newPops(s, rate, chunk/rate)
@@ -456,7 +457,10 @@ func (p *pops) calibrate(s *Spec, rate float64) {
 					for j := n; j < n+step; j++ {
 						crack := c.tick()
 						pe := q.popProcess(c.jump[i], true)
-						v := o.lp.Process(o.dc.Process(pe + crack))
+						v := o.dc.Process(pe + crack)
+						if o.useLP {
+							v = o.lp.Process(v)
+						}
 						buf[j] = v
 						en += float64(v) * float64(v)
 					}
@@ -882,7 +886,7 @@ func (p *pops) fire(paths, kind, src int, scale, level, strength float32) *popEv
 	if kind == kindPop {
 		e.crackLvl *= popCrack
 	}
-	e.clickLvl, e.gapZ = 0, 0
+	e.clickLvl, e.gapZ, e.crackEnv = 0, 0, 0
 	if sh.click {
 		e.clickLvl, e.crackLvl = e.crackLvl, 0
 	}
@@ -892,8 +896,9 @@ func (p *pops) fire(paths, kind, src int, scale, level, strength float32) *popEv
 	if sh.click {
 		e.spacing *= p.gapMean
 	}
-	// The slot holds the train and six body decays, down by 120 dB.
-	e.left = max(p.busyLen, int(float32(e.subs)*1.6*e.spacing)+int(6*ms*1e-3*float64(p.rate)))
+	// The slot holds the train and six body or crack decays, whichever is
+	// longer, down by 120 dB.
+	e.left = max(p.busyLen, int(float32(e.subs)*1.6*e.spacing)+int(6*max(ms, p.crackMS)*1e-3*float64(p.rate)))
 	p.active++
 	p.count[kind]++
 	p.total++
@@ -950,44 +955,14 @@ func (p *pops) tick() (crack float32) {
 			p.active--
 		}
 		// After the last sub-event and its ring of six body decays, the
-		// event is 120 dB down and only holds its slot for busyLen, so its
-		// stages do not run.
-		if e.ring == 0 && e.subs == 0 && e.jumpLeft == 0 {
+		// body is 120 dB down, so its stages do not run. The crack and the
+		// clicks decay on until they snap to zero, and then the event only
+		// holds its slot for busyLen.
+		if e.ring > 0 || e.subs > 0 || e.jumpLeft > 0 {
+			p.ringBody(e)
+		} else if e.crackLvl == 0 && e.crackEnv == 0 && e.clickLvl == 0 {
 			continue
 		}
-		if e.subs > 0 {
-			e.next--
-			if e.next == 0 {
-				sh := &shapes[e.kind]
-				u := 0.3 + 0.7*p.subDraw()
-				e.jumpLeft = e.jumpLen
-				e.ring = e.ringLen
-				e.jumpAmp = e.amp * sh.subGain * u
-				if sh.click {
-					e.clickLvl = max(e.clickLvl, e.amp*p.crackRatio*sh.subCrack*u)
-				} else {
-					e.crackLvl += e.amp * p.crackRatio * sh.subCrack * u
-				}
-				e.subs--
-				e.next = p.subSpacing(e)
-			}
-		}
-		if e.ring > 0 {
-			e.ring--
-			p.live[e.path] = true
-		}
-		var g float32
-		if e.jumpLeft > 0 {
-			e.jumpLeft--
-			g = e.jumpAmp
-		}
-		j := e.jumpLP.Process(g)
-		// The decaying levels snap to zero far below audibility, before
-		// they reach subnormal values, which cost a hundred times more.
-		if g == 0 && j < snapLevel && j > -snapLevel {
-			j, e.jumpLP.Y = 0, 0
-		}
-		p.jump[e.path] += p.jumpMix*j + p.bodyGain*e.body.Process(j)
 		e.crackLvl *= p.crackDec
 		if e.crackLvl < snapLevel {
 			e.crackLvl = 0
@@ -1010,4 +985,42 @@ func (p *pops) tick() (crack float32) {
 		p.live = [MaxBanks]bool{}
 	}
 	return crack
+}
+
+// ringBody runs the sub-events, the pressure jump and the body of the
+// event for one sample, and adds the jump to its path.
+func (p *pops) ringBody(e *popEvent) {
+	if e.subs > 0 {
+		e.next--
+		if e.next == 0 {
+			sh := &shapes[e.kind]
+			u := 0.3 + 0.7*p.subDraw()
+			e.jumpLeft = e.jumpLen
+			e.ring = e.ringLen
+			e.jumpAmp = e.amp * sh.subGain * u
+			if sh.click {
+				e.clickLvl = max(e.clickLvl, e.amp*p.crackRatio*sh.subCrack*u)
+			} else {
+				e.crackLvl += e.amp * p.crackRatio * sh.subCrack * u
+			}
+			e.subs--
+			e.next = p.subSpacing(e)
+		}
+	}
+	if e.ring > 0 {
+		e.ring--
+		p.live[e.path] = true
+	}
+	var g float32
+	if e.jumpLeft > 0 {
+		e.jumpLeft--
+		g = e.jumpAmp
+	}
+	j := e.jumpLP.Process(g)
+	// The decaying levels snap to zero far below audibility, before they
+	// reach subnormal values, which cost a hundred times more.
+	if g == 0 && j < snapLevel && j > -snapLevel {
+		j, e.jumpLP.Y = 0, 0
+	}
+	p.jump[e.path] += p.jumpMix*j + p.bodyGain*e.body.Process(j)
 }

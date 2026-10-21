@@ -35,7 +35,7 @@ func pulseTrace(y *Synth, pos float32) []float32 {
 // float32 rounding of the position over up to 1200 samples. The table starts and ends
 // at zero, so the first sample is at most one table step of the rise, the
 // last value is zero, and the peak magnitude is within 0.5 dB of 1. The
-// pulse lasts the row length.
+// pulse lasts the blended row length within one sample.
 func TestPulseTable(t *testing.T) {
 	for _, name := range []string{"flat12", "flat6", "inline4", "v8"} {
 		s := DefaultSpec()
@@ -56,6 +56,8 @@ func TestPulseTable(t *testing.T) {
 			}
 			tab := append([]float32(nil), y.tab...)
 			step := float64(y.step)
+			a, b, w := y.pt.bracket(float64(y.PitchRPM()))
+			rowLen := (y.pt.lenSec[a] + (y.pt.lenSec[b]-y.pt.lenSec[a])*w) * rate
 			at := func(x float64) float64 {
 				i := int(x)
 				if i >= len(tab)-1 {
@@ -77,6 +79,10 @@ func TestPulseTable(t *testing.T) {
 				ms := float64(len(tr)) / rate * 1e3
 				t.Logf("%-7s %4.0f RPM, start %.1f sample late: %4d samples (%.2f ms), peak %+.2f dB, worst error %.1e",
 					name, rpm, f, len(tr), ms, 20*math.Log10(peak), worst)
+				// The trace starts f samples before the pulse.
+				if math.Abs(float64(len(tr))-rowLen-f) > 1 {
+					t.Errorf("%s %.0f RPM, start %.1f: %d samples, want the row length of %.1f samples plus %.1f within 1", name, rpm, f, len(tr), rowLen, f)
+				}
 				if worst > 1e-4 {
 					t.Errorf("%s %.0f RPM, start %.1f: a sample is %.1e from the table at its position, want at most 1e-4", name, rpm, f, worst)
 				}

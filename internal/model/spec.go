@@ -118,10 +118,11 @@ type PulseSpec struct {
 	CycleVariation float64 `toml:"cycle_variation"`
 	// MeasuredVariation is the share, from 0 to 2, of the cycle-to-cycle
 	// variation of the pulse table that the firings take: the spread of the
-	// firing gain and of the firing onset of engine-sim (measured), which
-	// tools/fit --pulse --variation writes with the rows. Each firing draws
-	// a gain and an onset from uniform spreads with these standard
-	// deviations at its RPM. Zero, the default, turns it off.
+	// firing gain of engine-sim (measured), which tools/fit --pulse
+	// --variation writes with the rows. Each firing draws a gain from a
+	// uniform spread with this standard deviation at its RPM, on top of
+	// CycleVariation. A gain below zero clips at zero. Zero, the default,
+	// turns it off.
 	MeasuredVariation float64 `toml:"measured_variation"`
 	// Jitter is the slow random RPM and gain wander, as a fraction.
 	Jitter float64 `toml:"jitter"`
