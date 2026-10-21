@@ -128,6 +128,107 @@ func TestLiveCloseTransient(t *testing.T) {
 	}
 }
 
+// TestBandBlock checks that band.block gives the outputs and the states
+// of band.process bit for bit, for every band of a bank and blocks of
+// several lengths.
+func TestBandBlock(t *testing.T) {
+	x := make([]float64, 1000)
+	for i := range x {
+		x[i] = math.Sin(0.37*float64(i)) + 0.5*math.Sin(2.1*float64(i)*float64(i%7))
+	}
+	for k, b := range bankFor(20000) {
+		ref := band{sections: append([]biquad(nil), b.sections...)}
+		got := band{sections: append([]biquad(nil), b.sections...)}
+		want := make([]float64, len(x))
+		for i, v := range x {
+			want[i] = ref.process(v)
+		}
+		y := append([]float64(nil), x...)
+		for i, n := 0, 1; i < len(y); n = n%61 + 7 {
+			got.block(y[i:min(i+n, len(y))])
+			i += n
+		}
+		for i := range y {
+			if y[i] != want[i] {
+				t.Fatalf("band %d, sample %d: block %v, process %v", k, i, y[i], want[i])
+			}
+		}
+		for i := range ref.sections {
+			if got.sections[i] != ref.sections[i] {
+				t.Fatalf("band %d, section %d: state %+v, want %+v", k, i, got.sections[i], ref.sections[i])
+			}
+		}
+	}
+}
+
+// TestLiveResidual checks that the residual of Live, whose band noise
+// fillNoise computes ahead, is bit for bit the residual of the band
+// filters run step by step, on two channels with a residual envelope.
+func TestLiveResidual(t *testing.T) {
+	tab := liveTables()
+	tab.Channels = append(tab.Channels, Channel{DelaySteps: 3})
+	for i := range tab.Points {
+		p := &tab.Points[i]
+		p.Wave = append(p.Wave, []float64{0.5 * p.RPM, 0.1 * p.RPM, 0})
+		p.Noise = [][]float64{make([]float64, BandCount*Sectors), make([]float64, BandCount*Sectors)}
+		for c := range p.Noise {
+			for k := range p.Noise[c] {
+				p.Noise[c][k] = 0.01 * p.RPM * (1.1 + math.Sin(float64(k*(c+2))+p.Throttle))
+			}
+		}
+	}
+	b, err := NewBank(tab)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := b.NewLive(LiveOptions{Lag: tab.ThrottleLag, Seed: 7})
+	wave := b.NewLive(LiveOptions{Lag: tab.ThrottleLag, Seed: 7, NoResidual: true})
+	// The reference: the band filters and the draws of Live, step by step.
+	rng := live.rng
+	bands := make([][]band, len(tab.Channels))
+	for c := range bands {
+		for k := range b.bands {
+			bands[c] = append(bands[c], band{sections: append([]biquad(nil), b.bands[k].sections...)})
+		}
+	}
+	draw := func() float64 {
+		r := Live{rng: rng}
+		v := r.normal()
+		rng = r.rng
+		return v
+	}
+	got, base := make([]float64, 2), make([]float64, 2)
+	for i := range 3000 {
+		rpm := 1500 + 900*math.Sin(float64(i)/400)
+		th := 0.5 + 0.5*math.Sin(float64(i)/250)
+		ign := i%900 < 700
+		live.Next(rpm, th, ign, got)
+		wave.Next(rpm, th, ign, base)
+		for c := range got {
+			psi := wave.phase - tab.Channels[c].DelaySteps*wave.dt*rpm*(1.0/120)
+			psi -= math.Floor(psi)
+			f := psi*Sectors - 0.5
+			s0 := int(f + Sectors)
+			a := f + Sectors - float64(s0)
+			s0 %= Sectors
+			s1 := (s0 + 1) % Sectors
+			v := 0.0
+			for k := range bands[c] {
+				y := bands[c][k].process(draw()) * b.norm[k]
+				env := 0.0
+				for _, w := range wave.w {
+					e := tab.Points[w.Point].Noise[c][k*Sectors:]
+					env += w.W * (e[s0] + a*(e[s1]-e[s0]))
+				}
+				v += env * y
+			}
+			if want := base[c] + v; got[c] != want {
+				t.Fatalf("step %d, channel %d: %v, want %v", i, c, got[c], want)
+			}
+		}
+	}
+}
+
 // TestLiveNoAlloc checks that Next does not allocate, with the residual,
 // both ignition states and the closing transient.
 func TestLiveNoAlloc(t *testing.T) {

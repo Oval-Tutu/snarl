@@ -36,6 +36,20 @@ func (q *biquad) process(x float64) float64 {
 	return y
 }
 
+// block runs process over x in place, with the state in local variables.
+// Each output is the output of process.
+func (q *biquad) block(x []float64) {
+	b0, b1, b2, a1, a2 := q.b0, q.b1, q.b2, q.a1, q.a2
+	x1, x2, y1, y2 := q.x1, q.x2, q.y1, q.y2
+	for i, v := range x {
+		y := b0*v + b1*x1 + b2*x2 - a1*y1 - a2*y2
+		x2, x1 = x1, v
+		y2, y1 = y1, y
+		x[i] = y
+	}
+	q.x1, q.x2, q.y1, q.y2 = x1, x2, y1, y2
+}
+
 // response returns the squared magnitude of the section at the normalised
 // angular frequency w.
 func (q *biquad) response(w float64) float64 {
@@ -96,6 +110,58 @@ func (b *band) process(x float64) float64 {
 		x = b.sections[i].process(x)
 	}
 	return x
+}
+
+// block runs process over x in place. Each output is the output of
+// process. In a cascade, the input history of a section is the output
+// history of the section before it, so that a cascade of two or four
+// sections runs in one loop with the states in local variables and the
+// coefficients read from memory. The sections of one sample depend on each
+// other, but each recursion depends only on its own section, so that the
+// sections of successive samples overlap in time.
+func (b *band) block(x []float64) {
+	s := b.sections
+	switch len(s) {
+	case 2:
+		p, q := &s[0], &s[1]
+		x1, x2 := p.x1, p.x2
+		py1, py2, qy1, qy2 := p.y1, p.y2, q.y1, q.y2
+		for i, v := range x {
+			y := p.b0*v + p.b1*x1 + p.b2*x2 - p.a1*py1 - p.a2*py2
+			x2, x1 = x1, v
+			z := q.b0*y + q.b1*py1 + q.b2*py2 - q.a1*qy1 - q.a2*qy2
+			py2, py1 = py1, y
+			qy2, qy1 = qy1, z
+			x[i] = z
+		}
+		p.x1, p.x2, p.y1, p.y2 = x1, x2, py1, py2
+		q.x1, q.x2, q.y1, q.y2 = py1, py2, qy1, qy2
+	case 4:
+		p, q, r, t := &s[0], &s[1], &s[2], &s[3]
+		x1, x2 := p.x1, p.x2
+		py1, py2, qy1, qy2 := p.y1, p.y2, q.y1, q.y2
+		ry1, ry2, ty1, ty2 := r.y1, r.y2, t.y1, t.y2
+		for i, v := range x {
+			y := p.b0*v + p.b1*x1 + p.b2*x2 - p.a1*py1 - p.a2*py2
+			x2, x1 = x1, v
+			z := q.b0*y + q.b1*py1 + q.b2*py2 - q.a1*qy1 - q.a2*qy2
+			py2, py1 = py1, y
+			u := r.b0*z + r.b1*qy1 + r.b2*qy2 - r.a1*ry1 - r.a2*ry2
+			qy2, qy1 = qy1, z
+			w := t.b0*u + t.b1*ry1 + t.b2*ry2 - t.a1*ty1 - t.a2*ty2
+			ry2, ry1 = ry1, u
+			ty2, ty1 = ty1, w
+			x[i] = w
+		}
+		p.x1, p.x2, p.y1, p.y2 = x1, x2, py1, py2
+		q.x1, q.x2, q.y1, q.y2 = py1, py2, qy1, qy2
+		r.x1, r.x2, r.y1, r.y2 = qy1, qy2, ry1, ry2
+		t.x1, t.x2, t.y1, t.y2 = ry1, ry2, ty1, ty2
+	default:
+		for i := range s {
+			s[i].block(x)
+		}
+	}
 }
 
 func (b *band) response(w float64) float64 {

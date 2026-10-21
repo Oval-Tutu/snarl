@@ -37,6 +37,45 @@ func BenchmarkRender(b *testing.B) {
 	}
 }
 
+// BenchmarkPops renders each profile on overrun at four fifths of the
+// redline, with a pop request every 12 blocks (64 ms), so that the pop
+// side input of the synthesiser runs in every block. It is the peak cost
+// of the engine.
+func BenchmarkPops(b *testing.B) {
+	for _, name := range Profiles() {
+		b.Run(name, func(b *testing.B) {
+			p, err := LoadProfile(name)
+			if err != nil {
+				b.Fatal(err)
+			}
+			e := newEngine(b, p)
+			s := Snapshot{RPM: 0.8 * p.RedlineRPM, Flags: FlagRunning | FlagOverrun, PopStrength: 0.5}
+			buf := make([]float32, 256)
+			for i := range 200 {
+				if i%12 == 0 {
+					s.PopRequest++
+				}
+				e.Set(s)
+				e.Render(buf)
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			i := 0
+			for b.Loop() {
+				if i%12 == 0 {
+					s.PopRequest++
+				}
+				i++
+				e.Set(s)
+				e.Render(buf)
+			}
+			blockNs := 256.0 / testRate * 1e9
+			nsPerBlock := float64(b.Elapsed().Nanoseconds()) / float64(b.N)
+			b.ReportMetric(100*nsPerBlock/blockNs, "%realtime")
+		})
+	}
+}
+
 // BenchmarkStates renders each profile in four states: full throttle at
 // three quarters of the redline (wot), closed throttle at idle (idle),
 // closed throttle on overrun at four fifths of the redline, after a lift

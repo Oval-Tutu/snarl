@@ -144,7 +144,19 @@ type Live struct {
 	noResidual    bool
 	speedPoints   float64
 	sectors       float64
+	// bandNoise holds the band noise of the next noiseSteps steps,
+	// normalised: the noiseSteps values of band b of channel c start at
+	// (c*BandCount+b)*noiseSteps. noisePos is the step of the next Next.
+	// The draws and the band filters do not depend on the input, so that
+	// fillNoise computes them ahead, in the order of the draws of one step
+	// after the other.
+	bandNoise []float64
+	noisePos  int
 }
+
+// noiseSteps is the number of steps of band noise that fillNoise computes
+// at once.
+const noiseSteps = 64
 
 // LiveOptions set a Live player.
 type LiveOptions struct {
@@ -183,7 +195,35 @@ func (b *Bank) NewLive(o LiveOptions) *Live {
 			p.bands[c][k].sections = append([]biquad(nil), b.bands[k].sections...)
 		}
 	}
+	p.bandNoise = make([]float64, len(b.t.Channels)*BandCount*noiseSteps)
+	p.noisePos = noiseSteps
 	return p
+}
+
+// fillNoise computes the band noise of the next noiseSteps steps: the draws
+// in the order of the steps, the channels and the bands, then each band
+// filter over its draws and the normalisation. Each value is the value
+// that the filter of the step would give.
+func (p *Live) fillNoise() {
+	const nb = BandCount
+	for s := range noiseSteps {
+		for c := range p.bands {
+			for b := range nb {
+				p.bandNoise[(c*nb+b)*noiseSteps+s] = p.normal()
+			}
+		}
+	}
+	for c := range p.bands {
+		for b := range nb {
+			x := p.bandNoise[(c*nb+b)*noiseSteps : (c*nb+b+1)*noiseSteps]
+			p.bands[c][b].block(x)
+			norm := p.b.norm[b]
+			for i := range x {
+				x[i] *= norm
+			}
+		}
+	}
+	p.noisePos = 0
 }
 
 // Phase returns the crank phase in cycles, from 0 to 1.
@@ -216,6 +256,9 @@ func (p *Live) Next(rpm, throttle float64, ignition bool, out []float64) {
 	}
 
 	out = out[:len(p.b.t.Channels)]
+	if !p.noResidual && p.noisePos == noiseSteps {
+		p.fillNoise()
+	}
 	for c := range out {
 		psi := p.phase - p.b.t.Channels[c].DelaySteps*p.dt*rpm*(1.0/120)
 		psi -= math.Floor(psi)
@@ -228,6 +271,7 @@ func (p *Live) Next(rpm, throttle float64, ignition bool, out []float64) {
 		}
 		out[c] = v //nolint:gosec // c ranges over out.
 	}
+	p.noisePos++
 }
 
 // weights returns the point weights. The share of the ignition-on points
@@ -387,7 +431,8 @@ func (p *Live) normal() float64 {
 
 // noise returns the residual of channel c at emission phase psi: noise
 // through each band filter, normalised to unit power and scaled by the
-// band envelope.
+// band envelope. The envelope of each band sums the weights in their
+// order, and the residual sums the bands in their order.
 func (p *Live) noise(c int, ws []Weight, psi float64) float64 {
 	// Each sector value is the mean over the sector, so it sits at the
 	// sector centre.
@@ -400,16 +445,19 @@ func (p *Live) noise(c int, ws []Weight, psi float64) float64 {
 		s1 = 0
 	}
 	pts := p.b.t.Points
-	v := 0.0
-	bands := p.bands[c]
-	for b := range bands {
-		y := bands[b].process(p.normal()) * p.b.norm[b]
-		env := 0.0
-		for _, w := range ws {
-			e := pts[w.Point].Noise[c][b*Sectors:]
-			env += w.W * (e[s0] + a*(e[s1]-e[s0]))
+	var env [BandCount]float64
+	for _, w := range ws {
+		nz := pts[w.Point].Noise[c]
+		nz = nz[:BandCount*Sectors]
+		for b := range env {
+			e0, e1 := nz[b*Sectors+s0], nz[b*Sectors+s1]
+			env[b] += w.W * (e0 + a*(e1-e0))
 		}
-		v += env * y
+	}
+	y := p.bandNoise[c*BandCount*noiseSteps+p.noisePos:]
+	v := 0.0
+	for b := range env {
+		v += env[b] * y[b*noiseSteps]
 	}
 	return v
 }
