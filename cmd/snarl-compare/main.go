@@ -5,7 +5,8 @@
 // next. With --describe, it measures each window of one or more renders on
 // its own. With --transfer, it measures the transfer from the engine-sim
 // synthesiser input to its output. With --ir, it measures engine-sim
-// impulse responses and how close shorter filters come to them.
+// impulse responses and how close shorter filters come to them. With
+// --gap, it puts the measurements of a reference and a render side by side.
 package main
 
 import (
@@ -68,6 +69,7 @@ type config struct {
 	transfer     string
 	engine       string
 	ir           bool
+	gap          bool
 }
 
 func main() {
@@ -86,6 +88,7 @@ func run(args []string) error {
 		fmt.Fprintln(fs.Output(), "       snarl-compare --describe --scenario S.scn [flags] A.wav [B.wav ...]")
 		fmt.Fprintln(fs.Output(), "       snarl-compare --transfer A.csv --engine E.json --scenario S.scn [flags] A.wav")
 		fmt.Fprintln(fs.Output(), "       snarl-compare --ir IR.wav [IR.wav ...]")
+		fmt.Fprintln(fs.Output(), "       snarl-compare --gap --scenario S.scn [flags] REF.wav B.wav")
 		fs.PrintDefaults()
 	}
 	fs.StringVar(&cfg.scenario, "scenario", "", "scenario file that drove both renders (required for the order analysis)")
@@ -102,6 +105,7 @@ func run(args []string) error {
 	fs.StringVar(&cfg.transfer, "transfer", "", "engine-sim-render CSV with every step: print the transfer from the synthesiser input to the WAV output for each hold, as Markdown tables, instead of the comparison (needs --engine)")
 	fs.StringVar(&cfg.engine, "engine", "", "engine-sim-render --dump-json output of the engine of the --transfer CSV")
 	fs.BoolVar(&cfg.ir, "ir", false, "print the response of each engine-sim impulse response WAV file next to shorter FIR filters and all-pole fits, as Markdown tables, instead of the comparison")
+	fs.BoolVar(&cfg.gap, "gap", false, "print the gap tables of a reference WAV and a render of the same scenario to standard output, as Markdown tables, instead of the comparison")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -110,6 +114,8 @@ func run(args []string) error {
 		return residuals(os.Stdout, fs.Args(), &cfg)
 	case cfg.describe:
 		return describe(os.Stdout, fs.Args(), &cfg)
+	case cfg.gap:
+		return gaps(os.Stdout, fs.Args(), &cfg)
 	case cfg.ir:
 		return irs(os.Stdout, fs.Args())
 	case cfg.transfer != "":
