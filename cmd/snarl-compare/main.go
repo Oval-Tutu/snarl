@@ -8,7 +8,9 @@
 // impulse responses and how close shorter filters come to them. With
 // --gap, it puts the measurements of a reference and a render side by side.
 // With --burst, it measures how the residual noise of each hold above 2 kHz
-// moves in time: steady or in bursts.
+// moves in time: steady or in bursts. With --align, it prints the alignment
+// scorecard of a render against a reference: the cycle waveform, spectral,
+// envelope and noise match of each window, and a score from 0 to 100.
 package main
 
 import (
@@ -73,6 +75,8 @@ type config struct {
 	ir           bool
 	gap          bool
 	burst        bool
+	align        bool
+	cycles       bool
 }
 
 func main() {
@@ -93,6 +97,7 @@ func run(args []string) error {
 		fmt.Fprintln(fs.Output(), "       snarl-compare --ir IR.wav [IR.wav ...]")
 		fmt.Fprintln(fs.Output(), "       snarl-compare --gap --scenario S.scn [flags] REF.wav B.wav")
 		fmt.Fprintln(fs.Output(), "       snarl-compare --burst --scenario S.scn [flags] A.wav [B.wav ...]")
+		fmt.Fprintln(fs.Output(), "       snarl-compare --align --scenario S.scn [flags] REF.wav [B.wav]")
 		fs.PrintDefaults()
 	}
 	fs.StringVar(&cfg.scenario, "scenario", "", "scenario file that drove both renders (required for the order analysis)")
@@ -111,10 +116,14 @@ func run(args []string) error {
 	fs.BoolVar(&cfg.ir, "ir", false, "print the response of each engine-sim impulse response WAV file next to shorter FIR filters and all-pole fits, as Markdown tables, instead of the comparison")
 	fs.BoolVar(&cfg.gap, "gap", false, "print the gap tables of a reference WAV and a render of the same scenario to standard output, as Markdown tables, instead of the comparison")
 	fs.BoolVar(&cfg.burst, "burst", false, "print the burst measure of the residual of each hold of each file above 2 kHz to standard output, as Markdown tables, instead of the comparison")
+	fs.BoolVar(&cfg.align, "align", false, "print the alignment scorecard of a reference WAV and a render of the same scenario, or of the two halves of each hold of one WAV, to standard output, as Markdown tables, instead of the comparison")
+	fs.BoolVar(&cfg.cycles, "cycles", true, "with --align, measure the cycle waveform, envelope and noise of each hold; turn it off for a reference whose holds do not keep a steady RPM")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	switch {
+	case cfg.align:
+		return aligns(os.Stdout, fs.Args(), &cfg)
 	case cfg.burst:
 		return bursts(os.Stdout, fs.Args(), &cfg)
 	case cfg.residual:
