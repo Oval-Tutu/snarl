@@ -336,9 +336,9 @@ type pops struct {
 	kindGain [MaxBanks][2][numKinds]float32
 }
 
-// popCrack scales the crack of the isolated pop. The expansion chamber
-// takes energy out of the body band, so the pop crack is lower and the
-// body gain is higher.
+// popCrack scales the crack of the isolated pop. The pop bank, which
+// follows the EngineLab expansion chamber, takes energy out of the body
+// band, so the pop crack is lower and the body gain is higher.
 const popCrack = 0.35
 
 // newPops returns the pop model.
@@ -433,7 +433,7 @@ func (p *pops) calibrate(s *Spec, rate float64) {
 	step := int(0.005 * rate)
 	c := newPops(s, rate, chunk/rate)
 	c.noise = dsp.NewNoise(0xca1)
-	for i, ps := range s.Paths {
+	for i := range s.Paths {
 		for slot := range 2 * numKinds {
 			kind, src := slot%numKinds, srcOwn
 			if slot >= numKinds {
@@ -441,10 +441,7 @@ func (p *pops) calibrate(s *Spec, rate float64) {
 			}
 			var lg float64
 			for d := range calDraws {
-				c.target, c.stratum, c.drawN = i, d+1, 0
-				c.subU = float32(d) / calDraws
-				e := c.fire(len(s.Paths), kind, src, 1, 1, 1)
-				q := newPath(ps, s.Exhaust, rate)
+				e, q := c.calFire(s, i, kind, src, d, rate)
 				o := newOutput(0, 0, rate)
 				// The render stops when the train has ended and a step is
 				// 40 dB below the loudest step.
@@ -454,7 +451,7 @@ func (p *pops) calibrate(s *Spec, rate float64) {
 					var en float64
 					for j := n; j < n+step; j++ {
 						crack := c.tick()
-						pe, _ := q.process(0, c.jump[i], false)
+						pe := q.popProcess(c.jump[i], true)
 						v := o.lp.Process(o.dc.Process(pe + crack))
 						buf[j] = v
 						en += float64(v) * float64(v)
@@ -471,6 +468,34 @@ func (p *pops) calibrate(s *Spec, rate float64) {
 			p.kindGain[i][slot/numKinds][kind] = float32(math.Pow(10, (overDB[kind]+calTrimDB)/20-lg/calDraws))
 		}
 	}
+}
+
+// calFire starts draw d of the calibration pops of the kind and source on
+// path i, from the calibration copy c of the pop model, and returns the
+// pop and new pop stages of the path.
+func (p *pops) calFire(s *Spec, i, kind, src, d int, rate float64) (*popEvent, path) {
+	p.target, p.stratum, p.drawN = i, d+1, 0
+	p.subU = float32(d) / calDraws
+	return p.fire(len(s.Paths), kind, src, 1, 1, 1), newPath(s.Paths[i], s, rate)
+}
+
+// PopSignals renders draw d, from 0 to 6, of the calibration pops of the
+// kind on path i of s at the sample rate and at unit gain: the pressure
+// jump into the path, the crack, and the output of the pop stages of the
+// path, n samples each. The kinds count from 0, in the order of the snarl
+// PopKind values. TestPopColour compares the output with the pops of the
+// EngineLab path stages that the pop bank replaces.
+func PopSignals(s *Spec, i, kind, d int, rate float64, n int) (jump, crack, out []float32) {
+	c := newPops(s, rate, chunk/rate)
+	c.noise = dsp.NewNoise(0xca1)
+	_, q := c.calFire(s, i, kind, srcOwn, d, rate)
+	jump, crack, out = make([]float32, n), make([]float32, n), make([]float32, n)
+	for j := range n {
+		crack[j] = c.tick()
+		jump[j] = c.jump[i]
+		out[j] = q.popProcess(jump[j], true)
+	}
+	return jump, crack, out
 }
 
 // spanRMS returns the RMS level of x from its start to the sample at which

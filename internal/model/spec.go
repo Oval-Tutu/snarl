@@ -74,6 +74,29 @@ type Spec struct {
 	Voice     VoiceSpec      `toml:"voice"`
 	Cylinders []CylinderSpec `toml:"cylinder"`
 	Paths     []PathSpec     `toml:"path"`
+	// Formants is the formant bank of the engine, which runs once on the
+	// sum of the paths, in place of the engine-sim impulse response.
+	Formants []FormantSpec `toml:"formant"`
+	// PopFormants is the pop bank, which colours the pressure jump of the
+	// pops on each path after its collector.
+	PopFormants []FormantSpec `toml:"pop_formant"`
+}
+
+// MaxFormants is the most sections that a formant bank or a pop bank can
+// have.
+const MaxFormants = 16
+
+// FormantSpec is one biquad section of a formant bank, from the Audio EQ
+// Cookbook.
+type FormantSpec struct {
+	// Kind is "peak", "lowpass" or "highpass".
+	Kind string `toml:"kind"`
+	// Hz is the centre of a peak or the corner of a low pass or a high
+	// pass, in hertz.
+	Hz float64 `toml:"hz"`
+	Q  float64 `toml:"q"`
+	// GainDB is the gain of a peak at its centre, in decibels.
+	GainDB float64 `toml:"gain_db"`
 }
 
 // PulseSpec is the shape of one exhaust pulse.
@@ -112,20 +135,17 @@ type ExhaustSpec struct {
 	// Coupling is the share of the other bank in each path for a partial
 	// crossover, from 0 to 0.5.
 	Coupling float64 `toml:"coupling"`
-	// OutletDirect is the gain of the low-frequency pressure that passes
-	// the outlet next to the radiation filter.
-	OutletDirect float64 `toml:"outlet_direct"`
-	// Steepening is the load-dependent wave steepening.
-	Steepening float64 `toml:"steepening"`
 	// Overlap is the gain of the quadratic pressure term in each bank
 	// collector, before the crossover. Overlapping pulses of one bank add
 	// a pressure peak, which keeps the per-bank firing pattern audible.
 	Overlap float64 `toml:"overlap"`
-	// LowShelfDB is the low-frequency gain of the exhaust body in
-	// decibels, below LowShelfHz. A boost gives the sound
-	// weight.
-	LowShelfDB float64 `toml:"low_shelf_db"`
-	LowShelfHz float64 `toml:"low_shelf_hz"`
+	// FormantGainDB and PopFormantGainDB are the gains in decibels of the
+	// formant bank and of the pop bank.
+	FormantGainDB    float64 `toml:"formant_gain_db"`
+	PopFormantGainDB float64 `toml:"pop_formant_gain_db"`
+	// PopDelayMS is the delay in milliseconds of the pop bank output, the
+	// delay of the expansion chamber that the pop bank follows.
+	PopDelayMS float64 `toml:"pop_delay_ms"`
 }
 
 // CylinderSpec is one cylinder.
@@ -140,16 +160,10 @@ type CylinderSpec struct {
 
 // PathSpec is one exhaust path from a bank collector to an outlet.
 type PathSpec struct {
-	CollectorM  float64 `toml:"collector_m"`
-	Reflection  float64 `toml:"reflection"`
-	DampingHz   float64 `toml:"damping_hz"`
-	PipeRadiusM float64 `toml:"pipe_radius_m"`
-	OutletM     float64 `toml:"outlet_radius_m"`
-	WallLossDB  float64 `toml:"wall_loss_db"`
-	WallLossHz  float64 `toml:"wall_loss_hz"`
-	ChamberM    float64 `toml:"chamber_m"`
-	ChamberArea float64 `toml:"chamber_area_ratio"`
-	Gain        float64 `toml:"gain"`
+	CollectorM float64 `toml:"collector_m"`
+	Reflection float64 `toml:"reflection"`
+	DampingHz  float64 `toml:"damping_hz"`
+	Gain       float64 `toml:"gain"`
 	// ListenerM is the extra distance in metres from this outlet to the
 	// listener, through air at 343 metres per second.
 	ListenerM float64 `toml:"listener_m"`
@@ -168,8 +182,10 @@ type NoiseSpec struct {
 	// AMCutoffHz is the cutoff in hertz of the AM noise low pass, a
 	// fourth-order Butterworth, as the engine-sim air noise low pass.
 	AMCutoffHz float64 `toml:"am_cutoff_hz"`
-	Jet        float64 `toml:"jet"`
-	JetHz      float64 `toml:"jet_hz"`
+	// InputJitter is the engine-sim jitter: the depth of the random
+	// fractional delay of the input of each exhaust path, from 0 to 1. At
+	// 1, the delay moves over up to 9 samples at 44.1 kHz.
+	InputJitter float64 `toml:"input_jitter"`
 }
 
 // PopSpec is the pop model.
@@ -269,11 +285,8 @@ func DefaultSpec() Spec {
 			CycleVariation: 0.08, Jitter: 0.003,
 			GainVariation: 0.06, TimingVariationDeg: 1.5,
 		},
-		Exhaust: ExhaustSpec{
-			SpeedOfSound: 565, Crossover: "none", OutletDirect: 0.4,
-			Steepening: 0.3, LowShelfHz: 250,
-		},
-		Noise: NoiseSpec{AM: 0.35, AMCutoffHz: 2000, Jet: 0.02, JetHz: 1500},
+		Exhaust: ExhaustSpec{SpeedOfSound: 565, Crossover: "none"},
+		Noise:   NoiseSpec{AM: 0.35, AMCutoffHz: 2000},
 		Pops: PopSpec{
 			Character: "sport", Gain: 1, BodyHz: 200, BodyMS: 35, JumpMS: 3,
 			Crack: 2.5, CrackMS: 16,
@@ -300,7 +313,7 @@ func (s *Spec) Validate() error {
 	if s.Name == "" {
 		return errors.New("profile has no name")
 	}
-	for _, check := range []func() error{s.validateEngine, s.validateLimiter, s.validateIdle, s.validateCylinders, s.validatePaths} {
+	for _, check := range []func() error{s.validateEngine, s.validateLimiter, s.validateIdle, s.validateCylinders, s.validatePaths, s.validateFormants} {
 		if err := check(); err != nil {
 			return fmt.Errorf("profile %s: %w", s.Name, err)
 		}
@@ -331,16 +344,39 @@ func (s *Spec) validateEngine() error {
 		return errors.New("pops weights must not be negative, and at least one must be positive")
 	case s.Voice.Gain <= 0 || math.Abs(s.Voice.OutputDB) > 40 || math.Abs(s.Voice.LevellerDB) > 60:
 		return errors.New("voice gain must be positive, output_db from -40 to 40 and leveller_db from -60 to 60")
-	case math.Abs(s.Exhaust.LowShelfDB) > 20 || s.Exhaust.LowShelfHz <= 0:
-		return errors.New("exhaust low_shelf_db must be from -20 to 20 and low_shelf_hz positive")
+	case math.Abs(s.Exhaust.FormantGainDB) > 60 || math.Abs(s.Exhaust.PopFormantGainDB) > 60 ||
+		s.Exhaust.PopDelayMS < 0 || s.Exhaust.PopDelayMS > 20:
+		return errors.New("exhaust formant_gain_db and pop_formant_gain_db must be from -60 to 60 and pop_delay_ms from 0 to 20")
 	case s.Overrun.LevelDB > 6 || s.Overrun.IdleLevelDB > 6 || s.Overrun.LevelDB < -40 || s.Overrun.IdleLevelDB < -40:
 		return errors.New("overrun level_db and idle_level_db must be from -40 to 6")
 	case s.Pulse.PartLoadDB >= 0 || s.Pulse.PartLoadDB < -20:
 		return errors.New("pulse part_load_db must be from -20 to below 0")
 	case s.Noise.AMCutoffHz < 100 || s.Noise.AMCutoffHz > 8000 || s.Noise.AM < 0 || s.Noise.AM > 1:
 		return errors.New("noise am_cutoff_hz must be from 100 to 8000 and am from 0 to 1")
-	case s.Noise.HFGain < 0 || s.Noise.HFGain > 0.1:
-		return errors.New("noise hf_gain must be from 0 to 0.1")
+	case s.Noise.HFGain < 0 || s.Noise.HFGain > 0.1 || s.Noise.InputJitter < 0 || s.Noise.InputJitter > 1:
+		return errors.New("noise hf_gain must be from 0 to 0.1 and input_jitter from 0 to 1")
+	}
+	return nil
+}
+
+// validateFormants reports the first bad section of the formant bank and
+// of the pop bank.
+func (s *Spec) validateFormants() error {
+	for _, bank := range []struct {
+		name string
+		f    []FormantSpec
+	}{{"formant", s.Formants}, {"pop_formant", s.PopFormants}} {
+		if len(bank.f) > MaxFormants {
+			return fmt.Errorf("%d %s sections, want at most %d", len(bank.f), bank.name, MaxFormants)
+		}
+		for i, f := range bank.f {
+			switch {
+			case f.Kind != "peak" && f.Kind != "lowpass" && f.Kind != "highpass":
+				return fmt.Errorf("%s %d: kind %q is not peak, lowpass or highpass", bank.name, i+1, f.Kind)
+			case f.Hz < 10 || f.Hz > 24000 || f.Q < 0.1 || f.Q > 50 || math.Abs(f.GainDB) > 48:
+				return fmt.Errorf("%s %d: hz must be from 10 to 24000, q from 0.1 to 50 and gain_db from -48 to 48", bank.name, i+1)
+			}
+		}
 	}
 	return nil
 }
@@ -411,9 +447,8 @@ func (s *Spec) validatePaths() error {
 		return fmt.Errorf("%d paths for %d banks", len(s.Paths), s.Banks())
 	}
 	for i, p := range s.Paths {
-		if p.CollectorM <= 0 || p.OutletM <= 0 || p.PipeRadiusM <= 0 ||
-			p.Reflection <= -1 || p.Reflection >= 1 || p.Gain <= 0 || p.ListenerM < 0 || p.ListenerM > 20 {
-			return fmt.Errorf("path %d has a bad collector, radius, reflection, gain or listener distance", i+1)
+		if p.CollectorM <= 0 || p.Reflection <= -1 || p.Reflection >= 1 || p.Gain <= 0 || p.ListenerM < 0 || p.ListenerM > 20 {
+			return fmt.Errorf("path %d has a bad collector, reflection, gain or listener distance", i+1)
 		}
 	}
 	return nil

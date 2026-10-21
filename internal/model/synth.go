@@ -21,6 +21,18 @@ const (
 	// derivNormHz is the frequency at which the derivative of the
 	// synthesiser input has the gain of the pulse.
 	derivNormHz = 400
+	// inputDCHz is the cutoff of the engine-sim low pass whose output the
+	// pressure term of the synthesiser input subtracts.
+	inputDCHz = 10
+	// jitterRate, jitterSteps and jitterHz are the engine-sim input
+	// jitter: at an input_jitter of 1, the delay of the input moves over
+	// jitterSteps samples at jitterRate, through a low pass at jitterHz.
+	jitterRate  = 44100
+	jitterSteps = 9
+	jitterHz    = 10000
+	// jitterLen is the length of the jitter delay line, a power of two
+	// above the longest jitter delay at 96 kHz.
+	jitterLen = 32
 	// notchLen is the length in seconds of the limiter notch at the start
 	// of a cut.
 	notchLen = 0.07
@@ -50,7 +62,7 @@ var controlBlock = chunk
 
 // wholeSampleStart is true only in a test that compares the pulses with
 // pulses that start on the whole sample at or after their position, with
-// no band-limited corner and no end at zero.
+// no end at zero.
 var wholeSampleStart bool
 
 // Control is the engine state for one block.
@@ -88,31 +100,30 @@ type voice struct {
 type Synth struct {
 	rate float64
 
-	noise, noise2 dsp.Noise
-	idle          idle
-	crank         crank
-	voices        []voice
-	delay         []float32
-	cylGain       []float32
-	cylDev        []float32
-	stepPerCycle  float32
-	maxInc        float32
-	invRate120    float32
+	noise        dsp.Noise
+	idle         idle
+	crank        crank
+	voices       []voice
+	delay        []float32
+	cylGain      []float32
+	cylDev       []float32
+	stepPerCycle float32
+	maxInc       float32
+	invRate120   float32
 
-	banks int
-	mix   [MaxBanks][MaxBanks]float32
-	paths []path
-	pops  pops
-	out   output
+	banks    int
+	mix      [MaxBanks][MaxBanks]float32
+	paths    []path
+	formants formants
+	pops     pops
+	out      output
 
 	// Profile constants.
 	cycleVar, jitter            float32
 	redline, camRPM             float32
 	camGain, camAttack, attack  float32
 	decay                       float32
-	jetCfg                      float32
-	steepCfg, voiceGain         float32
-	overlap                     float32
+	voiceGain, overlap          float32
 	limKind                     string
 	limRPM, limFall, limRise    float32
 	limCut                      int
@@ -125,34 +136,37 @@ type Synth struct {
 	idleRPM, ovLevel, ovIdle    float32
 	partLoad                    float32
 	shape                       float32
-	jetBP                       dsp.Biquad
 	rpm, throttle, load, master float32
 	overrun, camMix             float32
 	camHigh                     bool
 	inc, step, amp              float32
-	jetGain, ka, kb, liveNorm   float32
+	ka, kb, liveNorm            float32
 
 	// Pulse placement for one chunk. aStep and bStep are the attack and
 	// decay rates per pulse step, so that a voice starts its envelope at
 	// its fractional position. endVal is the envelope at the end of the
 	// pulse, which the pulse subtracts along its length, so that it ends
-	// at zero. corner is the slope of the pulse at its start per sample,
-	// times liveNorm/6, the gain of the band-limited corner. invStep is
-	// 1/step.
+	// at zero.
 	aStep, bStep, endVal float32
-	corner, invStep      float32
 
 	// The engine-sim synthesiser input of each path. hLP is the fourth-
 	// order low pass of the pulse, and hPrev its last output, for the
-	// derivative. amLP is the fourth-order low pass of the AM noise. kD is
-	// the gain of the derivative per sample step, and kNoise and kFlat the
-	// gains of the noise and of the pulse in the AM term. amGain is the
-	// noise gain of the chunk.
+	// derivative. inDC is the low pass that the pressure term subtracts.
+	// amLP is the fourth-order low pass of the AM noise. kD is the gain of
+	// the derivative per sample step, and kNoise and kFlat the gains of
+	// the noise and of the pulse in the AM term.
 	hLP               [MaxBanks][2]dsp.Biquad
 	hPrev             [MaxBanks]float32
+	inDC              [MaxBanks]dsp.OnePole
 	amLP              [2]dsp.Biquad
 	kD, kNoise, kFlat float32
-	amGain            float32
+
+	// The engine-sim input jitter of each path, after hLP. jitScale is
+	// the range of the random read offset in samples, and jitMax the
+	// longest delay. With no jitter, the stage does not run.
+	inJit            [MaxBanks]inputJitter
+	jitNoise         dsp.Noise
+	jitScale, jitMax float32
 
 	// Engine level for the pops. engS and engE sum the levelled engine and
 	// its square over the chunk, which is where the pops join it. engMean
@@ -209,7 +223,6 @@ func New(s *Spec, rate int) (*Synth, error) {
 	y := &Synth{
 		rate:       fs,
 		noise:      dsp.NewNoise(seed),
-		noise2:     dsp.NewNoise(seed + 0x51ed),
 		invRate120: float32(1 / (120 * fs)),
 		banks:      s.Banks(),
 		cycleVar:   float32(s.Pulse.CycleVariation),
@@ -220,8 +233,6 @@ func New(s *Spec, rate int) (*Synth, error) {
 		attack:     float32(s.Pulse.Attack),
 		camAttack:  float32(s.Pulse.CamAttack),
 		decay:      float32(s.Pulse.Decay),
-		jetCfg:     float32(s.Noise.Jet),
-		steepCfg:   float32(s.Exhaust.Steepening),
 		overlap:    float32(s.Exhaust.Overlap),
 		voiceGain:  float32(s.Voice.Gain),
 		limKind:    s.LimiterKind,
@@ -260,11 +271,6 @@ func New(s *Spec, rate int) (*Synth, error) {
 	if y.camAttack <= 0 {
 		y.camAttack = y.attack
 	}
-	jetHz := s.Noise.JetHz
-	if jetHz <= 0 {
-		jetHz = 1500
-	}
-	y.jetBP.SetBandPass(jetHz, 0.7, fs)
 
 	y.idle = newIdle(s, seed, chunkHz)
 	y.initCylinders(s, fs)
@@ -325,39 +331,78 @@ func (y *Synth) initPaths(s *Spec, fs float64) {
 	}
 	y.paths = make([]path, nb)
 	for i, ps := range s.Paths {
-		y.paths[i] = newPath(ps, s.Exhaust, fs)
+		y.paths[i] = newPath(ps, s, fs)
 	}
+	y.formants = newFormants(s.Formants, s.Exhaust.FormantGainDB, fs)
 }
 
 // initSynthInput sets the stages from engine-sim that make the input of
 // each path from its pulse sum x, as Synthesizer::renderAudio makes the
 // input of its convolution: a fourth-order Butterworth low pass at
-// harmonicHz, then hf_gain times the derivative plus 1-hf_gain times x
-// times the AM term am*r+1-am, where r is uniform noise through a
-// fourth-order Butterworth low pass at am_cutoff_hz. The derivative is
-// per second, as in engine-sim, so its gain does not depend on the sample
-// rate. The input scales by 1/(1-hf_gain+hf_gain*2*pi*derivNormHz), which
-// gives the derivative of a sine at derivNormHz the gain of the pulse,
-// so that the input keeps about the scale of the pulse, which the wave
-// steepening and the jet layer assume. The leveller removes the scale.
+// harmonicHz, the input jitter, then hf_gain times the derivative plus
+// 1-hf_gain times x less its 10 Hz low pass times the AM term am*r+1-am,
+// where r is uniform noise through a fourth-order Butterworth low pass at
+// am_cutoff_hz. The derivative is per second, as in engine-sim, so its
+// gain does not depend on the sample rate. The input scales by
+// 1/(1-hf_gain+hf_gain*2*pi*derivNormHz), which gives the derivative of a
+// sine at derivNormHz the gain of the pulse, so that the input keeps about
+// the scale of the pulse. The leveller removes the scale.
 func (y *Synth) initSynthInput(s *Spec, fs float64) {
 	hf := s.Noise.HFGain
 	norm := 1 / (1 - hf + hf*2*math.Pi*derivNormHz)
 	y.kD = float32(hf * fs * norm)
 	y.kNoise = float32((1 - hf) * s.Noise.AM * norm)
 	y.kFlat = float32((1 - hf) * (1 - s.Noise.AM) * norm)
+	dt := 1 / fs
+	rc := 1 / (2 * math.Pi * inputDCHz)
 	for p := range y.banks {
 		y.hLP[p][0].SetLowPass(harmonicHz, 0.5412, fs)
 		y.hLP[p][1].SetLowPass(harmonicHz, 1.3066, fs)
+		y.inDC[p].A = float32(dt / (rc + dt))
+		y.inJit[p].lp.SetLowPass(jitterHz, 0.7071, fs)
 	}
 	y.amLP[0].SetLowPass(s.Noise.AMCutoffHz, 0.5412, fs)
 	y.amLP[1].SetLowPass(s.Noise.AMCutoffHz, 1.3066, fs)
+	steps := min(jitterSteps*fs/jitterRate, jitterLen-2)
+	y.jitScale = float32(steps * s.Noise.InputJitter)
+	y.jitMax = float32(steps)
+	y.jitNoise = dsp.NewNoise(uint32(s.Seed&math.MaxUint16) + 0x3c6e)
 }
 
-// envelopePeak returns the peak of (1-exp(-a x))exp(-b x) for x >= 0.
+// inputJitter is the engine-sim input jitter of one path (JitterFilter):
+// the input passes a short delay line, and the read point moves at random,
+// from uniform noise through a low pass, with linear interpolation between
+// two samples. engine-sim uses a fourth-order Butterworth low pass. One
+// second-order section at the same cutoff costs half as much, and the 6 to
+// 16 kHz noise of the tuned profiles stays within 0.5 dB.
+type inputJitter struct {
+	hist [jitterLen]float32
+	w    int
+	lp   dsp.Biquad
+}
+
+// process writes x and returns the input at the random delay. u is the
+// random offset from 0 to the jitter range in samples, and most the
+// longest delay.
+func (j *inputJitter) process(x, u, most float32) float32 {
+	j.w = (j.w + 1) & (jitterLen - 1)
+	j.hist[j.w] = x
+	// The low pass can overshoot the range of u by a few per cent. The
+	// masks keep every read inside the delay line, so no clamp is needed:
+	// a delay slightly below 0 reads the newest two samples.
+	d := most - j.lp.Process(u)
+	k := int(d)
+	f := d - float32(k)
+	a := j.hist[(j.w-k)&(jitterLen-1)]
+	b := j.hist[(j.w-k-1)&(jitterLen-1)]
+	return a + (b-a)*f
+}
+
+// envelopePeak returns the peak of (1-exp(-a x))^2 exp(-b x) for x >= 0.
 func envelopePeak(a, b float64) float64 {
-	x := math.Log((a+b)/b) / a
-	return (1 - math.Exp(-a*x)) * math.Exp(-b*x)
+	x := math.Log((2*a+b)/b) / a
+	s := 1 - math.Exp(-a*x)
+	return s * s * math.Exp(-b*x)
 }
 
 // PitchRPM returns the RPM that the firing follows. It differs from the
@@ -461,14 +506,6 @@ func (y *Synth) control(c *Control, n int) {
 	y.shape = shape + (lvl-shape)*y.overrun
 	y.amp = y.master * y.voiceGain * y.shape * (0.5 + 0.5*rr) *
 		(1 + y.camGain*y.camMix) * (1 + 2*y.jitter*j) * y.idle.rock
-	// The engine-sim derivative weights each harmonic by its frequency,
-	// so that the share of the noise falls as the RPM rises. With no
-	// derivative, the noise falls with the square root of the RPM over
-	// idle in its place.
-	y.amGain = y.kNoise
-	if y.kD == 0 {
-		y.amGain *= float32(math.Sqrt(float64(y.idleRPM / max(y.rpm, y.idleRPM))))
-	}
 	// The limiter level ramps over the chunk. It starts at its first value.
 	g := (1 + y.bark) * y.fade
 	if y.cutting {
@@ -485,9 +522,7 @@ func (y *Synth) control(c *Control, n int) {
 		heat: heat, character: c.Character, level: float32(math.Sqrt(math.Max(0, float64(y.engMS-y.engMean*y.engMean)))),
 		n: n, paths: len(y.paths),
 	})
-	// The exhaust flow layers follow the pulse gain, so that they keep the
-	// level order over load.
-	y.controlLayers(y.shape, rr)
+	y.controlPulse()
 }
 
 // limit runs the rev limiter for a chunk of n samples, from the input RPM,
@@ -610,9 +645,8 @@ func (y *Synth) waverStep(top bool) {
 	y.wav = y.waver * y.wavMix * (w - 1) * 0.5
 }
 
-// controlLayers sets the pulse envelope coefficients, the wave steepening
-// and the gain of the jet layer for one chunk.
-func (y *Synth) controlLayers(flow, rr float32) {
+// controlPulse sets the pulse envelope coefficients for one chunk.
+func (y *Synth) controlPulse() {
 	a := float64(y.attack + (y.camAttack-y.attack)*y.camMix)
 	b := float64(y.decay)
 	dx := float64(y.step) / pulseLen
@@ -621,17 +655,11 @@ func (y *Synth) controlLayers(flow, rr float32) {
 	y.liveNorm = float32(1 / envelopePeak(a, b))
 	y.aStep = float32(a / pulseLen)
 	y.bStep = float32(b / pulseLen)
-	y.endVal = float32((1 - math.Exp(-a)) * math.Exp(-b) / pulseLen)
-	y.corner = float32(a*dx/6) * y.liveNorm
-	y.invStep = 1 / max(y.step, 1e-9)
+	ea := 1 - math.Exp(-a)
+	y.endVal = float32(ea * ea * math.Exp(-b) / pulseLen)
 	if wholeSampleStart {
-		y.aStep, y.bStep, y.endVal, y.corner = 0, 0, 0, 0
+		y.aStep, y.bStep, y.endVal = 0, 0, 0
 	}
-	for i := range y.paths {
-		y.paths[i].steep = y.steepCfg * flow
-	}
-	jet := float32(math.Pow(math.Max(float64(flow), 0.02), 0.7)) * rr
-	y.jetGain = y.master * y.jetCfg * jet * jet
 }
 
 // fire starts the pulse of one cylinder. In a limiter cut, the pulse is a
@@ -650,14 +678,7 @@ func (y *Synth) fire(cyl int) {
 	}
 	v := &y.voices[cyl]
 	v.gain = y.amp * (y.cylGain[cyl] + y.idle.imbalance*y.cylDev[cyl]) * g
-	// The pulse starts one sample later than the crank places it, so that
-	// the sample before its start, which carries part of the band-limited
-	// corner, is still to come.
-	lead := float32(1)
-	if wholeSampleStart {
-		lead = 0
-	}
-	v.pos = (y.crank.past-late)*y.stepPerCycle - (y.delay[cyl]+lead)*y.step
+	v.pos = (y.crank.past-late)*y.stepPerCycle - y.delay[cyl]*y.step
 	v.active = true
 	v.started = false
 }
@@ -665,13 +686,12 @@ func (y *Synth) fire(cyl int) {
 // pulses runs every active voice for one sample and sums the voices per
 // bank.
 //
-// A pulse starts at its fractional position: its first sample is the
-// envelope v.pos pulse steps after the start. The envelope starts at zero
-// with a corner, a step of its slope. A two-sample polynomial band-limited
-// ramp (polyBLAMP) rounds the corner: with d the fraction of a sample from
-// the start to the first sample, the sample before the start adds
-// corner*d^3 and the first sample adds corner*(1-d)^3. The pulse subtracts
-// the envelope end value along its length, so that it ends at zero.
+// The envelope is (1-exp(-a x))^2 exp(-b x): it starts at zero with no
+// slope, as the runner pressure of engine-sim rises, so that its harmonics
+// fall fast above the firing frequency and its start needs no band-limited
+// corner. A pulse starts at its fractional position: its first sample is
+// the envelope v.pos pulse steps after the start. The pulse subtracts the
+// envelope end value along its length, so that it ends at zero.
 func (y *Synth) pulses(bank *[MaxBanks]float32) {
 	step := y.step
 	for k := range y.voices {
@@ -681,25 +701,19 @@ func (y *Synth) pulses(bank *[MaxBanks]float32) {
 		}
 		if v.pos < 0 {
 			v.pos += step
-			if v.pos >= 0 {
-				d := v.pos * y.invStep
-				bank[v.bank] += y.corner * d * d * d * v.gain
-			}
 			continue
 		}
 		if int(v.pos) >= pulseLen {
 			v.active = false
 			continue
 		}
-		var c float32
 		if !v.started {
 			v.started = true
 			v.e1 = float32(math.Exp(float64(-y.aStep * v.pos)))
 			v.e2 = float32(math.Exp(float64(-y.bStep * v.pos)))
-			d := max(0, 1-v.pos*y.invStep)
-			c = y.corner * d * d * d
 		}
-		e := ((1-v.e1)*v.e2-y.endVal*v.pos)*y.liveNorm + c
+		s := 1 - v.e1
+		e := (s*s*v.e2 - y.endVal*v.pos) * y.liveNorm
 		v.e1 *= y.ka
 		v.e2 *= y.kb
 		bank[v.bank] += e * v.gain
@@ -720,7 +734,7 @@ func (y *Synth) process(dst []float32) {
 			bank[b] += y.overlap * bank[b] * bank[b]
 		}
 
-		am := y.amGain*y.amLP[1].Process(y.amLP[0].Process(y.noise.Bipolar())) + y.kFlat
+		am := y.kNoise*y.amLP[1].Process(y.amLP[0].Process(y.noise.Bipolar())) + y.kFlat
 		pop := y.pops.tick()
 
 		var sum float32
@@ -729,16 +743,24 @@ func (y *Synth) process(dst []float32) {
 			for b := range np {
 				x += y.mix[p][b] * bank[b]
 			}
-			// From engine-sim: the low pass of the synthesiser input, and
-			// the derivative plus the noise AM of the pulse.
+			// From engine-sim: the low pass and the jitter of the
+			// synthesiser input, and the derivative plus the noise AM of
+			// the pressure with no DC.
 			x = y.hLP[p][1].Process(y.hLP[p][0].Process(x))
+			if y.jitScale > 0 {
+				x = y.inJit[p].process(x, y.jitNoise.Unipolar()*y.jitScale, y.jitMax)
+			}
 			d := x - y.hPrev[p]
 			y.hPrev[p] = x
-			e, q := y.paths[p].process(y.kD*d+x*am, y.pops.jump[p], y.pops.live[p])
-			sum += e
-			pop += q
+			f := x - y.inDC[p].Process(x)
+			sum += y.paths[p].process(y.kD*d + f*am)
+			if y.pops.live[p] || y.paths[p].popLeft > 0 {
+				pop += y.paths[p].popProcess(y.pops.jump[p], y.pops.live[p])
+			}
 		}
-		sum += y.jet()
+		// From engine-sim: the impulse response, as a formant bank on the
+		// sum of the paths.
+		sum = y.formants.process(sum)
 		y.env += y.envStep
 		e := y.out.level(sum) * y.env
 		y.engS += e
@@ -764,9 +786,4 @@ func (y *Synth) engineLevel(n int) {
 		y.engMean += (mean - y.engMean) * y.kEng
 		y.engMS += (ms - y.engMS) * y.kEng
 	}
-}
-
-// jet renders the jet noise layer for one sample.
-func (y *Synth) jet() float32 {
-	return y.jetBP.Process(y.noise2.Bipolar()) * y.jetGain
 }

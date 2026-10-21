@@ -71,7 +71,15 @@ func calibrate(e *engine) error {
 		}
 		return loudness(p, fmt.Sprintf("hold %s 0 3\n", num(e.IdleRPM)), 1)
 	}
-	low, err := idle(-40)
+	// The low point must be above the absolute gate of the loudness
+	// measure: it is the first of -40, -20 and 0 dB whose hold is above
+	// -60 LUFS.
+	at := -40.0
+	low, err := idle(at)
+	for err == nil && low < -60 && at < 0 {
+		at += 20
+		low, err = idle(at)
+	}
 	if err != nil {
 		return err
 	}
@@ -79,7 +87,7 @@ func calibrate(e *engine) error {
 	if err != nil {
 		return err
 	}
-	e.LevellerDB = round(min(60, max(-60, high-low-40-kneeMargin)), 1)
+	e.LevellerDB = round(min(60, max(-60, high-low+at-kneeMargin)), 1)
 	sweep := scenarioText(e, "sweep-wot")
 	for range 8 {
 		p, err := parse(e)

@@ -37,7 +37,8 @@ type FormantBank struct {
 }
 
 // The bounds of a section. A section that a fit step moves out of them
-// stops at the bound.
+// stops at the bound. FormantTarget.clamp lowers formantMinHz for a grid
+// that starts below twice its value.
 const (
 	formantMinHz   = 20
 	formantMaxRate = 0.45
@@ -495,9 +496,10 @@ func (t *FormantTarget) fit(p []float64, kinds []string) float64 {
 	return levenbergMarquardt(p, len(t.Hz), f, t.clamp)
 }
 
-// clamp keeps each section of p inside the bounds.
+// clamp keeps each section of p inside the bounds. The lowest frequency is
+// formantMinHz, or half the lowest grid frequency when that is lower.
 func (t *FormantTarget) clamp(p []float64) {
-	lo, hi := math.Log(formantMinHz), math.Log(formantMaxRate*t.Rate)
+	lo, hi := math.Log(math.Min(formantMinHz, t.Hz[0]/2)), math.Log(formantMaxRate*t.Rate)
 	for k := 1; k+2 < len(p); k += 3 {
 		p[k] = math.Max(lo, math.Min(hi, p[k]))
 		p[k+1] = math.Max(math.Log(formantMinQ), math.Min(math.Log(formantMaxQ), p[k+1]))

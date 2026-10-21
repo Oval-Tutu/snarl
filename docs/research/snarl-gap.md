@@ -103,3 +103,113 @@ All under `out/analysis/snarl/<profile>/<scenario>/`, for the profiles flat12, f
 - The strongest order uses whole orders only, at the mean RPM of the window. The half orders are in `describe.md`.
 - `holds-t050` has gap tables (`gap.md`), but this document does not summarise them.
 - The residual of a hold is only valid when the cycle period is inside the search range. Every hold here has a valid residual.
+
+## 6. Result
+
+Measured on branch `overnight/engine-sim-match` after the formant bank change. "Before" is `a73b874` (the leveller, the 1.9 kHz pulse low pass and the noise AM, with the EngineLab path stages and `hf_gain` 0). "After" is the working tree with these changes:
+
+- The formant bank (`[[formant]]`), fitted by `tools/fit --base ir --hi 16000` to the engine-sim impulse response alone, runs once on the sum of the paths before the leveller. It replaces the wall loss, the low shelf, the expansion chamber, the mode cutoff and the outlet.
+- The wave steepening and the jet noise are removed. The collector stays.
+- `hf_gain`, `am` and the new `input_jitter` (the engine-sim input jitter) are the engine-sim values of each script. The square-root noise fall is removed.
+- The pulse envelope has a squared attack, with `attack` 4, so that each pulse starts with no slope.
+- The pops pass a pop bank fitted to their earlier path stages.
+
+Renders: `out/phase4c/head/<profile>/` (before) and `out/phase4c/after/<profile>/` (after), with the `snarl-compare --gap` tables `gap-<scenario>.md` beside them, and the `just analyse` images of the after renders in `out/phase4c/after/<profile>/<scenario>/`. Ranges are over the windows of `holds-t100` unless the row names another scenario. The loudness and peak bands are the spreads of the 0.5 s windows of `sweep-wot`.
+
+### Answer
+
+The formant bank, the engine-sim noise settings and the smooth pulse close most gaps. The strongest order of the top full-throttle hold now sits at the engine-sim formant for flat6, inline4 and v8, and at 340 Hz against 227 Hz for flat12 (680 Hz to 1.1 kHz before). The 6 to 16 kHz noise is now within 4 dB of engine-sim at most holds, and up to 6 dB above it at two holds, where it was 2 to 32 dB below. The peak band of the sweep is 1.3 to 2.9 dB (engine-sim 1.3 to 2.3 dB), and the crest factor at the top holds fell by 2 to 7 dB. Three gaps remain:
+
+1. The loudness band of the sweep is 5.8 LU for inline4 and 3.7 LU for v8, against 2.3 and 1.7 LU in engine-sim. Their crest factor rises to 10 to 12 dB at the top of the sweep and below 1500 RPM, against 7 to 9 dB in engine-sim. The engine-sim runner pressure fills the interval between firings at high RPM, so its firing order dominates. The snarl pulses of inline4 leave gaps at 8000 RPM, so the orders 6 to 10 are 5 to 14 dB stronger than in engine-sim.
+2. The residual of the full-throttle holds is 5 to 13 dB above engine-sim at high RPM for flat6, inline4 and v8. The slow `[pulse] jitter` (approved) gives about 6 dB of it: in a test render of the v8 with `jitter` 0, the residual at 3000 to 6000 RPM was -21 to -27 dB, against -26 to -30 dB in engine-sim. The input jitter adds less than 1 dB to the residual.
+3. The centroid of v8 is 1066 to 1464 Hz against 868 to 1049 Hz in engine-sim, and the flat12 centroid is 1426 to 1856 Hz against 1251 to 1525 Hz, and the v8 hold at 5000 RPM has 5.5 dB more power above 2.84 kHz. Order 12 meets the narrow formant at 1 kHz there.
+
+### flat12
+
+| Measure | engine-sim | Before | After |
+| --- | --- | --- | --- |
+| Loudness band, `sweep-wot` | 1.3 LU | 2.3 LU | 2.0 LU |
+| Peak band, `sweep-wot` | 1.3 dB | 2.8 dB | 1.5 dB |
+| Crest factor | 7.0 to 8.3 dB | 7.3 to 14.8 dB | 6.9 to 9.6 dB |
+| Centroid | 1251 to 1525 Hz | 532 to 1557 Hz | 1426 to 1856 Hz |
+| Power above 2.84 kHz | -25.6 to -30.3 dB | -28.7 to -37.7 dB | -24.4 to -29.6 dB |
+| Strongest order, top hold (6800 RPM) | 2 (227 Hz) | 6 (680 Hz) | 3 (340 Hz) |
+| Strongest order, all holds | 100 to 400 Hz | 100 to 750 Hz | 100 to 500 Hz |
+| Residual | -6.0 to -12.8 dB | -12.6 to -18.9 dB | -15.3 to -23.7 dB |
+| AM peak / trough | +3.0 to +4.7 / -5.8 to -12.5 dB | +5.1 to +9.2 / -7.4 to -12.6 dB | +5.3 to +8.5 / -6.6 to -10.4 dB |
+| Residual 6-16 kHz | -29.0 to -33.8 dB | -37.8 to -62.7 dB | -28.0 to -33.2 dB |
+| Idle, closed throttle (1000 RPM): residual, 6-16 kHz | -3.2, -30.5 dB | -3.3, -62.6 dB | -2.8, -32.9 dB |
+
+### flat6
+
+| Measure | engine-sim | Before | After |
+| --- | --- | --- | --- |
+| Loudness band, `sweep-wot` | 3.0 LU | 3.1 LU | 3.1 LU |
+| Peak band, `sweep-wot` | 2.3 dB | 3.7 dB | 1.3 dB |
+| Crest factor | 3.6 to 10.0 dB | 7.0 to 10.7 dB | 5.2 to 10.3 dB |
+| Centroid | 846 to 1168 Hz | 662 to 1364 Hz | 733 to 1136 Hz |
+| Power above 2.84 kHz | -26.5 to -39.0 dB | -30.1 to -38.5 dB | -29.4 to -38.2 dB |
+| Strongest order, top hold (6600 RPM) | 3 (330 Hz) | 10 (1100 Hz) | 3 (330 Hz) |
+| Strongest order, all holds | 240 to 400 Hz | 40 to 1100 Hz | 150 to 330 Hz |
+| Residual | -16.7 to -32.4 dB | -15.0 to -20.3 dB | -19.5 to -27.0 dB |
+| AM peak / trough | +2.5 to +5.4 / -2.8 to -6.5 dB | +4.6 to +7.3 / -8.9 to -23.5 dB | +3.2 to +7.0 / -5.1 to -10.3 dB |
+| Residual 6-16 kHz | -33.1 to -45.9 dB | -43.8 to -63.6 dB | -36.5 to -45.4 dB |
+| Idle, closed throttle (800 RPM): residual, 6-16 kHz | -16.1, -37.8 dB | -11.1, -64.2 dB | -6.0, -36.5 dB |
+
+### inline4
+
+| Measure | engine-sim | Before | After |
+| --- | --- | --- | --- |
+| Loudness band, `sweep-wot` | 2.3 LU | 4.1 LU | 5.8 LU |
+| Peak band, `sweep-wot` | 2.3 dB | 2.4 dB | 2.9 dB |
+| Crest factor | 3.8 to 8.3 dB | 8.4 to 14.6 dB | 2.8 to 12.0 dB |
+| Centroid | 337 to 1088 Hz | 221 to 1646 Hz | 321 to 1575 Hz |
+| Power above 2.84 kHz | -34.2 to -51.7 dB | -24.6 to -54.4 dB | -30.4 to -52.6 dB |
+| Strongest order, top hold (8400 RPM) | 4 (560 Hz) | 6 (840 Hz) | 4 (560 Hz) |
+| Strongest order, all holds | 133 to 560 Hz | 27 to 1067 Hz | 100 to 560 Hz |
+| Residual | -23.9 to -41.8 dB | -13.3 to -33.1 dB | -15.5 to -34.6 dB |
+| AM peak / trough | +4.3 to +11.2 / -5.9 to -18.3 dB | +10.4 to +12.5 / -10.8 to -23.6 dB | +4.6 to +9.9 / -7.8 to -20.6 dB |
+| Residual 6-16 kHz | -37.4 to -55.0 dB | -39.5 to -73.4 dB | -33.7 to -55.7 dB |
+| Idle, closed throttle (800 RPM): residual, 6-16 kHz | -23.0, -52.9 dB | -33.1, -74.2 dB | -26.6, -53.1 dB |
+
+### v8
+
+| Measure | engine-sim | Before | After |
+| --- | --- | --- | --- |
+| Loudness band, `sweep-wot` | 1.7 LU | 4.3 LU | 3.7 LU |
+| Peak band, `sweep-wot` | 2.2 dB | 3.7 dB | 1.5 dB |
+| Crest factor | 5.6 to 8.5 dB | 5.6 to 12.7 dB | 5.8 to 9.5 dB |
+| Centroid | 868 to 1049 Hz | 530 to 1365 Hz | 1066 to 1464 Hz |
+| Power above 2.84 kHz | -28.2 to -36.3 dB | -30.8 to -42.1 dB | -26.8 to -37.8 dB |
+| Strongest order, top hold (6000 RPM) | 4 (400 Hz) | 8 (800 Hz) | 4 (400 Hz) |
+| Strongest order, all holds | 180 to 417 Hz | 45 to 1000 Hz | 45 to 400 Hz |
+| Residual | -16.7 to -30.3 dB | -13.4 to -21.7 dB | -15.9 to -21.6 dB |
+| AM peak / trough | +2.4 to +5.6 / -3.0 to -9.4 dB | +5.0 to +10.4 / -7.2 to -17.6 dB | +4.6 to +7.3 / -5.8 to -12.2 dB |
+| Residual 6-16 kHz | -34.7 to -42.4 dB | -39.1 to -66.9 dB | -33.0 to -44.1 dB |
+| Idle, closed throttle (675 RPM): residual, 6-16 kHz | -11.3, -35.3 dB | -5.9, -66.7 dB | -6.1, -33.9 dB |
+
+### What the images show
+
+- `sweep-wot` spectrograms: the v8 now has the fixed bright band at 340 to 420 Hz of engine-sim, and its harmonic lines stop near 1.4 kHz ([v8 after](../../out/phase4c/after/v8/sweep-wot/spectrogram.png) against [engine-sim v8](../../out/analysis/engine-sim/v8/sweep-wot/spectrogram.png)). The fixed lines of the expansion chamber from 2 to 6 kHz are gone in every profile. Diffuse noise fills 2 to 15 kHz, as in engine-sim.
+- The inline4 harmonic lines still reach about 2 kHz above 6000 RPM, where engine-sim stops near 1.4 kHz ([inline4 after](../../out/phase4c/after/inline4/sweep-wot/spectrogram.png) against [engine-sim inline4](../../out/analysis/engine-sim/inline4/sweep-wot/spectrogram.png)).
+- The flat12 noise above 2 kHz is weaker than in engine-sim, and it has none of the vertical stripes at the firing rate ([flat12 after](../../out/phase4c/after/flat12/sweep-wot/spectrogram.png) against [engine-sim flat12](../../out/analysis/engine-sim/flat12/sweep-wot/spectrogram.png)).
+- The v8 sweep waveform has a flat peak envelope from the first window to the last, as engine-sim has ([v8 after](../../out/phase4c/after/v8/sweep-wot/waveform.png)).
+- The inline4 histogram has a broad flat top with sharp edges on both sides, as engine-sim has ([inline4 after](../../out/phase4c/after/inline4/sweep-wot/histogram.png)).
+- At the closed-throttle idle, the high-frequency noise of engine-sim is now there ([v8 holds-t000 after](../../out/phase4c/after/v8/holds-t000/spectrogram.png)).
+
+### Pops
+
+`TestPopColour` renders draw 4 of the 7 calibration pops of every kind on every path of the tuned profiles through the pop bank and through the EngineLab stages of `a73b874` (`testdata/legacy/`), with the same pressure jump and crack. The pops correlate by 0.9981 to 0.9999 at the best lag of up to 1 ms (0 to 2 samples), and their level at unit gain differs by -0.13 to +0.45 dB. The calibration sets the level of each kind over the engine from the same pops, so the levels over the engine stay at their targets (`TestPopLevelOverEngine`).
+
+### Cost
+
+`BenchmarkStates`, 5 runs each, with the test binaries of `a73b874` and of the working tree run one after the other on the AMD Ryzen 9 7940HS (`out/phase4c/bench-before.txt` and `bench-after.txt`). Per cent of real time per 256-frame block:
+
+| Profile | Before | After | Change |
+| --- | --- | --- | --- |
+| flat12 | 0.25 to 0.37 | 0.27 to 0.41 | +4 to +10 per cent |
+| flat6 | 0.24 to 0.25 | 0.25 to 0.27 | +4 to +6 per cent |
+| inline4 | 0.18 to 0.19 | 0.24 to 0.25 | +28 to +35 per cent |
+| v8 | 0.25 to 0.27 | 0.27 to 0.28 | +0 to +13 per cent |
+
+The sum over the 16 states rises by 11 per cent. Every state stays under 0.35 per cent except the flat12 limiter hold (0.41, against 0.37 before), where the ignition cut bangs run the pop stages. inline4 rises most: its one path had the cheapest EngineLab stages, and its formant bank has 10 sections. The per-sample cost is the formant bank (41 to 51 multiply-adds), the input jitter (about 12 operations per path) and the 10 Hz DC removal of the pressure term, against the EngineLab stages, the steepening and the jet noise that they replace.

@@ -11,7 +11,7 @@ limiter_ms = 55
 
 [pulse]
 width_deg = 160
-attack = 25
+attack = 4
 decay = 7
 part_load_db = -0.8
 cycle_variation = 0.04
@@ -23,16 +23,16 @@ timing_variation_deg = 2
 speed_of_sound = 565
 crossover = "none"
 coupling = 0
-outlet_direct = 0.4
-steepening = 0.3
 overlap = 1.0
-low_shelf_db = 0
-low_shelf_hz = 250
+formant_gain_db = -15.97
+pop_formant_gain_db = -8.15
+pop_delay_ms = 0.531
 
 [noise]
-am = 0.2
-jet = 0.02
-jet_hz = 1500
+hf_gain = 0.01
+am = 1
+am_cutoff_hz = 2000
+input_jitter = 0.5
 
 [pops]
 density = 0.15
@@ -63,8 +63,8 @@ hunt_hz = 1.2
 
 [voice]
 gain = 1
-leveller_db = -3.5
-output_db = 5.31
+leveller_db = 20.2
+output_db = 1
 
 [[cylinder]] # 1
 crank_deg = 0
@@ -90,10 +90,90 @@ primary_m = 0.76
 collector_m = 2.2
 reflection = -0.4
 damping_hz = 2500
-wall_loss_db = 2.5
-wall_loss_hz = 2000
-pipe_radius_m = 0.0315
-outlet_radius_m = 0.035
-chamber_m = 0.3
-chamber_area_ratio = 3.27
 gain = 1
+
+# Formant bank fitted to the engine-sim impulse response smooth_39.wav.
+
+[[formant]]
+kind = "peak"
+hz = 78.2
+q = 5.981
+gain_db = -20.03
+
+[[formant]]
+kind = "peak"
+hz = 134.3
+q = 5.881
+gain_db = -14.06
+
+[[formant]]
+kind = "peak"
+hz = 216.1
+q = 10.549
+gain_db = -10.02
+
+[[formant]]
+kind = "peak"
+hz = 343
+q = 5.175
+gain_db = -16.01
+
+[[formant]]
+kind = "peak"
+hz = 424.7
+q = 0.9
+gain_db = 36
+
+[[formant]]
+kind = "peak"
+hz = 552.3
+q = 1.161
+gain_db = -23.67
+
+[[formant]]
+kind = "peak"
+hz = 634.1
+q = 4.531
+gain_db = 10.58
+
+[[formant]]
+kind = "peak"
+hz = 1010
+q = 10.173
+gain_db = 7.11
+
+[[formant]]
+kind = "lowpass"
+hz = 1783.6
+q = 0.3
+
+[[formant]]
+kind = "peak"
+hz = 2396.4
+q = 5.152
+gain_db = 3.43
+
+# Pop bank fitted to the EngineLab pop stages of the earlier model.
+
+[[pop_formant]]
+kind = "peak"
+hz = 410.1
+q = 0.678
+gain_db = -5.69
+
+[[pop_formant]]
+kind = "lowpass"
+hz = 2024.2
+q = 0.3
+
+[[pop_formant]]
+kind = "peak"
+hz = 5069.1
+q = 0.314
+gain_db = 26.56
+
+[[pop_formant]]
+kind = "peak"
+hz = 16311.8
+q = 0.55
+gain_db = -12.87

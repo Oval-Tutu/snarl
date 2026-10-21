@@ -13,9 +13,12 @@ import (
 
 // esDump is the JSON that engine-sim-render --dump-json writes.
 type esDump struct {
-	RedlineRPM  float64 `json:"redline_rpm"`
-	RevLimitRPM float64 `json:"rev_limit_rpm"`
-	LimiterS    float64 `json:"limiter_duration_s"`
+	RedlineRPM  float64  `json:"redline_rpm"`
+	RevLimitRPM float64  `json:"rev_limit_rpm"`
+	LimiterS    float64  `json:"limiter_duration_s"`
+	HFGain      *float64 `json:"hf_gain"`
+	Noise       *float64 `json:"noise"`
+	Jitter      *float64 `json:"jitter"`
 	Idle        struct {
 		MeasuredRPM float64 `json:"measured_rpm"`
 	} `json:"idle"`
@@ -27,6 +30,7 @@ type esDump struct {
 		PrimaryTubeM    float64 `json:"primary_tube_length_m"`
 		CollectorAreaM2 float64 `json:"collector_area_m2"`
 		AudioVolume     float64 `json:"audio_volume"`
+		ImpulseResponse string  `json:"impulse_response"`
 	} `json:"exhaust_systems"`
 	Cylinders []struct {
 		Bank           int     `json:"bank"`
@@ -119,6 +123,9 @@ func fromEngineSim(rel string, d *esDump) (engine, error) {
 		LimiterMS:   min(500, 1000*d.LimiterS),
 		LimiterKind: "fuel",
 		Crossover:   "none",
+		HFGain:      orDefault(d.HFGain, defaultHFGain),
+		AM:          orDefault(d.Noise, defaultNoise),
+		InputJitter: orDefault(d.Jitter, defaultJitter),
 	}
 	if d.LimiterS > 0.5 {
 		e.Notes = append(e.Notes, fmt.Sprintf("Limiter duration %.0f ms capped at 500 ms.", 1000*d.LimiterS))
@@ -153,6 +160,13 @@ func fromEngineSim(rel string, d *esDump) (engine, error) {
 	loudest := 0.0
 	for _, s := range systems {
 		loudest = max(loudest, d.Exhaust[s].AudioVolume)
+		ir := d.Exhaust[s].ImpulseResponse
+		switch {
+		case e.ImpulseResponse == "":
+			e.ImpulseResponse = ir
+		case ir != e.ImpulseResponse:
+			e.Notes = append(e.Notes, fmt.Sprintf("The exhaust systems have other impulse responses, so the formant bank follows %s of the first.", e.ImpulseResponse))
+		}
 	}
 	for _, s := range systems {
 		x := d.Exhaust[s]
@@ -175,6 +189,14 @@ func fromEngineSim(rel string, d *esDump) (engine, error) {
 		})
 	}
 	return e, nil
+}
+
+// orDefault returns *v, or def when the dump has no value.
+func orDefault(v *float64, def float64) float64 {
+	if v == nil {
+		return def
+	}
+	return *v
 }
 
 // esLayout describes the cylinder layout from the bank angles.

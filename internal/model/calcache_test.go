@@ -19,7 +19,7 @@ func twoPathSpec() Spec {
 	s := limiterSpec("ignition")
 	s.Cylinders[1].Bank, s.Cylinders[3].Bank = 1, 1
 	q := s.Paths[0]
-	q.CollectorM, q.ChamberM, q.ChamberArea = 0.9, 0.3, 6
+	q.CollectorM, q.Gain = 0.9, 0.8
 	s.Paths = append(s.Paths, q)
 	return s
 }
@@ -52,6 +52,10 @@ func TestCalibrationCache(t *testing.T) {
 			"body_hz": func(q *Spec) { q.Pops.BodyHz *= 1.1 },
 			"path":    func(q *Spec) { q.Paths = append([]PathSpec{}, q.Paths...); q.Paths[0].CollectorM *= 1.1 },
 			"exhaust": func(q *Spec) { q.Exhaust.SpeedOfSound *= 1.1 },
+			"pop bank": func(q *Spec) {
+				q.PopFormants = append([]FormantSpec{}, q.PopFormants...)
+				q.PopFormants[0].GainDB++
+			},
 		} {
 			q := s
 			change(&q)

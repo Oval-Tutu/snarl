@@ -23,8 +23,10 @@ limiter_notch_db = -2
 limiter_bark_db = 0
 
 [pulse]
+# attack sets a smooth rise, so that the harmonics fall above 2 kHz as in
+# engine-sim.
 width_deg = 120
-attack = 28
+attack = 4
 decay = 7.5
 cycle_variation = 0.07
 jitter = 0.003
@@ -33,20 +35,19 @@ timing_variation_deg = 6
 
 [exhaust]
 crossover = "none"
-outlet_direct = 0.3
-steepening = 0.3
 overlap = 1.0
-low_shelf_db = 10
+# Gains of the formant bank and the pop bank at the end of the file.
+formant_gain_db = -5.61
+pop_formant_gain_db = -0.82
+pop_delay_ms = 0.708
 
 [noise]
-# hf_gain stays 0 until an exhaust stage spreads each pulse as the engine-sim
-# impulse response does. am puts the 2 to 6 kHz residual of the full-throttle
-# idle hold at the engine-sim value.
-hf_gain = 0
-am = 0.36
+# hf_gain, am and input_jitter are the engine-sim hf_gain, noise and jitter
+# of the flat12 script.
+hf_gain = 0.01
+am = 1.0
 am_cutoff_hz = 2000
-jet = 0.025
-jet_hz = 2000
+input_jitter = 0.1
 
 [pops]
 density = 0.2
@@ -71,9 +72,10 @@ hunt = 0.008
 rock = 0.02
 
 [voice]
-# leveller_db puts the closed-throttle idle below the knee of the leveller.
-leveller_db = -1.1
-output_db = 3.2
+# leveller_db puts the closed-throttle idle 3 dB below the knee of the
+# leveller.
+leveller_db = 2.6
+output_db = 1.0
 
 [[cylinder]] # 1
 crank_deg = 0
@@ -128,23 +130,109 @@ primary_m = 0.50
 collector_m = 1.30
 reflection = -0.4
 damping_hz = 3000
-pipe_radius_m = 0.025
-outlet_radius_m = 0.025
-wall_loss_db = 2
-wall_loss_hz = 2500
-chamber_m = 0.40
-chamber_area_ratio = 8
 gain = 1.0
 
 [[path]]
 collector_m = 1.38
 reflection = -0.4
 damping_hz = 3000
-pipe_radius_m = 0.025
-outlet_radius_m = 0.025
-wall_loss_db = 2
-wall_loss_hz = 2500
-chamber_m = 0.40
-chamber_area_ratio = 8
 gain = 0.8
 listener_m = 0.15
+
+# Formant bank: tools/fit --base ir --hi 16000 on the engine-sim impulse
+# response minimal_muffling_01 of the flat12 script, 9 sections, weighted
+# error 0.98 dB from 40 Hz to 16 kHz.
+[[formant]]
+kind = "highpass"
+hz = 119.9
+q = 1.098
+
+[[formant]]
+kind = "peak"
+hz = 191.3
+q = 6.441
+gain_db = -7.89
+
+[[formant]]
+kind = "peak"
+hz = 256.5
+q = 12.179
+gain_db = -7.74
+
+[[formant]]
+kind = "peak"
+hz = 321.5
+q = 0.300
+gain_db = 6.40
+
+[[formant]]
+kind = "peak"
+hz = 580.2
+q = 12.121
+gain_db = -8.83
+
+[[formant]]
+kind = "peak"
+hz = 837.0
+q = 2.284
+gain_db = -25.64
+
+[[formant]]
+kind = "peak"
+hz = 885.4
+q = 3.583
+gain_db = 17.59
+
+[[formant]]
+kind = "lowpass"
+hz = 5771.4
+q = 0.587
+
+[[formant]]
+kind = "peak"
+hz = 10524.3
+q = 3.893
+gain_db = -3.37
+
+# Pop bank: tools/fit --pop on the EngineLab pop stages of this profile at
+# a73b874 (testdata/legacy/flat12.toml), 7 sections.
+[[pop_formant]]
+kind = "peak"
+hz = 699.6
+q = 2.174
+gain_db = 19.54
+
+[[pop_formant]]
+kind = "peak"
+hz = 735.1
+q = 0.300
+gain_db = -23.87
+
+[[pop_formant]]
+kind = "peak"
+hz = 1399.9
+q = 6.225
+gain_db = 11.86
+
+[[pop_formant]]
+kind = "peak"
+hz = 2106.0
+q = 9.766
+gain_db = 9.36
+
+[[pop_formant]]
+kind = "peak"
+hz = 2816.3
+q = 11.216
+gain_db = 7.04
+
+[[pop_formant]]
+kind = "lowpass"
+hz = 5637.8
+q = 1.706
+
+[[pop_formant]]
+kind = "peak"
+hz = 15500.7
+q = 0.782
+gain_db = -23.10

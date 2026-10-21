@@ -73,16 +73,15 @@ type layerVariant struct {
 	overrides []string
 }
 
-// layerVariants are the layers that a profile key can mute. The jet, AM
-// and steepening keys set a gain of zero, but the model still runs their
-// filters and arithmetic, so their variants measure no saving. The
-// wall-loss shelf, the expansion chamber and the mode cutoff are keys of
-// [[path]], which an override cannot set, and the live pulse shaping has
-// no key. BenchmarkPrimitives gives their cost per instance.
+// layerVariants are the layers that a profile key can mute. An input
+// jitter of zero skips the jitter stage. The AM key sets a gain of zero,
+// but the model still runs its filters and arithmetic, so its variant
+// measures no saving. The formant bank is an array, which an override
+// cannot set, and the live pulse shaping has no key. BenchmarkPrimitives
+// gives their cost per instance.
 var layerVariants = []layerVariant{
 	{name: "full"},
-	{name: "no-jet", overrides: []string{"noise.jet=0"}},
-	{name: "no-steep", overrides: []string{"exhaust.steepening=0"}},
+	{name: "no-jitter", overrides: []string{"noise.input_jitter=0"}},
 	{name: "no-am", overrides: []string{"noise.am=0"}},
 }
 
@@ -108,10 +107,9 @@ func BenchmarkLayers(b *testing.B) {
 var sink float32
 
 // BenchmarkPrimitives measures the DSP parts of the layers that no
-// override can mute, for one instance over one 256-frame block. A path
-// runs one wall-loss shelf, one expansion chamber (one delay write
-// and two reads) and a mode cutoff of two biquads per sample. The jet runs
-// one band-pass biquad and one noise draw per sample for the engine.
+// override can mute, for one instance over one 256-frame block. The
+// formant bank runs one biquad per section per sample, and the noise AM
+// one noise draw per sample.
 func BenchmarkPrimitives(b *testing.B) {
 	in := make([]float32, blockFrames)
 	nz := dsp.NewNoise(7)
@@ -125,29 +123,6 @@ func BenchmarkPrimitives(b *testing.B) {
 		for b.Loop() {
 			for _, x := range in {
 				acc += f.Process(x)
-			}
-		}
-		sink = acc
-	})
-	b.Run("shelf", func(b *testing.B) {
-		f := dsp.NewHighShelf(2000, 0.7, testRate)
-		var acc float32
-		for b.Loop() {
-			for _, x := range in {
-				acc += f.Process(x)
-			}
-		}
-		sink = acc
-	})
-	b.Run("chamber", func(b *testing.B) {
-		const d = 12
-		ch := dsp.NewDelay(2 * d)
-		var acc float32
-		for b.Loop() {
-			for _, x := range in {
-				w := x + 0.6*ch.Read(2*d-1)
-				ch.Write(w)
-				acc += 0.4 * ch.Read(d)
 			}
 		}
 		sink = acc

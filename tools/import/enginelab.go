@@ -146,6 +146,7 @@ func fromEngineLab(rel string, d *elEngine, presets map[string]map[string]any) (
 		ID: n.id, Project: "EngineLab", File: rel, Description: n.description,
 		IdleRPM: d.IdleRPM, RedlineRPM: d.RedlineRPM, LimiterRPM: d.RedlineRPM, LimiterMS: 80,
 		LimiterKind: "fuel", Crossover: "none",
+		HFGain: defaultHFGain, AM: defaultNoise, InputJitter: defaultJitter, ImpulseResponse: defaultIR,
 	}
 	if v := d.Ignition.RevLimitRPM; v != nil {
 		e.LimiterRPM = *v

@@ -84,39 +84,50 @@ primary_m = 0.4
 [[path]]
 collector_m = 1
 reflection = -0.4
-pipe_radius_m = 0.03
-outlet_radius_m = 0.03
 gain = 1
+[[formant]]
+kind = "peak"
+hz = 400
+q = 1
+gain_db = 12
+[[pop_formant]]
+kind = "lowpass"
+hz = 5000
+q = 0.7
 `
 	if _, err := parseProfile(good); err != nil {
 		t.Fatalf("good profile: %v", err)
 	}
 	bad := map[string]string{
-		"no path":      strings.Replace(good, "[[path]]", "[[nopath]]", 1),
-		"bad bank":     strings.Replace(good, "bank = 0", "bank = 1", 1),
-		"bad crank":    strings.Replace(good, "crank_deg = 0", "crank_deg = 720", 1),
-		"bad redline":  strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 700", 1),
-		"bad limiter":  good + "\nlimiter_kind = \"spark\"",
-		"bad fall":     strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nlimiter_fall_rpm_s = -1", 1),
-		"bad rise":     strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nlimiter_rise_rpm_s = 0", 1),
-		"bad scale":    strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nlimiter_load_scale = 0", 1),
-		"bad injector": strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nlimiter_kind = \"injector\"", 1),
-		"bad pump":     strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nlimiter_pump_db = 1", 1),
-		"bad notch":    strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nlimiter_notch_db = 0", 1),
-		"bad bark":     strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nlimiter_bark_db = -1", 1),
-		"bad jitter":   strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nlimiter_jitter = 0.6", 1),
-		"bad waver":    strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nfinal_gear_waver = 0.1", 1),
-		"bad crossing": strings.Replace(good, "[[cylinder]]", "[exhaust]\ncrossover = \"some\"\n[[cylinder]]", 1),
-		"bad shelf":    strings.Replace(good, "[[cylinder]]", "[exhaust]\nlow_shelf_db = 30\n[[cylinder]]", 1),
-		"bad am cut":   strings.Replace(good, "[[cylinder]]", "[noise]\nam_cutoff_hz = 9000\n[[cylinder]]", 1),
-		"bad am":       strings.Replace(good, "[[cylinder]]", "[noise]\nam = 1.5\n[[cylinder]]", 1),
-		"bad hf gain":  strings.Replace(good, "[[cylinder]]", "[noise]\nhf_gain = -0.1\n[[cylinder]]", 1),
-		"bad overrun":  strings.Replace(good, "[[cylinder]]", "[overrun]\nlevel_db = 10\n[[cylinder]]", 1),
-		"bad idle":     strings.Replace(good, "[[cylinder]]", "[idle]\nfade_rpm = 500\n[[cylinder]]", 1),
-		"bad hunt":     strings.Replace(good, "[[cylinder]]", "[idle]\nhunt = 0.5\n[[cylinder]]", 1),
-		"bad leveller": strings.Replace(good, "[[cylinder]]", "[voice]\nleveller_db = 70\n[[cylinder]]", 1),
-		"bad weight":   strings.Replace(good, "[[cylinder]]", "[pops]\nweight_boom = -0.1\n[[cylinder]]", 1),
-		"no weight":    strings.Replace(good, "[[cylinder]]", "[pops]\nweight_pop = 0\nweight_boom = 0\nweight_crackle = 0\nweight_burble = 0\n[[cylinder]]", 1),
+		"no path":       strings.Replace(good, "[[path]]", "[[nopath]]", 1),
+		"bad bank":      strings.Replace(good, "bank = 0", "bank = 1", 1),
+		"bad crank":     strings.Replace(good, "crank_deg = 0", "crank_deg = 720", 1),
+		"bad redline":   strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 700", 1),
+		"bad limiter":   good + "\nlimiter_kind = \"spark\"",
+		"bad fall":      strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nlimiter_fall_rpm_s = -1", 1),
+		"bad rise":      strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nlimiter_rise_rpm_s = 0", 1),
+		"bad scale":     strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nlimiter_load_scale = 0", 1),
+		"bad injector":  strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nlimiter_kind = \"injector\"", 1),
+		"bad pump":      strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nlimiter_pump_db = 1", 1),
+		"bad notch":     strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nlimiter_notch_db = 0", 1),
+		"bad bark":      strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nlimiter_bark_db = -1", 1),
+		"bad jitter":    strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nlimiter_jitter = 0.6", 1),
+		"bad waver":     strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nfinal_gear_waver = 0.1", 1),
+		"bad crossing":  strings.Replace(good, "[[cylinder]]", "[exhaust]\ncrossover = \"some\"\n[[cylinder]]", 1),
+		"bad formant":   strings.Replace(good, `kind = "peak"`, `kind = "notch"`, 1),
+		"bad pop q":     strings.Replace(good, "q = 0.7", "q = 0", 1),
+		"bad gain db":   strings.Replace(good, "gain_db = 12", "gain_db = 60", 1),
+		"bad pop ms":    strings.Replace(good, "[[cylinder]]", "[exhaust]\npop_delay_ms = 30\n[[cylinder]]", 1),
+		"bad jitter in": strings.Replace(good, "[[cylinder]]", "[noise]\ninput_jitter = 2\n[[cylinder]]", 1),
+		"bad am cut":    strings.Replace(good, "[[cylinder]]", "[noise]\nam_cutoff_hz = 9000\n[[cylinder]]", 1),
+		"bad am":        strings.Replace(good, "[[cylinder]]", "[noise]\nam = 1.5\n[[cylinder]]", 1),
+		"bad hf gain":   strings.Replace(good, "[[cylinder]]", "[noise]\nhf_gain = -0.1\n[[cylinder]]", 1),
+		"bad overrun":   strings.Replace(good, "[[cylinder]]", "[overrun]\nlevel_db = 10\n[[cylinder]]", 1),
+		"bad idle":      strings.Replace(good, "[[cylinder]]", "[idle]\nfade_rpm = 500\n[[cylinder]]", 1),
+		"bad hunt":      strings.Replace(good, "[[cylinder]]", "[idle]\nhunt = 0.5\n[[cylinder]]", 1),
+		"bad leveller":  strings.Replace(good, "[[cylinder]]", "[voice]\nleveller_db = 70\n[[cylinder]]", 1),
+		"bad weight":    strings.Replace(good, "[[cylinder]]", "[pops]\nweight_boom = -0.1\n[[cylinder]]", 1),
+		"no weight":     strings.Replace(good, "[[cylinder]]", "[pops]\nweight_pop = 0\nweight_boom = 0\nweight_crackle = 0\nweight_burble = 0\n[[cylinder]]", 1),
 	}
 	for name, src := range bad {
 		if _, err := parseProfile(src); err == nil {
@@ -131,9 +142,22 @@ gain = 1
 		"[mechanical]\ntick_gain = 0.01", "[mechanical]\ntick_hz = 3000", "[mechanical]\ntick_lp_hz = 9000",
 		"[mechanical]\nfan_ratio = 1.8", "[mechanical]\nfan_blades = 5", "[mechanical]\nfan_gain = 0.02",
 		"[voice]\nidle_gain_db = 1", "[voice]\nidle_gain_rpm = 3000", "[noise]\nam_redline = 0.25", "[noise]\nam_idle = 0.5",
+		"[noise]\njet = 0.02", "[noise]\njet_hz = 1500", "[exhaust]\noutlet_direct = 0.4", "[exhaust]\nsteepening = 0.3",
+		"[exhaust]\nlow_shelf_db = 0", "[exhaust]\nlow_shelf_hz = 250",
 	} {
 		_, err := parseProfile(strings.Replace(good, "[[cylinder]]", kv+"\n[[cylinder]]", 1))
 		if err == nil || !strings.Contains(err.Error(), "unknown key") && !strings.Contains(err.Error(), "unknown table mechanical") {
+			t.Errorf("%q: got %v, want an unknown key error", kv, err)
+		}
+	}
+	// The EngineLab path stages that the formant bank replaces are unknown
+	// path keys.
+	for _, kv := range []string{
+		"pipe_radius_m = 0.03", "outlet_radius_m = 0.03", "wall_loss_db = 2", "wall_loss_hz = 2000",
+		"chamber_m = 0.3", "chamber_area_ratio = 7",
+	} {
+		_, err := parseProfile(strings.Replace(good, "gain = 1\n", "gain = 1\n"+kv+"\n", 1))
+		if err == nil || !strings.Contains(err.Error(), "unknown key") {
 			t.Errorf("%q: got %v, want an unknown key error", kv, err)
 		}
 	}

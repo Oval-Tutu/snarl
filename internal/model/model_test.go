@@ -67,7 +67,8 @@ func limiterSpec(kind string) Spec {
 	s.IdleRPM, s.RedlineRPM, s.LimiterRPM = 800, 6800, 7000
 	s.LimiterKind = kind
 	s.Cylinders = []CylinderSpec{{CrankDeg: 0, PrimaryM: 0.4}, {CrankDeg: 180, PrimaryM: 0.4}, {CrankDeg: 360, PrimaryM: 0.4}, {CrankDeg: 540, PrimaryM: 0.4}}
-	s.Paths = []PathSpec{{CollectorM: 1.3, Reflection: -0.4, DampingHz: 3000, PipeRadiusM: 0.025, OutletM: 0.025, Gain: 1}}
+	s.Paths = []PathSpec{{CollectorM: 1.3, Reflection: -0.4, DampingHz: 3000, Gain: 1}}
+	setPopBank(&s)
 	s.Pops.Density = 0.5
 	return s
 }

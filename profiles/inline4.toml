@@ -21,10 +21,12 @@ limiter_bark_db = 6
 cam_switch_rpm = 5700
 
 [pulse]
+# attack sets a smooth rise, so that the harmonics fall above 2 kHz as in
+# engine-sim. cam_attack keeps the ratio of the earlier 26 and 40.
 width_deg = 150
-attack = 26
+attack = 4
 decay = 7.5
-cam_attack = 40
+cam_attack = 6
 cam_gain = 0.25
 part_load_db = -0.9
 cycle_variation = 0.03
@@ -34,20 +36,19 @@ timing_variation_deg = 5
 
 [exhaust]
 crossover = "none"
-outlet_direct = 0.35
-steepening = 0.3
 overlap = 1.0
-low_shelf_db = 6
+# Gains of the formant bank and the pop bank at the end of the file.
+formant_gain_db = -28.74
+pop_formant_gain_db = -3.46
+pop_delay_ms = 0.531
 
 [noise]
-# hf_gain stays 0 until an exhaust stage spreads each pulse as the engine-sim
-# impulse response does. am puts the 2 to 6 kHz residual of the full-throttle
-# idle hold at the engine-sim value.
-hf_gain = 0
-am = 0.06
+# hf_gain, am and input_jitter are the engine-sim hf_gain, noise and jitter
+# of the inline-4 script (atg-video-1/05_honda_vtec.mr).
+hf_gain = 0.002
+am = 0.253
 am_cutoff_hz = 2000
-jet = 0.02
-jet_hz = 1800
+input_jitter = 0.195
 
 [pops]
 density = 0.17
@@ -65,9 +66,10 @@ level_db = -1.15
 idle_level_db = -1.3
 
 [voice]
-# leveller_db puts the closed-throttle idle below the knee of the leveller.
-leveller_db = -2.6
-output_db = 3.2
+# leveller_db puts the closed-throttle idle 3 dB below the knee of the
+# leveller.
+leveller_db = 14.3
+output_db = 0.03
 
 [[cylinder]] # 1
 crank_deg = 0
@@ -90,10 +92,105 @@ primary_m = 0.40
 collector_m = 0.95
 reflection = -0.4
 damping_hz = 3000
-pipe_radius_m = 0.026
-outlet_radius_m = 0.030
-wall_loss_db = 2.5
-wall_loss_hz = 2200
-chamber_m = 0.30
-chamber_area_ratio = 7
 gain = 1.0
+
+# Formant bank: tools/fit --base ir --hi 16000 --floor -60 on the engine-sim
+# impulse response mild_exhaust of the inline-4 script, 10 sections, weighted
+# error 0.90 dB from 40 Hz to 16 kHz. With the -40 dB floor of the other
+# profiles, the 6 to 10 kHz bands miss this response by 5 to 10 dB, where
+# the input jitter puts its noise, so the floor is -60 dB, as the profile
+# importer chooses it.
+[[formant]]
+kind = "highpass"
+hz = 42.2
+q = 2.837
+
+[[formant]]
+kind = "peak"
+hz = 153.7
+q = 0.634
+gain_db = 32.56
+
+[[formant]]
+kind = "peak"
+hz = 259.2
+q = 1.472
+gain_db = -14.68
+
+[[formant]]
+kind = "peak"
+hz = 410.8
+q = 4.324
+gain_db = 5.19
+
+[[formant]]
+kind = "peak"
+hz = 747.7
+q = 19.190
+gain_db = -6.77
+
+[[formant]]
+kind = "peak"
+hz = 976.5
+q = 20.000
+gain_db = -6.57
+
+[[formant]]
+kind = "peak"
+hz = 4003.2
+q = 1.049
+gain_db = -12.67
+
+[[formant]]
+kind = "lowpass"
+hz = 5395.6
+q = 0.821
+
+[[formant]]
+kind = "peak"
+hz = 7710.4
+q = 2.883
+gain_db = -9.18
+
+[[formant]]
+kind = "peak"
+hz = 11309.8
+q = 4.761
+gain_db = -7.55
+
+# Pop bank: tools/fit --pop on the EngineLab pop stages of this profile at
+# a73b874 (testdata/legacy/inline4.toml), 6 sections.
+[[pop_formant]]
+kind = "peak"
+hz = 784.3
+q = 0.300
+gain_db = -17.47
+
+[[pop_formant]]
+kind = "peak"
+hz = 934.8
+q = 2.082
+gain_db = 15.60
+
+[[pop_formant]]
+kind = "peak"
+hz = 1905.8
+q = 6.234
+gain_db = 10.94
+
+[[pop_formant]]
+kind = "peak"
+hz = 2863.2
+q = 8.821
+gain_db = 8.30
+
+[[pop_formant]]
+kind = "lowpass"
+hz = 5571.3
+q = 1.767
+
+[[pop_formant]]
+kind = "peak"
+hz = 15421.8
+q = 0.812
+gain_db = -21.58

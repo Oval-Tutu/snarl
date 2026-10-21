@@ -23,7 +23,7 @@ import (
 
 // staticSilent are the overrides of the silent engine.
 var staticSilent = []string{
-	"noise.am=0", "noise.jet=0",
+	"noise.am=0", "noise.input_jitter=0",
 	"pulse.cycle_variation=0", "pulse.jitter=0",
 	"idle.variation=0", "idle.timing_deg=0", "idle.hunt=0", "idle.rock=0", "idle.imbalance=0",
 	"pops.density=0",
@@ -33,7 +33,7 @@ var staticSilent = []string{
 var staticLayers = []struct{ name, keys string }{
 	{"silent", ""},
 	{"am", "noise.am"},
-	{"jet", "noise.jet"},
+	{"input jitter", "noise.input_jitter"},
 	{"cycle variation", "pulse.cycle_variation"},
 	{"jitter", "pulse.jitter"},
 	{"all", "all"},
@@ -97,18 +97,16 @@ func TestStaticLayerFloor(t *testing.T) {
 
 // staticFixFloor is the highest floor in dB that TestStaticFixFloor
 // accepts at the idle and the 3000 RPM holds of holds-t100. With the
-// engine-sim noise AM, whose depth TestNoiseCycle sets against the
-// engine-sim residual, the floor is -19.2 and -17.0 dB (flat12), -17.4 and
-// -21.4 dB (flat6), -33.5 and -32.8 dB (inline4) and -19.5 and -19.9 dB
-// (v8). The bounds are about 1 dB above them. The flat6 idle floor is 4 dB
-// above its earlier bound, and the inline4 floor 11 dB below it, because
-// the AM depth now follows the engine-sim residual at idle: -16.7 dB for
-// flat6 and -23.9 dB for inline4.
+// engine-sim noise AM, derivative mix and input jitter, the floor is
+// -24.1 and -24.0 dB (flat12), -20.5 and -31.1 dB (flat6), -27.6 and
+// -26.1 dB (inline4) and -17.7 and -24.6 dB (v8), against -4.9 and -8.6 dB,
+// -16.4 and -29.2 dB, -24.9 and -29.1 dB and -16.5 and -26.6 dB in the
+// engine-sim references. The bounds are about 1 dB above the snarl floors.
 var staticFixFloor = map[string][2]float64{
-	"flat12":  {-18, -16},
-	"flat6":   {-16.5, -20.5},
-	"inline4": {-32.5, -32},
-	"v8":      {-18.5, -19},
+	"flat12":  {-23, -23},
+	"flat6":   {-19.5, -30},
+	"inline4": {-26.5, -25},
+	"v8":      {-16.5, -23.5},
 }
 
 // TestStaticFixFloor measures the noise floor between the harmonics and

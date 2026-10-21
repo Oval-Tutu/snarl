@@ -8,7 +8,7 @@ To listen to a catalogue engine, run `just run-harness -profile es-v10-72`, then
 
 1. It builds the engine-sim renderer (`reference/engine-sim`) and runs `engine-sim-render --dump-json` on every engine script of the package. A script without a `main` node gets a wrapper with a default vehicle and a one-gear transmission (`tools/import/engine-sim-main.sh`). The dump holds the engine that the script builds, and the idle rpm of an 8 s free run at speed control 0.
 2. It fetches EngineLab at the pinned commit (`tools/import/enginelab.nix`) and converts `engines/*.engine.yaml` and `parts/exhausts.yaml` to JSON with yq. It runs nothing from EngineLab.
-3. `go run ./tools/import` maps both sources to snarl profiles, calibrates the output level of each profile by rendering it, and writes the profiles, this README and the scenarios.
+3. `go run ./tools/import` maps both sources to snarl profiles, fits the formant bank of each profile to its engine-sim impulse response and the pop bank to its earlier EngineLab pop stages, calibrates the output level of each profile by rendering it, and writes the profiles, this README and the scenarios. It reads the impulse responses from the sound library of the engine-sim package.
 
 The intermediate dumps go to `out/import/`.
 
@@ -46,15 +46,17 @@ Files are relative to `engines/` of EngineLab.
 | `cylinder.bank` | Exhaust system of the cylinder. Each exhaust system that a cylinder uses is one snarl bank, in the order of first use. |
 | `cylinder.primary_m` | `primary_length` of the cylinder plus `primary_tube_length` of its exhaust system. |
 | `path.collector_m` | `length` of the exhaust system, the pipe length that engine-sim delays the pulse by. |
-| `path.pipe_radius_m`, `path.outlet_radius_m` | Radius of `collector_cross_section_area`. |
 | `path.gain` | `audio_volume` of the exhaust system over the loudest system of the engine. |
+| `[[formant]]`, `exhaust.formant_gain_db` | The formant bank fitted to the `impulse_response` of the first exhaust system, a file of the engine-sim sound library, as `tools/fit --ir FILE --base ir --hi 16000` fits it: the smallest count from 4 to 12 sections with a weighted error of at most 1 dB, with the soft floor at -40 dB, or at -60 dB when a third-octave band from 6 to 10 kHz misses the response by more than 3 dB. |
+| `noise.hf_gain`, `noise.am`, `noise.input_jitter` | `hf_gain`, `noise` and `jitter` of the engine node, or the engine-sim defaults 0.01, 1.0 and 0.5. |
+| `[[pop_formant]]`, `exhaust.pop_formant_gain_db`, `exhaust.pop_delay_ms` | The pop bank fitted to the EngineLab pop stages that the profile had before the formant bank (wall loss, low shelf, expansion chamber, mode cutoff and outlet), as `tools/fit --pop` fits it. Their pipe and outlet radius is the radius of `collector_cross_section_area`, and their chamber the default below. |
 | `exhaust.crossover` | `none`: engine-sim has no crossover. |
 | `idle_rpm` | Mean rpm over the last 2 s of the free run at speed control 0, rounded to 10 rpm. An engine that stalls gets a fifth of the redline, rounded to 50 rpm and at least 500 rpm. |
 | `redline_rpm` | `redline` of the engine node. |
 | `limiter_rpm`, `limiter_ms` | `rev_limit` and `limiter_duration` of the ignition module, the cut capped at 500 ms. |
 | `limiter_kind` | `fuel`: engine-sim cuts every cylinder, as the tuned profiles read it. |
 
-The dump also holds bank angles, crank throws and journal angles, bore, stroke, rod length, compression ratio, intake and exhaust runner sizes, sound attenuation, the impulse response and the simulation frequency. snarl has no values for them, so the import does not use them.
+The dump also holds bank angles, crank throws and journal angles, bore, stroke, rod length, compression ratio, intake and exhaust runner sizes, sound attenuation and the simulation frequency. snarl has no values for them, so the import does not use them.
 
 ### EngineLab
 
@@ -64,10 +66,10 @@ The dump also holds bank angles, crank throws and journal angles, bore, stroke, 
 | `cylinder.bank` | With a component `graph`: the cylinders that meet at the same first junction. Without: each entry of `exhaust_paths`, or one bank for an engine without `exhaust_paths`. |
 | `cylinder.primary_m` | Graph: the pipes from the cylinder to its first junction. A single-cylinder path has no junction, so its first pipe is the primary. Scalar exhaust: `primary_length_mm`, or `exhaust_primary_length_mm` of the cylinder. |
 | `path.collector_m` | Graph: the components from the junction to the outlet, without the silencer. Scalar exhaust: `midpipe_length_mm`. At least 0.2 m. |
-| `path.pipe_radius_m` | Graph: the diameter of the first component after the junction. Scalar exhaust: `collector_diameter_mm`. |
-| `path.outlet_radius_m` | `outlet_diameter_mm`, or the diameter of the `outlet` component. |
-| `path.chamber_m`, `path.chamber_area_ratio` | Silencer length, and its area over the pipe area. Graph: `volume_l` over `length_mm` of the `muffler`. Scalar exhaust: `muffler_chamber_diameter_mm` over `collector_diameter_mm`, squared. No chamber when the ratio is 1 or less. |
 | `path.gain` | `audio_volume` of the path over the loudest path. |
+| `[[formant]]`, `exhaust.formant_gain_db` | EngineLab has no impulse response, so every EngineLab profile has the formant bank of the engine-sim default impulse response, `smooth_39.wav` (`default_0` of the engine-sim impulse response library), fitted as for the engine-sim profiles. The tuned v8 profile has the same response. |
+| `noise.hf_gain`, `noise.am`, `noise.input_jitter` | The engine-sim defaults 0.01, 1.0 and 0.5. |
+| `[[pop_formant]]`, `exhaust.pop_formant_gain_db`, `exhaust.pop_delay_ms` | The pop bank fitted to the EngineLab pop stages that the profile had before the formant bank, as `tools/fit --pop` fits it, from the pipe, the outlet and the silencer of the first path. Pipe radius: graph, the diameter of the first component after the junction, scalar exhaust, `collector_diameter_mm`. Outlet radius: `outlet_diameter_mm`, or the diameter of the `outlet` component. Silencer: its length, and its area over the pipe area, from `volume_l` over `length_mm` of the `muffler` of a graph or `muffler_chamber_diameter_mm` over `collector_diameter_mm`, squared, of a scalar exhaust, and no silencer when the ratio is 1 or less. |
 | `exhaust.crossover`, `exhaust.coupling` | `partial` with `crossover_coupling` (at most 0.5) for a `crossover` component. `full` when two banks reach the same merge. `none` otherwise. |
 | `idle_rpm`, `redline_rpm` | `idle_rpm`, `redline_rpm`. |
 | `limiter_rpm`, `limiter_ms` | `ignition.rev_limit_rpm` (default the redline) and `ignition.limiter_duration_s` (default 0.08 s). |
@@ -81,21 +83,22 @@ Neither source has these values, so every profile has the same ones. They are ne
 
 | Section | Values |
 | --- | --- |
-| `[pulse]` | `width_deg` 160, `attack` 25, `decay` 7, `part_load_db` -0.8, `cycle_variation` 0.04, `jitter` 0.003, `gain_variation` 0.12, `timing_variation_deg` 2 |
-| `[exhaust]` | `speed_of_sound` 565, `outlet_direct` 0.4, `steepening` 0.3, `overlap` 1.0, `low_shelf_db` 0, `low_shelf_hz` 250 |
-| `[noise]` | `am` 0.2, `jet` 0.02, `jet_hz` 1500 |
+| `[pulse]` | `width_deg` 160, `attack` 4, `decay` 7, `part_load_db` -0.8, `cycle_variation` 0.04, `jitter` 0.003, `gain_variation` 0.12, `timing_variation_deg` 2 |
+| `[exhaust]` | `speed_of_sound` 565, `overlap` 1.0 |
+| `[noise]` | `am_cutoff_hz` 2000 |
 | `[pops]` | `density` 0.15, `character` sport, `gain` 1, `body_hz` 200, `body_ms` 35, `jump_ms` 3, `crack` 2.5, `crack_ms` 16, weights pop 0.4, boom 0.2, crackle 0.3, burble 0.1 |
 | `[overrun]` | `level_db` -1.2, `idle_level_db` -1.2 |
 | `[idle]` | `fade_rpm` idle + 1400, `variation` 0.15, `timing_deg` 1, `imbalance` 0.25, `hunt` 0.004, `rock` 0.01, `hunt_hz` 1.2 |
 | `[voice]` | `gain` 1 |
-| `[[path]]` | `reflection` -0.4, `damping_hz` 2500, `wall_loss_db` 2.5, `wall_loss_hz` 2000. engine-sim paths: `chamber_m` 0.3, `chamber_area_ratio` 7 |
+| `[[path]]` | `reflection` -0.4, `damping_hz` 2500 |
+| Pop stages that the pop bank follows | Wall loss 2.5 dB at 2 kHz, low shelf 0 dB at 250 Hz, outlet direct 0.4. engine-sim paths: a chamber of 0.3 m with an area ratio of 7 |
 | Engine | `seed` from a hash of the id, `cam_switch_rpm` 0, the limiter rates and levels of the model defaults |
 
 ### Calibration
 
 The import renders each profile with the snapshots of `snarl-render`:
 
-1. `leveller_db`: a 3 s closed-throttle hold at the idle rpm, measured over the last 2 s, at a leveller gain of -40 dB and of +40 dB. Below the knee of the leveller, the level follows the gain, and far above it, the level stays at the level of the knee. The gain puts the hold 3 dB below the knee, so that the leveller leaves the idle character alone.
+1. `leveller_db`: a 3 s closed-throttle hold at the idle rpm, measured over the last 2 s, at a leveller gain of +40 dB, and of -40 dB, -20 dB or 0 dB, the first whose hold is above -60 LUFS, so that the gate of the loudness measure does not cut it. Below the knee of the leveller, the level follows the gain, and far above it, the level stays at the level of the knee. The gain puts the hold 3 dB below the knee, so that the leveller leaves the idle character alone.
 2. `output_db`: the `sweep-wot` scenario, measured over its length, moved to -16 LUFS in up to 8 steps, as `TestOutputCalibration` checks.
 
 ## Scenarios

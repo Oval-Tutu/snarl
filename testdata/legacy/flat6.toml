@@ -1,0 +1,34 @@
+# The exhaust and path tables of profiles/flat6.toml at a73b874, with the
+# EngineLab path stages that the pop bank replaces. TestPopColour and
+# tools/fit --pop read them.
+[exhaust]
+crossover = "full"
+outlet_direct = 0.35
+steepening = 0.3
+overlap = 1.0
+low_shelf_db = 1
+
+[[path]]
+collector_m = 0.85
+reflection = -0.4
+damping_hz = 2500
+pipe_radius_m = 0.027
+outlet_radius_m = 0.027
+wall_loss_db = 3
+wall_loss_hz = 1600
+chamber_m = 0.32
+chamber_area_ratio = 9
+gain = 1.0
+
+[[path]]
+collector_m = 0.92
+reflection = -0.4
+damping_hz = 2500
+pipe_radius_m = 0.027
+outlet_radius_m = 0.027
+wall_loss_db = 3
+wall_loss_hz = 1600
+chamber_m = 0.32
+chamber_area_ratio = 9
+gain = 0.85
+listener_m = 0.25

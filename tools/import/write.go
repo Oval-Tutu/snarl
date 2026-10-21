@@ -12,7 +12,8 @@ import (
 )
 
 // The defaults for the snarl values that neither source has. README.md
-// lists them.
+// lists them. The chamber of an engine-sim path is the chamber of the
+// EngineLab path stages of the earlier model, which the pop bank follows.
 const (
 	defaultChamberM    = 0.3
 	defaultChamberArea = 7.0
@@ -28,7 +29,7 @@ const (
 // after them.
 const sections = `[pulse]
 width_deg = 160
-attack = 25
+attack = 4
 decay = 7
 part_load_db = -0.8
 cycle_variation = 0.04
@@ -40,16 +41,16 @@ timing_variation_deg = 2
 speed_of_sound = 565
 crossover = "%s"
 coupling = %s
-outlet_direct = 0.4
-steepening = 0.3
 overlap = 1.0
-low_shelf_db = 0
-low_shelf_hz = 250
+formant_gain_db = %s
+pop_formant_gain_db = %s
+pop_delay_ms = %s
 
 [noise]
-am = 0.2
-jet = 0.02
-jet_hz = 1500
+hf_gain = %s
+am = %s
+am_cutoff_hz = 2000
+input_jitter = %s
 
 [pops]
 density = 0.15
@@ -87,8 +88,6 @@ output_db = %s
 // pathDefaults are the path values that neither source has.
 const pathDefaults = `reflection = -0.4
 damping_hz = 2500
-wall_loss_db = 2.5
-wall_loss_hz = 2000
 `
 
 func num(x float64) string {
@@ -112,15 +111,19 @@ func profileTOML(e *engine) string {
 	fmt.Fprintf(&b, "idle_rpm = %s\nredline_rpm = %s\n", num(e.IdleRPM), num(e.RedlineRPM))
 	fmt.Fprintf(&b, "limiter_rpm = %s\nlimiter_kind = %q\nlimiter_ms = %s\n\n", num(e.LimiterRPM), e.LimiterKind, num(e.LimiterMS))
 	fmt.Fprintf(&b, sections, e.Crossover, num(e.Coupling),
+		num(round(e.Bank.GainDB, 2)), num(round(e.PopBank.GainDB, 2)), num(round(e.PopDelayMS, 3)),
+		num(e.HFGain), num(e.AM), num(e.InputJitter),
 		num(e.IdleRPM+1400), num(e.LevellerDB), num(e.OutputDB))
 	for i, c := range e.Cylinders {
 		fmt.Fprintf(&b, "\n[[cylinder]] # %d\ncrank_deg = %s\nbank = %d\nprimary_m = %s\n", i+1, num(c.CrankDeg), c.Bank, num(c.PrimaryM))
 	}
 	for _, p := range e.Paths {
-		fmt.Fprintf(&b, "\n[[path]]\ncollector_m = %s\n%spipe_radius_m = %s\noutlet_radius_m = %s\n",
-			num(p.CollectorM), pathDefaults, num(p.PipeRadiusM), num(p.OutletRadiusM))
-		fmt.Fprintf(&b, "chamber_m = %s\nchamber_area_ratio = %s\ngain = %s\n", num(p.ChamberM), num(p.ChamberArea), num(p.Gain))
+		fmt.Fprintf(&b, "\n[[path]]\ncollector_m = %s\n%sgain = %s\n", num(p.CollectorM), pathDefaults, num(p.Gain))
 	}
+	fmt.Fprintf(&b, "\n# Formant bank fitted to the engine-sim impulse response %s.\n", e.ImpulseResponse)
+	bankTOML(&b, "formant", &e.Bank)
+	b.WriteString("\n# Pop bank fitted to the EngineLab pop stages of the earlier model.\n")
+	bankTOML(&b, "pop_formant", &e.PopBank)
 	return b.String()
 }
 

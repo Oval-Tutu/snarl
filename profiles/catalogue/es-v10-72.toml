@@ -11,7 +11,7 @@ limiter_ms = 100
 
 [pulse]
 width_deg = 160
-attack = 25
+attack = 4
 decay = 7
 part_load_db = -0.8
 cycle_variation = 0.04
@@ -23,16 +23,16 @@ timing_variation_deg = 2
 speed_of_sound = 565
 crossover = "none"
 coupling = 0
-outlet_direct = 0.4
-steepening = 0.3
 overlap = 1.0
-low_shelf_db = 0
-low_shelf_hz = 250
+formant_gain_db = -28.67
+pop_formant_gain_db = -8.31
+pop_delay_ms = 0.531
 
 [noise]
-am = 0.2
-jet = 0.02
-jet_hz = 1500
+hf_gain = 0.01
+am = 1
+am_cutoff_hz = 2000
+input_jitter = 0.1
 
 [pops]
 density = 0.15
@@ -63,8 +63,8 @@ hunt_hz = 1.2
 
 [voice]
 gain = 1
-leveller_db = 0.8
-output_db = 2.17
+leveller_db = 11.9
+output_db = 0
 
 [[cylinder]] # 1
 crank_deg = 0
@@ -120,22 +120,107 @@ primary_m = 1.28
 collector_m = 2.5527
 reflection = -0.4
 damping_hz = 2500
-wall_loss_db = 2.5
-wall_loss_hz = 2000
-pipe_radius_m = 0.0508
-outlet_radius_m = 0.0508
-chamber_m = 0.3
-chamber_area_ratio = 7
 gain = 1
 
 [[path]]
 collector_m = 2.54
 reflection = -0.4
 damping_hz = 2500
-wall_loss_db = 2.5
-wall_loss_hz = 2000
-pipe_radius_m = 0.0508
-outlet_radius_m = 0.0508
-chamber_m = 0.3
-chamber_area_ratio = 7
 gain = 1
+
+# Formant bank fitted to the engine-sim impulse response mild_exhaust_reverb.wav.
+
+[[formant]]
+kind = "highpass"
+hz = 42.2
+q = 2.833
+
+[[formant]]
+kind = "peak"
+hz = 153.7
+q = 0.637
+gain_db = 32.5
+
+[[formant]]
+kind = "peak"
+hz = 259.2
+q = 1.47
+gain_db = -14.68
+
+[[formant]]
+kind = "peak"
+hz = 410.7
+q = 4.319
+gain_db = 5.19
+
+[[formant]]
+kind = "peak"
+hz = 747.7
+q = 19.209
+gain_db = -6.8
+
+[[formant]]
+kind = "peak"
+hz = 976.5
+q = 20
+gain_db = -6.53
+
+[[formant]]
+kind = "peak"
+hz = 4004.1
+q = 1.049
+gain_db = -12.73
+
+[[formant]]
+kind = "lowpass"
+hz = 5378.3
+q = 0.825
+
+[[formant]]
+kind = "peak"
+hz = 7709.5
+q = 2.884
+gain_db = -9.16
+
+[[formant]]
+kind = "peak"
+hz = 11310.1
+q = 4.765
+gain_db = -7.53
+
+# Pop bank fitted to the EngineLab pop stages of the earlier model.
+
+[[pop_formant]]
+kind = "peak"
+hz = 550.7
+q = 0.3
+gain_db = -9.31
+
+[[pop_formant]]
+kind = "peak"
+hz = 951.1
+q = 2.082
+gain_db = 15.29
+
+[[pop_formant]]
+kind = "peak"
+hz = 1915.4
+q = 4.23
+gain_db = 14.19
+
+[[pop_formant]]
+kind = "peak"
+hz = 2854.1
+q = 6.8
+gain_db = 11.04
+
+[[pop_formant]]
+kind = "lowpass"
+hz = 3952.7
+q = 2.241
+
+[[pop_formant]]
+kind = "peak"
+hz = 13488.3
+q = 0.391
+gain_db = -29.59

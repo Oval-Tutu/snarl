@@ -1,12 +1,14 @@
 // Command import converts the engine profiles of engine-sim and EngineLab
 // to snarl profiles for the test catalogue in profiles/catalogue. It reads
-// the JSON dumps that just import-profiles makes, writes one TOML profile
-// and one scenario directory for each engine, calibrates the output level
-// of each profile by rendering it, and writes profiles/catalogue/README.md.
+// the JSON dumps that just import-profiles makes, fits the formant bank of
+// each engine to its engine-sim impulse response and the pop bank to its
+// earlier EngineLab pop stages, writes one TOML profile and one scenario
+// directory for each engine, calibrates the output level of each profile
+// by rendering it, and writes profiles/catalogue/README.md.
 //
 // Usage:
 //
-//	go run ./tools/import --engine-sim DIR --enginelab DIR --profiles DIR --scenarios DIR
+//	go run ./tools/import --engine-sim DIR --enginelab DIR --profiles DIR --scenarios DIR [--sound-library DIR]
 package main
 
 import (
@@ -17,6 +19,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/oval-tutu/snarl/internal/analysis"
 )
 
 // engine is an imported engine in the units of a snarl profile.
@@ -36,6 +40,15 @@ type engine struct {
 	// Notes are the conversion decisions for this engine, for the README.
 	Notes []string
 
+	// The engine-sim synthesiser settings: hf_gain, noise and jitter, and
+	// the impulse response file that the formant bank follows.
+	HFGain, AM, InputJitter float64
+	ImpulseResponse         string
+
+	// Formant and pop banks, and the pop delay in milliseconds.
+	Bank, PopBank analysis.FormantBank
+	PopDelayMS    float64
+
 	// Calibration results.
 	LevellerDB, OutputDB, SweepLUFS float64
 }
@@ -46,6 +59,9 @@ type cylinder struct {
 	PrimaryM float64
 }
 
+// exhaustPath is one exhaust path. The pipe and outlet radii and the
+// chamber are the EngineLab path stages of the earlier model, which the
+// profile no longer has. The pop bank follows them.
 type exhaustPath struct {
 	CollectorM, PipeRadiusM, OutletRadiusM float64
 	ChamberM, ChamberArea, Gain            float64
@@ -64,12 +80,17 @@ func run(args []string) error {
 	elDir := fs.String("enginelab", "", "`directory` of EngineLab JSON files: engines/*.json and exhausts.json")
 	profiles := fs.String("profiles", "", "output `directory` for the profiles and README.md")
 	scenarios := fs.String("scenarios", "", "output `directory` for the scenarios")
+	library := fs.String("sound-library", "", "engine-sim sound library `directory` with the impulse responses (default: share/engine-sim/es/sound-library of nix build -f reference/engine-sim)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *esDir == "" || *elDir == "" || *profiles == "" || *scenarios == "" {
 		fs.Usage()
 		return errors.New("all four directories are required")
+	}
+	lib, err := soundLibrary(*library)
+	if err != nil {
+		return err
 	}
 	es, err := loadEngineSim(*esDir)
 	if err != nil {
@@ -81,6 +102,9 @@ func run(args []string) error {
 	}
 	all := slices.Concat(es, el)
 	if err := checkIDs(all); err != nil {
+		return err
+	}
+	if err := fitBanks(all, lib); err != nil {
 		return err
 	}
 	for _, dir := range []string{*profiles, *scenarios} {

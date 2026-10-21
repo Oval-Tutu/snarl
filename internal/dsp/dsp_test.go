@@ -43,6 +43,15 @@ func TestFilters(t *testing.T) {
 	if g := gain(lp.Process, 8000); g > 0.05 {
 		t.Errorf("low pass at 8 kHz: %v", g)
 	}
+	var pk Biquad
+	pk.SetPeak(400, 2, -12, rate)
+	if g := gain(pk.Process, 400); !near(g, 0.251, 0.01) {
+		t.Errorf("peak at 400 Hz: %v, want -12 dB", g)
+	}
+	pk.Reset()
+	if g := gain(pk.Process, 8000); !near(g, 1, 0.02) {
+		t.Errorf("peak at 8 kHz: %v, want 1", g)
+	}
 	var out Biquad
 	out.SetOutlet(0.03, 565, rate)
 	if g := gain(out.Process, 30); g > 0.05 {

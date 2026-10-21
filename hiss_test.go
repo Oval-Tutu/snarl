@@ -166,19 +166,24 @@ func hissProfile(t *testing.T, name string, overrides ...string) (Profile, strin
 
 // hissBounds are the bounds at the high full-throttle holds: the most 4
 // to 12 kHz level and the least HNR from 20 to 500 Hz, in decibels. The
-// engine-sim low pass of the pulse at 1.9 kHz and the engine-sim noise AM
-// put the worst holds at -34.6 and 21.3 dB (flat12), -37.0 and 24.3 dB
-// (flat6), -36.2 and 27.2 dB (inline4), -36.1 and 22.8 dB (v8), -38.9 and
-// 27.0 dB (es-v12-60-aero) and -48.2 and 28.8 dB (el-v12-60-aero). The
-// bounds are about 1 dB from them. Before these stages, the 4 to 12 kHz
-// bounds of the tuned profiles were -14 to -24 dB.
+// engine-sim input jitter puts noise from 4 to 12 kHz at the level of the
+// engine-sim references: at the high holds, the engine-sim 4 to 12 kHz
+// level is at most -26.6 dB (flat12), -39.2 dB (flat6), -35.0 dB (inline4),
+// -34.3 dB (v8) and -21.0 dB (es-v12-60-aero, at its top hold). The worst
+// snarl holds are -25.0 and 26.2 dB (flat12), -36.8 and 36.6 dB (flat6),
+// -31.5 and 19.0 dB (inline4), -28.8 and 24.8 dB (v8), -21.0 and 31.7 dB
+// (es-v12-60-aero) and -33.5 and 30.3 dB (el-v12-60-aero). The bounds are
+// about 1 dB from them. The v8 hold at 5000 RPM is 5.5 dB above engine-sim,
+// because order 12 meets the narrow formant at 1 kHz. The inline4 HNR
+// falls at 8000 RPM and up, where the jitter noise of its single path
+// meets a pulse train with a high crest factor.
 var hissBounds = map[string]struct{ hf, hnr float64 }{
-	"flat12":         {-33.5, 20},
-	"flat6":          {-36, 23.5},
-	"inline4":        {-35, 26},
-	"v8":             {-35, 22},
-	"es-v12-60-aero": {-38, 26},
-	"el-v12-60-aero": {-47.5, 28},
+	"flat12":         {-24, 25},
+	"flat6":          {-35.5, 35.5},
+	"inline4":        {-30.5, 18},
+	"v8":             {-28, 24},
+	"es-v12-60-aero": {-20, 30.5},
+	"el-v12-60-aero": {-32.5, 29},
 }
 
 // TestHissHighRPM checks that the noise leaves the harmonics clear at high
@@ -300,10 +305,11 @@ var noiseTargets = map[string][2]float64{
 // power of the noise over the cycle has a peak 2 to 12 dB above its mean
 // and a trough 3 to 24 dB below it: engine-sim has 2.8 to 11.2 dB and 4.1
 // to 18.3 dB. A noise that is steady over the cycle has about 0 dB for
-// both. The residual from 2 to 6 kHz is within 2 dB of noiseTargets at idle
-// and within 6 dB at 3000 RPM. The AM depth is set at idle. At 3000 RPM,
-// the residual is 3 to 5 dB above engine-sim, because the slow RPM jitter
-// adds to it.
+// both. The residual from 2 to 6 kHz is within 3 dB of noiseTargets at idle
+// and within 6 dB at 3000 RPM. The AM depth, the derivative mix and the
+// input jitter are the engine-sim values, so the noise is up to 2.8 dB
+// below engine-sim at idle (flat12), where the AM depth of 1 has no room
+// to rise.
 func TestNoiseCycle(t *testing.T) {
 	t.Parallel()
 	for name, want := range noiseTargets {
@@ -330,7 +336,7 @@ func TestNoiseCycle(t *testing.T) {
 						t.Fatalf("%.0f RPM: no residual", g.RPM0)
 					}
 					band := r.Bands[2].DB
-					tol := 2.0
+					tol := 3.0
 					if i > 0 {
 						tol = 6
 					}

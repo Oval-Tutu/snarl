@@ -13,13 +13,7 @@ import (
 // energy from 120 to 500 Hz, a 2 to 8 kHz crack of a few per cent, and a
 // decay to -20 dB in 15 to 60 ms.
 func TestPopShape(t *testing.T) {
-	s := DefaultSpec()
-	s.Name = "p"
-	s.IdleRPM, s.RedlineRPM = 800, 6800
-	s.Cylinders = []CylinderSpec{{CrankDeg: 0, Bank: 0, PrimaryM: 0.4}}
-	s.Paths = []PathSpec{{CollectorM: 1.3, Reflection: -0.4, DampingHz: 3000, PipeRadiusM: 0.025, OutletM: 0.025, WallLossDB: 2, WallLossHz: 2500, ChamberM: 0.4, ChamberArea: 8, Gain: 1}}
-	s.Exhaust.OutletDirect = 0.3
-	s.Pops.Density = 0.4
+	s := popSpec()
 	y, err := New(&s, rate)
 	if err != nil {
 		t.Fatal(err)
@@ -116,10 +110,26 @@ func popSpec() Spec {
 	s.Name = "p"
 	s.IdleRPM, s.RedlineRPM = 800, 6800
 	s.Cylinders = []CylinderSpec{{CrankDeg: 0, Bank: 0, PrimaryM: 0.4}}
-	s.Paths = []PathSpec{{CollectorM: 1.3, Reflection: -0.4, DampingHz: 3000, PipeRadiusM: 0.025, OutletM: 0.025, WallLossDB: 2, WallLossHz: 2500, ChamberM: 0.4, ChamberArea: 8, Gain: 1}}
-	s.Exhaust.OutletDirect = 0.3
+	s.Paths = []PathSpec{{CollectorM: 1.3, Reflection: -0.4, DampingHz: 3000, Gain: 1}}
+	setPopBank(&s)
 	s.Pops.Density = 0.4
 	return s
+}
+
+// setPopBank gives s the pop bank that tools/fit --pop fitted to the
+// EngineLab pop stages of the test paths at a73b874, from
+// testdata/legacy/model-test.toml.
+func setPopBank(s *Spec) {
+	s.Exhaust.PopFormantGainDB, s.Exhaust.PopDelayMS = -10.88, 0.708
+	s.PopFormants = []FormantSpec{
+		{Kind: "peak", Hz: 704.3, Q: 1.618, GainDB: 24.48},
+		{Kind: "peak", Hz: 753.3, Q: 0.3, GainDB: -23.39},
+		{Kind: "peak", Hz: 1396.1, Q: 5.356, GainDB: 12.99},
+		{Kind: "peak", Hz: 2099.0, Q: 9.771, GainDB: 8.94},
+		{Kind: "lowpass", Hz: 3368.0, Q: 1.186},
+		{Kind: "peak", Hz: 6688.2, Q: 0.516, GainDB: 19.52},
+		{Kind: "peak", Hz: 17413.6, Q: 0.717, GainDB: -11.76},
+	}
 }
 
 // renderPop renders one isolated pop of a kind for 0.8 s. draws advances

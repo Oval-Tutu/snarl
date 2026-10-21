@@ -13,19 +13,27 @@
 // each grid point weighted by the number of ERBs per octave. Below 500 Hz
 // an ERB is wider than a third octave and blurs the formant peaks that
 // decide the strongest engine order, so 1/6 octave is the default. Levels
-// of
-// the engine-sim harmonic path (the 1.9 kHz input low pass, the
-// derivative and the response) more than --floor dB below its loudest
-// grid point pass through a soft floor, so that inaudible valleys count
-// little.
+// more than --floor dB below the loudest grid point pass through a soft
+// floor, so that inaudible valleys count little. With --base harmonic,
+// the levels are those of the engine-sim harmonic path (the 1.9 kHz input
+// low pass, the derivative and the response). With --base ir, they are
+// those of the response alone, which also passes the noise and the input
+// jitter of engine-sim.
 //
 // With --profile, the report also gives the response of each linear
-// stage of each exhaust path of that snarl profile, and the error of the
-// whole path against the same target.
+// stage of each exhaust path of that profile, which must have the
+// EngineLab path keys of a73b874, and the error of the whole path against
+// the same target. With --pop, the target is not an impulse response but
+// the response of the pop stages of that profile at a73b874: the wall
+// loss, the low shelf, the expansion chamber, the mode cutoff and the
+// outlet of its first path, which every path shares. The pop bank keeps
+// its fitted gain, so that the pop crack keeps its balance with the pop
+// body.
 //
 // Usage:
 //
-//	go run ./tools/fit --ir IR.wav [--profile profiles/v8.toml] [--out out/analysis/fit/v8.toml] > fit.md
+//	go run ./tools/fit --ir IR.wav [--base ir] [--profile LEGACY.toml] [--out out/analysis/fit/v8.toml] > fit.md
+//	go run ./tools/fit --pop --profile LEGACY.toml [--out out/analysis/fit/v8-pop.toml] > fit.md
 package main
 
 import (
@@ -54,10 +62,12 @@ const (
 )
 
 type config struct {
-	ir, profile, out           string
+	ir, profile, out, base     string
+	weight                     string
 	lo, hi, floor, tol, smooth float64
 	minN, maxN, rate           int
 	name                       string
+	pop                        bool
 }
 
 // smoothing names the smoothing of the target.
@@ -66,6 +76,27 @@ func (c *config) smoothing() string {
 		return fmt.Sprintf("1/%g octave", c.smooth)
 	}
 	return "one ERB"
+}
+
+// weightText names the weights of the grid points.
+func (c *config) weightText() string {
+	if c.weight == "octave" {
+		return "equal"
+	}
+	return "ERB"
+}
+
+// harmonic reports whether the floor follows the engine-sim harmonic path.
+func (c *config) harmonic() bool {
+	return !c.pop && c.base == "harmonic"
+}
+
+// floorText names the level that the soft floor is relative to.
+func (c *config) floorText() string {
+	if c.harmonic() {
+		return "the loudest point of the harmonic path"
+	}
+	return "the loudest point of the response"
 }
 
 func main() {
@@ -79,12 +110,15 @@ func run(args []string, w io.Writer) error {
 	var cfg config
 	fs := flag.NewFlagSet("fit", flag.ContinueOnError)
 	fs.StringVar(&cfg.ir, "ir", "", "engine-sim impulse response WAV `file`")
-	fs.StringVar(&cfg.profile, "profile", "", "snarl profile TOML `file` whose exhaust paths the report compares")
+	fs.StringVar(&cfg.profile, "profile", "", "profile TOML `file` with the EngineLab path keys of a73b874, whose exhaust paths the report compares")
+	fs.BoolVar(&cfg.pop, "pop", false, "fit the pop stages of --profile in place of --ir")
+	fs.StringVar(&cfg.base, "base", "harmonic", "levels of the soft floor: harmonic (the engine-sim harmonic path) or ir (the response alone)")
+	fs.StringVar(&cfg.weight, "weight", "erb", "weight of each grid point: erb (the ERBs per octave) or octave (the same for every point, which gives the low frequencies of a pop more weight)")
 	fs.StringVar(&cfg.out, "out", "", "TOML `file` for the proposed fragment (none when empty)")
 	fs.StringVar(&cfg.name, "name", "", "profile name in the fragment (default: the stem of --profile or --ir)")
 	fs.Float64Var(&cfg.lo, "lo", 40, "lowest grid frequency in `Hz`")
 	fs.Float64Var(&cfg.hi, "hi", 6000, "highest grid frequency in `Hz`")
-	fs.Float64Var(&cfg.floor, "floor", -40, "soft floor in `dB` below the loudest point of the harmonic path (0 turns it off)")
+	fs.Float64Var(&cfg.floor, "floor", -40, "soft floor in `dB` below the loudest point of the harmonic path or the response (0 turns it off)")
 	fs.Float64Var(&cfg.tol, "tolerance", 1, "weighted error in `dB` that the chosen N must not exceed")
 	fs.Float64Var(&cfg.smooth, "smooth", 6, "smoothing width of the target as 1/`N` octave (0 smooths over one ERB)")
 	fs.IntVar(&cfg.minN, "min", 4, "fewest sections in the report")
@@ -93,12 +127,16 @@ func run(args []string, w io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if cfg.ir == "" || fs.NArg() != 0 {
+	switch {
+	case fs.NArg() != 0 || (cfg.ir == "") == !cfg.pop || cfg.pop && cfg.profile == "":
 		fs.Usage()
-		return errors.New("need --ir and no other arguments")
-	}
-	if cfg.minN < 1 || cfg.maxN < cfg.minN || cfg.lo <= 0 || cfg.hi <= cfg.lo || cfg.rate < 8000 {
+		return errors.New("need --ir, or --pop with --profile, and no other arguments")
+	case cfg.minN < 1 || cfg.maxN < cfg.minN || cfg.lo <= 0 || cfg.hi <= cfg.lo || cfg.rate < 8000:
 		return errors.New("need 1 <= --min <= --max, 0 < --lo < --hi and --rate from 8000")
+	case cfg.base != "harmonic" && cfg.base != "ir":
+		return fmt.Errorf("--base %q is not harmonic or ir", cfg.base)
+	case cfg.weight != "erb" && cfg.weight != "octave":
+		return fmt.Errorf("--weight %q is not erb or octave", cfg.weight)
 	}
 	if cfg.name == "" {
 		src := cfg.ir
@@ -107,44 +145,46 @@ func run(args []string, w io.Writer) error {
 		}
 		cfg.name = strings.TrimSuffix(filepath.Base(src), filepath.Ext(src))
 	}
-	audio, err := wav.ReadFile(cfg.ir)
+	var paths []analysis.LegacyPath
+	var exhaust analysis.LegacyExhaust
+	if cfg.profile != "" {
+		f, err := os.Open(cfg.profile)
+		if err != nil {
+			return err
+		}
+		exhaust, paths, err = analysis.ReadLegacyExhaust(f)
+		f.Close()
+		if err != nil {
+			return fmt.Errorf("%s: %w", cfg.profile, err)
+		}
+	}
+	ir, irRate, source, err := loadTarget(&cfg, paths, &exhaust)
 	if err != nil {
 		return err
 	}
-	irRate := audio.SampleRate
-	ir := analysis.IRTrim(audio.Mono(), engineSimTaps)
-	if len(ir) == 0 {
-		return fmt.Errorf("%s: no sample above the engine-sim threshold", cfg.ir)
-	}
-	hz := analysis.LogGrid(cfg.lo, cfg.hi, gridPerOctave)
-	newTarget := func() *analysis.FormantTarget {
-		return &analysis.FormantTarget{
-			Hz:      hz,
-			DB:      analysis.SmoothedResponse(ir, irRate, hz, cfg.smooth),
-			BaseDB:  analysis.HarmonicBaseDB(hz, float64(irRate), inputLowPassHz),
-			Weight:  analysis.ERBWeights(hz),
-			FloorDB: cfg.floor,
-			Rate:    float64(cfg.rate),
-		}
-	}
-	target := newTarget()
-	banks, errs := analysis.FitFormants(target, cfg.maxN)
-	if len(banks) < cfg.maxN {
+	fit := cfg.bankFit()
+	banks, errs, chosen, met := fit.Fit(ir, irRate)
+	if chosen == 0 {
 		return errors.New("the fit stopped early")
 	}
-	chosen, met := chooseN(errs, cfg.minN, cfg.tol)
 	bank := banks[chosen-1]
-	normalise(&bank, hz, float64(cfg.rate))
+	if !cfg.pop {
+		bank.NormalisePeak(fit.Grid(), fit.Rate)
+	}
+	newTarget := func() *analysis.FormantTarget { return fit.Target(ir, irRate) }
 
-	fmt.Fprintf(w, "## %s\n\nImpulse response `%s`: %d taps at %d Hz as engine-sim loads it. Grid: %g Hz to %g Hz, %d points per octave, smoothed over %s, ERB weights, soft floor %g dB below the loudest point of the harmonic path. The bank runs at %d Hz.\n\n",
-		cfg.name, cfg.ir, len(ir), irRate, cfg.lo, cfg.hi, gridPerOctave, cfg.smoothing(), cfg.floor, cfg.rate)
+	fmt.Fprintf(w, "## %s\n\n%s Grid: %g Hz to %g Hz, %d points per octave, smoothed over %s, %s weights, soft floor %g dB below %s. The bank runs at %d Hz.\n\n",
+		cfg.name, source, cfg.lo, cfg.hi, gridPerOctave, cfg.smoothing(), cfg.weightText(), cfg.floor, cfg.floorText(), cfg.rate)
 	bands := thirdOctaves(cfg.lo, cfg.hi)
 	irBands := analysis.IRResponse(ir, irRate, bands)
-	base := bandBase(bands, float64(irRate))
-	fmt.Fprint(w, "| Sections | Weighted error (dB) | Third-octave RMS 50-2000 Hz (dB) | Third-octave max 50-6000 Hz (dB) | Multiply-adds per sample |\n| --- | --- | --- | --- | --- |\n")
+	base := make([]float64, len(bands))
+	if cfg.harmonic() {
+		base = bandBase(bands, float64(irRate))
+	}
+	fmt.Fprintf(w, "| Sections | Weighted error (dB) | Third-octave RMS 50-2000 Hz (dB) | Third-octave max 50-%g Hz (dB) | Multiply-adds per sample |\n| --- | --- | --- | --- | --- |\n", cfg.hi)
 	for n := cfg.minN; n <= cfg.maxN; n++ {
 		b := banks[n-1]
-		r, mx := bandErrors(bands, irBands, base, bankBands(&b, bands, float64(cfg.rate)), cfg.floor)
+		r, mx := bandErrors(bands, irBands, base, b.BandsDB(bands, float64(cfg.rate)), cfg.floor, cfg.hi)
 		mark := ""
 		if n == chosen {
 			mark = " (chosen)"
@@ -162,30 +202,56 @@ func run(args []string, w io.Writer) error {
 	}
 	fmt.Fprintf(w, "| Gain | | | | %.2f |\n\n", bank.GainDB)
 
-	var paths []pathSpec
-	var exhaust exhaustSpec
-	if cfg.profile != "" {
-		f, err := os.Open(cfg.profile)
-		if err != nil {
-			return err
-		}
-		exhaust, paths, err = readExhaust(f)
-		f.Close()
-		if err != nil {
-			return fmt.Errorf("%s: %w", cfg.profile, err)
-		}
-	}
-	responseTable(w, bands, irBands, base, &bank, paths, &exhaust, cfg.rate)
+	responseTable(w, &cfg, bands, irBands, base, &bank, paths, &exhaust)
 	if len(paths) > 0 {
 		stageTable(w, bands, paths, &exhaust, cfg.rate, cfg.smooth, newTarget)
 	}
 	if cfg.out != "" {
-		if err := writeFragment(cfg.out, &cfg, &bank, errs[chosen-1], len(paths)); err != nil {
+		delayMS := 0.0
+		if cfg.pop {
+			delayMS = analysis.LegacyPopDelayMS(&paths[0], &exhaust)
+		}
+		if err := writeFragment(cfg.out, &cfg, &bank, errs[chosen-1], len(paths), delayMS); err != nil {
 			return err
 		}
 		fmt.Fprintf(w, "Wrote `%s`.\n\n", cfg.out)
 	}
 	return nil
+}
+
+// bankFit returns the fit settings of the flags.
+func (c *config) bankFit() analysis.BankFit {
+	f := analysis.BankFit{
+		Lo: c.lo, Hi: c.hi, PerOctave: gridPerOctave, Smooth: c.smooth, FloorDB: c.floor,
+		EqualWeights: c.weight == "octave",
+		MinN:         c.minN, MaxN: c.maxN, Tolerance: c.tol, Rate: float64(c.rate),
+	}
+	if c.harmonic() {
+		f.HarmonicHz = inputLowPassHz
+	}
+	return f
+}
+
+// loadTarget returns the response to fit, its sample rate and a sentence
+// that names its source. With --pop it is the pop stages of the first
+// path, and every path must share them.
+func loadTarget(cfg *config, paths []analysis.LegacyPath, e *analysis.LegacyExhaust) ([]float64, int, string, error) {
+	if !cfg.pop {
+		audio, err := wav.ReadFile(cfg.ir)
+		if err != nil {
+			return nil, 0, "", err
+		}
+		ir := analysis.IRTrim(audio.Mono(), engineSimTaps)
+		if len(ir) == 0 {
+			return nil, 0, "", fmt.Errorf("%s: no sample above the engine-sim threshold", cfg.ir)
+		}
+		return ir, audio.SampleRate, fmt.Sprintf("Impulse response `%s`: %d taps at %d Hz as engine-sim loads it.", cfg.ir, len(ir), audio.SampleRate), nil
+	}
+	h, err := analysis.LegacyPopImpulse(paths, e, float64(cfg.rate), pathTaps)
+	if err != nil {
+		return nil, 0, "", fmt.Errorf("%s: %w", cfg.profile, err)
+	}
+	return h, cfg.rate, fmt.Sprintf("Pop stages of `%s` (wall loss, low shelf, chamber, mode cutoff and outlet of path 1): %d taps at %d Hz.", cfg.profile, len(h), cfg.rate), nil
 }
 
 // kindName returns the TOML name of a section kind.
@@ -194,33 +260,6 @@ func kindName(k string) string {
 		return "peak"
 	}
 	return k
-}
-
-// chooseN returns the smallest number of sections from minN whose error
-// errs[n-1] is at most tol, and true. When none is, it returns the number
-// with the lowest error from minN, and false.
-func chooseN(errs []float64, minN int, tol float64) (n int, met bool) {
-	best, bestErr := 0, math.Inf(1)
-	for k := minN; k <= len(errs); k++ {
-		e := errs[k-1]
-		if e <= tol {
-			return k, true
-		}
-		if e < bestErr {
-			best, bestErr = k, e
-		}
-	}
-	return best, false
-}
-
-// normalise moves the gain of the bank so that its highest response on
-// the grid is 0 dB.
-func normalise(b *analysis.FormantBank, hz []float64, rate float64) {
-	peak := math.Inf(-1)
-	for _, f := range hz {
-		peak = math.Max(peak, b.ResponseDB(f, rate))
-	}
-	b.GainDB -= peak
 }
 
 // thirdOctaves returns the third-octave bands of the analysis whose
@@ -246,27 +285,12 @@ func bandBase(bands [][2]float64, rate float64) []float64 {
 	return analysis.HarmonicBaseDB(c, rate, inputLowPassHz)
 }
 
-// bankBands returns the power response in dB of the bank in each band, as
-// the mean power over 64 points equally spaced in the band.
-func bankBands(b *analysis.FormantBank, bands [][2]float64, rate float64) []float64 {
-	out := make([]float64, len(bands))
-	for i, band := range bands {
-		var s float64
-		for k := range 64 {
-			f := band[0] + (band[1]-band[0])*(float64(k)+0.5)/64
-			s += math.Pow(10, b.ResponseDB(f, rate)/10)
-		}
-		out[i] = 10 * math.Log10(s/64)
-	}
-	return out
-}
-
 // bandErrors returns the RMS of the band differences from 50 Hz to 2 kHz
-// and the largest band difference from 50 Hz to 6 kHz between the
-// response m and the reference ref, after the offset that matches their
-// means from 50 Hz to 2 kHz. The largest difference leaves out bands
-// whose harmonic path level (ref plus base) is below the floor.
-func bandErrors(bands [][2]float64, ref, base, m []float64, floor float64) (rmsDB, maxDB float64) {
+// and the largest band difference from 50 Hz to hi between the response m
+// and the reference ref, after the offset that matches their means from
+// 50 Hz to 2 kHz. The largest difference leaves out bands whose level
+// (ref plus base) is below the floor.
+func bandErrors(bands [][2]float64, ref, base, m []float64, floor, hi float64) (rmsDB, maxDB float64) {
 	var off float64
 	n := 0
 	for i, b := range bands {
@@ -287,31 +311,40 @@ func bandErrors(bands [][2]float64, ref, base, m []float64, floor float64) (rmsD
 		if c >= 50 && c <= 2000 {
 			s += d * d
 		}
-		if c >= 50 && c <= 6000 && (floor >= 0 || ref[i]+base[i]-peak >= floor) {
+		if c >= 50 && c <= hi*1.01 && (floor >= 0 || ref[i]+base[i]-peak >= floor) {
 			maxDB = math.Max(maxDB, math.Abs(d))
 		}
 	}
 	return math.Sqrt(s / float64(max(n, 1))), maxDB
 }
 
-// responseTable writes the harmonic path of engine-sim, with the fitted
-// bank in place of the impulse response, and with each snarl path in
-// place of it, per band, relative to the highest band of engine-sim.
-func responseTable(w io.Writer, bands [][2]float64, irBands, base []float64, bank *analysis.FormantBank, paths []pathSpec, e *exhaustSpec, rate int) {
-	cols := [][]float64{irBands, bankBands(bank, bands, float64(rate))}
-	names := []string{"engine-sim", "Fitted bank"}
-	for i := range paths {
-		h := pathImpulse(&paths[i], e, float64(rate), pathTaps, allStages())
-		cols = append(cols, analysis.IRResponse(h, rate, bands))
-		names = append(names, fmt.Sprintf("snarl path %d", i+1))
+// responseTable writes the target, with the fitted bank in place of it,
+// and with each legacy path in place of it, per band, relative to the
+// highest band of the target. With --base harmonic, each column includes
+// the 1.9 kHz input low pass and the derivative.
+func responseTable(w io.Writer, cfg *config, bands [][2]float64, irBands, base []float64, bank *analysis.FormantBank, paths []analysis.LegacyPath, e *analysis.LegacyExhaust) {
+	cols := [][]float64{irBands, bank.BandsDB(bands, float64(cfg.rate))}
+	names := []string{"Target", "Fitted bank"}
+	if !cfg.pop {
+		names[0] = "engine-sim"
+		for i := range paths {
+			h := analysis.LegacyPathImpulse(&paths[i], e, float64(cfg.rate), pathTaps, analysis.LegacyAllStages())
+			cols = append(cols, analysis.IRResponse(h, cfg.rate, bands))
+			names = append(names, fmt.Sprintf("snarl path %d", i+1))
+		}
 	}
-	// Each column moves so that its mean from 50 Hz to 2 kHz matches
-	// engine-sim, then all are relative to the highest engine-sim band.
+	// Each column moves so that its mean from 50 Hz to 2 kHz matches the
+	// target, then all are relative to the highest target band.
 	peak := math.Inf(-1)
 	for i := range bands {
 		peak = math.Max(peak, irBands[i]+base[i])
 	}
-	fmt.Fprint(w, "Harmonic path (the 1.9 kHz input low pass, the derivative and the named response), in dB relative to the highest engine-sim band. Each column after the first has the offset that matches its mean from 50 Hz to 2 kHz to engine-sim.\n\n| Band (Hz) |")
+	if cfg.harmonic() {
+		fmt.Fprint(w, "Harmonic path (the 1.9 kHz input low pass, the derivative and the named response)")
+	} else {
+		fmt.Fprint(w, "Response")
+	}
+	fmt.Fprint(w, ", in dB relative to the highest target band. Each column after the first has the offset that matches its mean from 50 Hz to 2 kHz to the target.\n\n| Band (Hz) |")
 	for _, n := range names {
 		fmt.Fprintf(w, " %s |", n)
 	}
@@ -337,7 +370,7 @@ func responseTable(w io.Writer, bands [][2]float64, irBands, base []float64, ban
 	}
 	fmt.Fprint(w, "| RMS difference 50-2000 Hz |")
 	for _, c := range cols {
-		r, _ := bandErrors(bands, irBands, base, c, 0)
+		r, _ := bandErrors(bands, irBands, base, c, 0, cfg.hi)
 		fmt.Fprintf(w, " %.2f |", r)
 	}
 	fmt.Fprint(w, "\n\n")
@@ -346,16 +379,16 @@ func responseTable(w io.Writer, bands [][2]float64, irBands, base []float64, ban
 // stageTable writes the response of each linear stage of each path alone,
 // per band relative to its own mean from 50 Hz to 2 kHz, its cost, and
 // the weighted error of the whole path against the fit target.
-func stageTable(w io.Writer, bands [][2]float64, paths []pathSpec, e *exhaustSpec, rate int, smooth float64, newTarget func() *analysis.FormantTarget) {
+func stageTable(w io.Writer, bands [][2]float64, paths []analysis.LegacyPath, e *analysis.LegacyExhaust, rate int, smooth float64, newTarget func() *analysis.FormantTarget) {
 	for i := range paths {
-		fmt.Fprintf(w, "snarl path %d, each linear stage alone, in dB relative to its mean from 50 Hz to 2 kHz.\n\n| Band (Hz) |", i+1)
+		fmt.Fprintf(w, "Legacy path %d, each linear stage alone, in dB relative to its mean from 50 Hz to 2 kHz.\n\n| Band (Hz) |", i+1)
 		var cols [][]float64
-		for s := range stageCount {
-			fmt.Fprintf(w, " %s |", stageNames[s])
-			h := pathImpulse(&paths[i], e, float64(rate), pathTaps, onlyStage(s))
+		for s := range analysis.LegacyStageCount {
+			fmt.Fprintf(w, " %s |", analysis.LegacyStageNames[s])
+			h := analysis.LegacyPathImpulse(&paths[i], e, float64(rate), pathTaps, analysis.LegacyOnlyStage(s))
 			cols = append(cols, analysis.IRResponse(h, rate, bands))
 		}
-		fmt.Fprint(w, "\n|"+strings.Repeat(" --- |", 1+int(stageCount))+"\n")
+		fmt.Fprint(w, "\n|"+strings.Repeat(" --- |", 1+int(analysis.LegacyStageCount))+"\n")
 		means := make([]float64, len(cols))
 		for k, c := range cols {
 			n := 0
@@ -376,38 +409,52 @@ func stageTable(w io.Writer, bands [][2]float64, paths []pathSpec, e *exhaustSpe
 		}
 		fmt.Fprint(w, "| Multiply-adds |")
 		total := 0
-		for s := range stageCount {
-			fmt.Fprintf(w, " %d |", stageCost[s])
-			total += stageCost[s]
+		for s := range analysis.LegacyStageCount {
+			fmt.Fprintf(w, " %d |", analysis.LegacyStageCost[s])
+			total += analysis.LegacyStageCost[s]
 		}
 		t := newTarget()
-		h := pathImpulse(&paths[i], e, float64(rate), pathTaps, allStages())
+		h := analysis.LegacyPathImpulse(&paths[i], e, float64(rate), pathTaps, analysis.LegacyAllStages())
 		pe, _ := analysis.ShapeError(t, analysis.SmoothedResponse(h, rate, t.Hz, smooth))
 		fmt.Fprintf(w, "\n\nThe linear stages of path %d cost %d multiply-adds per sample. The whole path is %.2f dB from the fit target (weighted error, best gain).\n\n", i+1, total, pe)
 	}
 }
 
-// writeFragment writes the proposed TOML fragment for the bank.
-func writeFragment(path string, cfg *config, b *analysis.FormantBank, errDB float64, paths int) error {
+// writeFragment writes the proposed TOML fragment for the bank: the
+// formant bank of an impulse response, or with --pop the pop bank and the
+// pop delay in milliseconds, the delay of the expansion chamber, which a
+// fit of the magnitude leaves out.
+func writeFragment(path string, cfg *config, b *analysis.FormantBank, errDB float64, paths int, delayMS float64) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err
 	}
 	var s strings.Builder
-	fmt.Fprintf(&s, "# Proposed formant bank for the %s profile, written by tools/fit.\n", cfg.name)
-	fmt.Fprintf(&s, "# A cascade of %d biquads (Audio EQ Cookbook peaking, low pass and high\n# pass sections) and one gain, fitted\n", len(b.Formants))
-	fmt.Fprintf(&s, "# to the magnitude of the engine-sim impulse response %s.\n", filepath.Base(cfg.ir))
-	fmt.Fprintf(&s, "# The values are snarl's own fit parameters, not taps of the response.\n")
-	fmt.Fprintf(&s, "# Weighted error %.2f dB from %g Hz to %g Hz (smoothed over %s, ERB\n# weights, soft floor", errDB, cfg.lo, cfg.hi, cfg.smoothing())
-	fmt.Fprintf(&s, " %g dB below the loudest point of the harmonic path).\n# The gain sets the", cfg.floor)
-	fmt.Fprintf(&s, " highest response of the bank on the grid to 0 dB.\n")
-	if paths > 0 {
+	key, table := "formant_gain_db", "formant"
+	if cfg.pop {
+		key, table = "pop_formant_gain_db", "pop_formant"
+		fmt.Fprintf(&s, "# Pop bank for the %s profile, written by tools/fit --pop.\n", cfg.name)
+		fmt.Fprintf(&s, "# A cascade of %d biquads and one gain, fitted to the magnitude of the\n", len(b.Formants))
+		fmt.Fprintf(&s, "# pop stages of %s at a73b874 (wall loss, low shelf, expansion\n", filepath.Base(cfg.profile))
+		fmt.Fprintf(&s, "# chamber, mode cutoff and outlet). The gain is the fitted gain.\n")
+	} else {
+		fmt.Fprintf(&s, "# Formant bank for the %s profile, written by tools/fit.\n", cfg.name)
+		fmt.Fprintf(&s, "# A cascade of %d biquads (Audio EQ Cookbook peaking, low pass and high\n# pass sections) and one gain, fitted\n", len(b.Formants))
+		fmt.Fprintf(&s, "# to the magnitude of the engine-sim impulse response %s.\n", filepath.Base(cfg.ir))
+		fmt.Fprintf(&s, "# The values are snarl's own fit parameters, not taps of the response.\n")
+		fmt.Fprintf(&s, "# The gain sets the highest response of the bank on the grid to 0 dB.\n")
+	}
+	fmt.Fprintf(&s, "# Weighted error %.2f dB from %g Hz to %g Hz (smoothed over %s, %s\n# weights, soft floor", errDB, cfg.lo, cfg.hi, cfg.smoothing(), cfg.weightText())
+	fmt.Fprintf(&s, " %g dB below %s).\n", cfg.floor, cfg.floorText())
+	if paths > 0 && !cfg.pop {
 		fmt.Fprintf(&s, "# engine-sim uses one impulse response for every exhaust system, so one\n")
 		fmt.Fprintf(&s, "# bank serves every path of the profile (%d).\n", paths)
 	}
-	fmt.Fprintf(&s, "# No model code reads these keys yet (docs/research/formant-fit.md).\n\n")
-	fmt.Fprintf(&s, "[exhaust]\nformant_gain_db = %.2f\n", b.GainDB)
+	fmt.Fprintf(&s, "\n[exhaust]\n%s = %.2f\n", key, b.GainDB)
+	if cfg.pop {
+		fmt.Fprintf(&s, "pop_delay_ms = %.3f\n", delayMS)
+	}
 	for _, f := range b.Formants {
-		fmt.Fprintf(&s, "\n[[formant]]\nkind = %q\nhz = %.1f\nq = %.3f\n", kindName(f.Kind), f.Hz, f.Q)
+		fmt.Fprintf(&s, "\n[[%s]]\nkind = %q\nhz = %.1f\nq = %.3f\n", table, kindName(f.Kind), f.Hz, f.Q)
 		if f.Kind == analysis.KindPeak {
 			fmt.Fprintf(&s, "gain_db = %.2f\n", f.GainDB)
 		}

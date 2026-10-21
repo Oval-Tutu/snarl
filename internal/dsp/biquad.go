@@ -53,6 +53,14 @@ func (b *Biquad) SetBandPass(f, q, rate float64) {
 	b.set(a, 0, -a, 1+a, -2*c, 1-a)
 }
 
+// SetPeak designs a peaking filter with the gain in decibels at f, from
+// the Audio EQ Cookbook.
+func (b *Biquad) SetPeak(f, q, gainDB, rate float64) {
+	c, a := rbj(f, q, rate)
+	g := math.Pow(10, gainDB/40)
+	b.set(1+a*g, -2*c, 1-a*g, 1+a/g, -2*c, 1-a/g)
+}
+
 // SetAnalogue designs the filter from the analogue prototype
 // H(s) = (n2 s^2 + n1 s + n0) / (d2 s^2 + d1 s + d0) with the bilinear
 // transform.

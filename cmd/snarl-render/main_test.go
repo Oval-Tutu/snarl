@@ -143,7 +143,7 @@ func TestReplayMatchesScenario(t *testing.T) {
 	if !bytes.Equal(read("--replay", logPath), first) {
 		t.Error("two replays of one log differ")
 	}
-	muted := read("--set", "noise.jet=0", "--set", "pops.density=0", "--replay", logPath)
+	muted := read("--set", "noise.am=0", "--set", "pops.density=0", "--replay", logPath)
 	if len(muted) != len(want) || bytes.Equal(muted, want) {
 		t.Error("--set did not change the replay")
 	}
@@ -243,7 +243,7 @@ func TestCatalogueProfile(t *testing.T) {
 	if !bytes.Equal(read("--catalogue", filepath.Join("..", "..", "profiles", "catalogue"), id, scnPath), want) {
 		t.Error("--catalogue differs from the default search")
 	}
-	if bytes.Equal(read("--set", "noise.jet=0", "--set", "pops.density=0", id, scnPath), want) {
+	if bytes.Equal(read("--set", "noise.am=0", "--set", "pops.density=0", id, scnPath), want) {
 		t.Error("--set did not change a catalogue render")
 	}
 	out := filepath.Join(dir, "o.wav")

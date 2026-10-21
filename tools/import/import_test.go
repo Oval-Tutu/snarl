@@ -64,9 +64,10 @@ func TestEngineLabGraph(t *testing.T) {
 // banks from the exhaust systems and the idle fallback of a stalled engine.
 func TestEngineSimDump(t *testing.T) {
 	const src = `{"redline_rpm": 6000, "rev_limit_rpm": 6500, "limiter_duration_s": 0.8, "idle": {"measured_rpm": 0.001},
+	"hf_gain": 0.002, "noise": 0.25,
 	"banks": [{"angle_deg": -45}, {"angle_deg": 45}], "intakes": [{"runner_length_m": 0.25}],
-	"exhaust_systems": [{"length_m": 2, "primary_tube_length_m": 0.5, "collector_area_m2": 0.002, "audio_volume": 2},
-		{"length_m": 3, "primary_tube_length_m": 0.5, "collector_area_m2": 0.002, "audio_volume": 1}],
+	"exhaust_systems": [{"length_m": 2, "primary_tube_length_m": 0.5, "collector_area_m2": 0.002, "audio_volume": 2, "impulse_response": "a.wav"},
+		{"length_m": 3, "primary_tube_length_m": 0.5, "collector_area_m2": 0.002, "audio_volume": 1, "impulse_response": "a.wav"}],
 	"cylinders": [
 		{"bank": 0, "spark_deg": 90, "spark_enabled": true, "exhaust_system": 1, "intake": 0, "header_primary_length_m": 0.1},
 		{"bank": 1, "spark_deg": 450, "spark_enabled": true, "exhaust_system": 0, "intake": 0, "header_primary_length_m": 0.2},
@@ -90,5 +91,27 @@ func TestEngineSimDump(t *testing.T) {
 	}
 	if e.IdleRPM != 1200 || e.LimiterMS != 500 || e.Layout != "V3, 90 degree" {
 		t.Errorf("idle %v, limiter %v ms, layout %q", e.IdleRPM, e.LimiterMS, e.Layout)
+	}
+	// The jitter is missing from the dump, so it has the engine-sim default.
+	if e.HFGain != 0.002 || e.AM != 0.25 || e.InputJitter != defaultJitter || e.ImpulseResponse != "a.wav" {
+		t.Errorf("hf_gain %v, am %v, input_jitter %v, impulse response %q", e.HFGain, e.AM, e.InputJitter, e.ImpulseResponse)
+	}
+}
+
+// TestPopKey checks that the pop bank follows the pop stages of the first
+// path, that paths with the same stages share them, and that other stages
+// give a note.
+func TestPopKey(t *testing.T) {
+	e := engine{Paths: []exhaustPath{
+		{CollectorM: 1, PipeRadiusM: 0.03, OutletRadiusM: 0.03, ChamberM: 0.3, ChamberArea: 7, Gain: 1},
+		{CollectorM: 2, PipeRadiusM: 0.03, OutletRadiusM: 0.03, ChamberM: 0.3, ChamberArea: 7, Gain: 0.5},
+	}}
+	k, note := popKey(&e)
+	if note != "" || k.PipeRadiusM != 0.03 || k.ChamberM != 0.3 || k.CollectorM != 0 || k.Gain != 0 || k.WallLossDB != legacyWallLossDB {
+		t.Errorf("key %+v, note %q", k, note)
+	}
+	e.Paths[1].ChamberM = 0.4
+	if _, note := popKey(&e); note == "" {
+		t.Error("paths with other chambers gave no note")
 	}
 }
