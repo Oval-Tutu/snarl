@@ -1,0 +1,5 @@
+# i4-vtec: written by tools/cycles scenarios. Throttle steps at 5000 rpm for the intake lag of the cycle tables:
+# full throttle, closed, then full again. snarl does not read this file.
+hold 5000 1 1.5
+hold 5000 0 3
+hold 5000 1 3

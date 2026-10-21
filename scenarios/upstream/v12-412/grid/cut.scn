@@ -1,0 +1,98 @@
+# v12-412: written by tools/cycles scenarios. Cycle table grid: ignition-off holds at throttle 0 and 1.
+# Each hold is 0.5 s of settling and at least 24 whole cycles; 0.25 s sweeps join the holds.
+# The renderer reads cut RPM THROTTLE SECONDS as a hold with the ignition off. snarl does not read these files.
+hold 3810 0 0.5
+cut 3810 0 1.5
+sweep 3810 4750 0 0.25
+hold 4750 0 0.5
+cut 4750 0 1.5
+sweep 4750 5750 0 0.25
+hold 5750 0 0.5
+cut 5750 0 1.5
+sweep 5750 6750 0 0.25
+hold 6750 0 0.5
+cut 6750 0 1.5
+sweep 6750 7750 0 0.25
+hold 7750 0 0.5
+cut 7750 0 1.5
+sweep 7750 8750 0 0.25
+hold 8750 0 0.5
+cut 8750 0 1.5
+sweep 8750 9750 0 0.25
+hold 9750 0 0.5
+cut 9750 0 1.5
+sweep 9750 10750 0 0.25
+hold 10750 0 0.5
+cut 10750 0 1.5
+sweep 10750 11750 0 0.25
+hold 11750 0 0.5
+cut 11750 0 1.5
+sweep 11750 12750 0 0.25
+hold 12750 0 0.5
+cut 12750 0 1.5
+sweep 12750 13750 0 0.25
+hold 13750 0 0.5
+cut 13750 0 1.5
+sweep 13750 14750 0 0.25
+hold 14750 0 0.5
+cut 14750 0 1.5
+sweep 14750 15750 0 0.25
+hold 15750 0 0.5
+cut 15750 0 1.5
+sweep 15750 16750 0 0.25
+hold 16750 0 0.5
+cut 16750 0 1.5
+sweep 16750 17750 0 0.25
+hold 17750 0 0.5
+cut 17750 0 1.5
+sweep 17750 18000 0 0.25
+hold 18000 0 0.5
+cut 18000 0 1.5
+sweep 18000 3810 1 0.25
+hold 3810 1 0.5
+cut 3810 1 1.5
+sweep 3810 4750 1 0.25
+hold 4750 1 0.5
+cut 4750 1 1.5
+sweep 4750 5750 1 0.25
+hold 5750 1 0.5
+cut 5750 1 1.5
+sweep 5750 6750 1 0.25
+hold 6750 1 0.5
+cut 6750 1 1.5
+sweep 6750 7750 1 0.25
+hold 7750 1 0.5
+cut 7750 1 1.5
+sweep 7750 8750 1 0.25
+hold 8750 1 0.5
+cut 8750 1 1.5
+sweep 8750 9750 1 0.25
+hold 9750 1 0.5
+cut 9750 1 1.5
+sweep 9750 10750 1 0.25
+hold 10750 1 0.5
+cut 10750 1 1.5
+sweep 10750 11750 1 0.25
+hold 11750 1 0.5
+cut 11750 1 1.5
+sweep 11750 12750 1 0.25
+hold 12750 1 0.5
+cut 12750 1 1.5
+sweep 12750 13750 1 0.25
+hold 13750 1 0.5
+cut 13750 1 1.5
+sweep 13750 14750 1 0.25
+hold 14750 1 0.5
+cut 14750 1 1.5
+sweep 14750 15750 1 0.25
+hold 15750 1 0.5
+cut 15750 1 1.5
+sweep 15750 16750 1 0.25
+hold 16750 1 0.5
+cut 16750 1 1.5
+sweep 16750 17750 1 0.25
+hold 17750 1 0.5
+cut 17750 1 1.5
+sweep 17750 18000 1 0.25
+hold 18000 1 0.5
+cut 18000 1 1.5

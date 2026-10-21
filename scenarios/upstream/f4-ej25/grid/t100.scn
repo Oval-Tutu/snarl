@@ -1,0 +1,50 @@
+# f4-ej25: written by tools/cycles scenarios. Cycle table grid: holds at throttle 1.
+# Each hold is 0.5 s of settling and at least 24 whole cycles; 0.25 s sweeps join the holds.
+# The renderer reads cut RPM THROTTLE SECONDS as a hold with the ignition off. snarl does not read these files.
+hold 830 1 4
+sweep 830 1000 1 0.25
+hold 1000 1 3.4
+sweep 1000 1250 1 0.25
+hold 1250 1 2.9
+sweep 1250 1500 1 0.25
+hold 1500 1 2.5
+sweep 1500 1750 1 0.25
+hold 1750 1 2.2
+sweep 1750 2000 1 0.25
+hold 2000 1 2
+sweep 2000 2250 1 0.25
+hold 2250 1 1.8
+sweep 2250 2500 1 0.25
+hold 2500 1 1.7
+sweep 2500 2750 1 0.25
+hold 2750 1 1.6
+sweep 2750 3000 1 0.25
+hold 3000 1 1.5
+sweep 3000 3250 1 0.25
+hold 3250 1 1.5
+sweep 3250 3500 1 0.25
+hold 3500 1 1.5
+sweep 3500 3750 1 0.25
+hold 3750 1 1.5
+sweep 3750 4000 1 0.25
+hold 4000 1 1.5
+sweep 4000 4250 1 0.25
+hold 4250 1 1.5
+sweep 4250 4500 1 0.25
+hold 4500 1 1.5
+sweep 4500 4750 1 0.25
+hold 4750 1 1.5
+sweep 4750 5000 1 0.25
+hold 5000 1 1.5
+sweep 5000 5250 1 0.25
+hold 5250 1 1.5
+sweep 5250 5500 1 0.25
+hold 5500 1 1.5
+sweep 5500 5750 1 0.25
+hold 5750 1 1.5
+sweep 5750 6000 1 0.25
+hold 6000 1 1.5
+sweep 6000 6250 1 0.25
+hold 6250 1 1.5
+sweep 6250 6400 1 0.25
+hold 6400 1 1.5

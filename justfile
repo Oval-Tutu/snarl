@@ -212,6 +212,83 @@ ref-upstream engine="":
         echo "Wrote ${out}"
     done
 
+# Build the cycle tables of the five upstream engine-sim engines
+# (docs/research/cycle-tables.md), for one engine or for all when none is
+# given. tools/cycles scenarios writes the grid scenarios into
+# scenarios/upstream/<engine>/grid from the first and last hold of
+# holds-t100.scn: one file per throttle row (0, 0.25, 0.5, 0.75 and 1) with
+# a hold at idle, every multiple of the RPM step and the top, cut.scn
+# with ignition-off holds, and step.scn with throttle steps for the intake
+# lag. The renderer runs each file with --dump-synth into
+# out/cycles/grid/<engine>/<file>/, in parallel, from the unchanged
+# upstream script at its own simulation frequency. tools/cycles build then
+# writes profiles/cycles/<engine>.bin and its report build.md.
+cycles-grid engine="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    r="$(nix build -f reference/engine-sim --print-out-paths --no-link)"
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "${tmp}"' EXIT
+    declare -A scripts=(
+        [i4-vtec]=atg-video-1/05_honda_vtec.mr
+        [v8-ls]=atg-video-2/07_gm_ls.mr
+        [f4-ej25]=atg-video-1/06_subaru_ej25.mr
+        [v12-412]=atg-video-2/12_ferrari_412_t2.mr
+        [v12-merlin]=atg-video-2/11_merlin_v12.mr
+    )
+    # The RPM step of the grid of each engine.
+    declare -A steps=(
+        [i4-vtec]=250
+        [v8-ls]=250
+        [f4-ej25]=250
+        [v12-412]=250
+        [v12-merlin]=250
+    )
+    # Sets segments to the renderer flags of the grid scenario file $1.
+    parse() {
+        segments=()
+        while IFS= read -r line; do
+            read -r kind a b c d extra <<< "${line%%#*}" || true
+            case "${kind:-}" in
+                "") continue ;;
+                hold) [[ -n "${c}" && -z "${d}" ]] && segments+=(--hold "${a}:${b}:${c}") && continue ;;
+                sweep) [[ -n "${d}" && -z "${extra}" ]] && segments+=(--sweep "${a}:${b}:${c}:${d}") && continue ;;
+                cut) [[ -n "${c}" && -z "${d}" ]] && segments+=(--cut "${a}:${b}:${c}") && continue ;;
+            esac
+            echo "Error: $1: bad segment '${line}'" >&2
+            exit 1
+        done < "$1"
+    }
+    engines=({{ if engine == "" { "i4-vtec v8-ls f4-ej25 v12-412 v12-merlin" } else { engine } }})
+    for e in "${engines[@]}"; do
+        if [[ -z "${scripts[${e}]:-}" ]]; then
+            echo "Error: unknown engine '${e}'. Use i4-vtec, v8-ls, f4-ej25, v12-412 or v12-merlin." >&2
+            exit 1
+        fi
+        script="$(tools/import/engine-sim-main.sh "${r}/share/engine-sim/engines/${scripts[${e}]}" "${tmp}")"
+        scn="scenarios/upstream/${e}/grid"
+        out="out/cycles/grid/${e}"
+        go run ./tools/cycles scenarios --holds "scenarios/upstream/${e}/holds-t100.scn" --name "${e}" \
+            --step "${steps[${e}]}" --out "${scn}"
+        rm -rf "${out}"
+        mkdir -p "${out}"
+        pids=()
+        for f in "${scn}"/*.scn; do
+            name="$(basename "${f}" .scn)"
+            parse "${f}"
+            "${r}/bin/engine-sim-render" --script "${script}" "${segments[@]}" --volume 0.5 --rate 44100 \
+                --out "${out}/${name}.wav" --dump-synth "${out}/${name}" > "${out}/${name}.log" 2>&1 &
+            pids+=($!)
+        done
+        for p in "${pids[@]}"; do
+            wait "${p}"
+        done
+        mkdir -p profiles/cycles
+        go run ./tools/cycles build --out "profiles/cycles/${e}.bin" --step "${out}/step" \
+            "${out}"/t*/ "${out}/cut" > "${out}/build.md"
+        tail -n 1 "${out}/build.md"
+    done
+
 # Render the EngineLab references of the Aircooled-like 3.6 Flat-6 with the
 # EngineLab offline audio exporter (reference/enginelab/README.md). For each
 # scenario in reference/enginelab/scenarios it writes the exporter output

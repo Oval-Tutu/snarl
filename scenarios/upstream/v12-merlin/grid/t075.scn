@@ -1,0 +1,24 @@
+# v12-merlin: written by tools/cycles scenarios. Cycle table grid: holds at throttle 0.75.
+# Each hold is 0.5 s of settling and at least 24 whole cycles; 0.25 s sweeps join the holds.
+# The renderer reads cut RPM THROTTLE SECONDS as a hold with the ignition off. snarl does not read these files.
+hold 600 0.75 5.3
+sweep 600 750 0.75 0.25
+hold 750 0.75 4.4
+sweep 750 1000 0.75 0.25
+hold 1000 0.75 3.4
+sweep 1000 1250 0.75 0.25
+hold 1250 0.75 2.9
+sweep 1250 1500 0.75 0.25
+hold 1500 0.75 2.5
+sweep 1500 1750 0.75 0.25
+hold 1750 0.75 2.2
+sweep 1750 2000 0.75 0.25
+hold 2000 0.75 2
+sweep 2000 2250 0.75 0.25
+hold 2250 0.75 1.8
+sweep 2250 2500 0.75 0.25
+hold 2500 0.75 1.7
+sweep 2500 2750 0.75 0.25
+hold 2750 0.75 1.6
+sweep 2750 3000 0.75 0.25
+hold 3000 0.75 1.5

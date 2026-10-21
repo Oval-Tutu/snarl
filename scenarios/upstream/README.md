@@ -23,6 +23,16 @@ All five scripts define `public node main`, so the recipe renders them with no w
 
 Idle is the idle rpm of the dump rounded to 10 rpm. For an engine that stalls at speed control 0, idle is the fallback of `tools/import`: a fifth of the redline, rounded to 50 rpm, and at least 500 rpm.
 
+## Cycle table grid
+
+`just cycles-grid` writes `<engine>/grid/` with `tools/cycles scenarios` from the first and last hold of `holds-t100.scn` (`docs/research/cycle-tables.md`). Do not edit these files by hand: run the recipe again.
+
+- `t000.scn` to `t100.scn`: one file per throttle row (0, 0.25, 0.5, 0.75 and 1), with a hold at idle, at every multiple of 250 rpm and at the top. Each hold is 0.5 s of settling and at least 24 whole engine cycles, and 0.25 s sweeps join the holds.
+- `cut.scn`: ignition-off holds at throttle 0 and 1 at every fourth grid RPM and the top, each after a 0.5 s hold with the ignition on. The segment `cut RPM THROTTLE SECONDS` is a hold with the ignition off (`engine-sim-render --cut`).
+- `step.scn`: full throttle for 1.5 s, closed for 3 s, then full again for 3 s, at the grid RPM nearest 60 per cent of the top, for the intake lag.
+
+Only the renderer recipe reads `cut.scn`. `snarl-render` and `snarl-compare` do not read the `cut` segment.
+
 ## The free segment
 
 `idle-free.scn` and `limiter-free.scn` use the segment `free THROTTLE SECONDS`: the dynamometer is off and the engine runs free. Only the engine-sim renderer (`--free`) and `tools/fit --health` read it. It is not part of `docs/scenario-format.md`, so `snarl-render` and `snarl-compare` do not read these two files.

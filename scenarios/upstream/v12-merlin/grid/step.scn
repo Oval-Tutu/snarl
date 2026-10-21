@@ -1,0 +1,5 @@
+# v12-merlin: written by tools/cycles scenarios. Throttle steps at 1750 rpm for the intake lag of the cycle tables:
+# full throttle, closed, then full again. snarl does not read this file.
+hold 1750 1 1.5
+hold 1750 0 3
+hold 1750 1 3

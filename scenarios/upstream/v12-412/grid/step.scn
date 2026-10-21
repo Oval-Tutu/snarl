@@ -1,0 +1,5 @@
+# v12-412: written by tools/cycles scenarios. Throttle steps at 10750 rpm for the intake lag of the cycle tables:
+# full throttle, closed, then full again. snarl does not read this file.
+hold 10750 1 1.5
+hold 10750 0 3
+hold 10750 1 3

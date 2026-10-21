@@ -1,0 +1,5 @@
+# v8-ls: written by tools/cycles scenarios. Throttle steps at 4000 rpm for the intake lag of the cycle tables:
+# full throttle, closed, then full again. snarl does not read this file.
+hold 4000 1 1.5
+hold 4000 0 3
+hold 4000 1 3

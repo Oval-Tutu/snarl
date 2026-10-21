@@ -50,7 +50,7 @@ namespace {
 
 constexpr int SynthRate = 44100;
 
-enum class Mode { Hold, Sweep, Free };
+enum class Mode { Hold, Sweep, Free, Cut };
 
 struct Segment {
     Mode mode;
@@ -59,6 +59,16 @@ struct Segment {
     double throttle = 0;
     double seconds = 0;
 };
+
+const char *modeName(Mode m) {
+    switch (m) {
+    case Mode::Hold: return "hold";
+    case Mode::Sweep: return "sweep";
+    case Mode::Free: return "free";
+    case Mode::Cut: return "cut";
+    }
+    return "";
+}
 
 struct Options {
     std::string script;
@@ -90,6 +100,7 @@ void usage() {
         "  --hold RPM:THROTTLE:SECONDS          dyno holds RPM\n"
         "  --sweep RPM0:RPM1:THROTTLE:SECONDS   dyno target ramps linearly\n"
         "  --free THROTTLE:SECONDS              dyno off, engine runs free\n"
+        "  --cut RPM:THROTTLE:SECONDS           dyno holds RPM with the ignition off\n"
         "\n"
         "Options:\n"
         "  --settle SECONDS   unrecorded pre-roll at the first segment state (default 3)\n"
@@ -103,8 +114,9 @@ void usage() {
         "  --dump-json PATH   write the engine that the script builds as JSON, with the idle rpm\n"
         "                     of a free run at speed control 0, instead of a WAV\n"
         "  --idle-seconds S   length of that free run (default 8); the last 2 s give the idle rpm\n"
-        "  --dump-synth DIR   also write the synthesiser input of each exhaust channel, its\n"
-        "                     parameters and its whole 44.1 kHz output to DIR\n"
+        "  --dump-synth DIR   also write the synthesiser input of each exhaust channel, the\n"
+        "                     crank angle and speed of each step, the synthesiser parameters\n"
+        "                     and its whole 44.1 kHz output to DIR\n"
         "  --no-noise         set the synthesiser jitter and air noise to 0, for a deterministic output\n"
         "\n"
         "THROTTLE is engine-sim speed control in 0..1, the value of the app's Q/W/E/R keys.\n";
@@ -154,6 +166,10 @@ Options parseArgs(int argc, char **argv) {
         else if (a == "--free") {
             const auto n = parseNumbers(v, 2, a);
             o.segments.push_back({ Mode::Free, 0, 0, n[0], n[1] });
+        }
+        else if (a == "--cut") {
+            const auto n = parseNumbers(v, 3, a);
+            o.segments.push_back({ Mode::Cut, n[0], n[0], n[1], n[2] });
         }
         else { usage(); die("unknown option " + a); }
     }
@@ -254,18 +270,19 @@ struct Control {
     bool dyno;
     double rpm;
     double throttle;
+    bool ignition;
 };
 
 Control controlAt(const std::vector<Segment> &segs, double t) {
     for (const Segment &s : segs) {
         if (t < s.seconds) {
             const double f = t / s.seconds;
-            return { s.mode != Mode::Free, s.rpm0 + (s.rpm1 - s.rpm0) * f, s.throttle };
+            return { s.mode != Mode::Free, s.rpm0 + (s.rpm1 - s.rpm0) * f, s.throttle, s.mode != Mode::Cut };
         }
         t -= s.seconds;
     }
     const Segment &s = segs.back();
-    return { s.mode != Mode::Free, s.rpm1, s.throttle };
+    return { s.mode != Mode::Free, s.rpm1, s.throttle, s.mode != Mode::Cut };
 }
 
 std::string jsonString(const std::string &s) {
@@ -375,7 +392,11 @@ void writeDump(const fs::path &path, Engine *engine, double idleRpm, double idle
 // PistonEngineSimulator::writeToSynthesizer passes it to
 // Synthesizer::writeInput. Each frame records its step count and its render
 // blocks: the samples that Synthesizer::renderAudio() rendered, and the
-// rand() calls outside the synthesiser since the previous block.
+// rand() calls outside the synthesiser since the previous block. crank.f64
+// holds two little-endian float64 per step, after the step: the cycle angle
+// of the output crankshaft (Crankshaft::getCycleAngle, radians in 0..4 pi)
+// and its angular speed (m_body.v_theta, rad/s, negative when the engine
+// turns clockwise).
 struct SynthDump {
     struct Channel {
         std::string impulseResponse;
@@ -386,18 +407,22 @@ struct SynthDump {
     };
     fs::path dir;
     std::vector<std::ofstream> inputs;
+    std::ofstream crank;
     std::vector<Channel> channels;
     std::ostringstream frames;
     long long randMark = 0;
     long long frameCount = 0;
 };
 
-void writeSynthDump(SynthDump &d, Synthesizer &synth, Engine *engine, const fs::path &script, bool noNoise,
-                    const std::vector<int16_t> &rendered, size_t settleSamples, size_t keptSamples) {
+void writeSynthDump(SynthDump &d, Synthesizer &synth, Engine *engine, const fs::path &script, const Options &opt,
+                    double timestep, const std::vector<int16_t> &rendered, size_t settleSamples, size_t keptSamples) {
     for (std::ofstream &in : d.inputs) {
         in.close();
         if (!in) die("write failed in " + d.dir.string());
     }
+    d.crank.close();
+    if (!d.crank) die("write failed in " + d.dir.string());
+    const bool noNoise = opt.noNoise;
     writeWav16((d.dir / "output.wav").string(), std::vector<float>(rendered.begin(), rendered.end()), SynthRate);
 
     const Synthesizer::AudioParameters a = synth.getAudioParameters();
@@ -432,7 +457,29 @@ void writeSynthDump(SynthDump &d, Synthesizer &synth, Engine *engine, const fs::
           << ", \"impulse_response_copy\": \"ir_" << i << ".wav\", \"impulse_response_file_samples\": " << c.fileSamples
           << ", \"impulse_response_taps\": " << c.taps << ", \"impulse_response_volume\": " << c.volume << " }";
     }
-    f << "\n  ],\n  \"output\": \"output.wav\", \"output_samples\": " << rendered.size()
+    // The exhaust path of each cylinder, as PistonEngineSimulator::writeToSynthesizer
+    // weights it, and the steps of its delay filter (PistonEngineSimulator::initialize).
+    f << "\n  ],\n  \"cylinders\": [";
+    for (int i = 0; i < engine->getCylinderCount(); ++i) {
+        Piston *piston = engine->getPiston(i);
+        CylinderHead *head = engine->getHead(piston->getCylinderBank()->getIndex());
+        const int local = piston->getCylinderIndex();
+        ExhaustSystem *exhaust = head->getExhaustSystem(local);
+        const double length = head->getHeaderPrimaryLength(local) + exhaust->getLength();
+        f << (i ? "," : "") << "\n    { \"exhaust_system\": " << exhaust->getIndex()
+          << ", \"delay_steps\": " << std::lround(length / units::distance(343.0, units::m) * 10000.0)
+          << ", \"weight\": " << head->getSoundAttenuation(local) * exhaust->getAudioVolume()
+                / engine->getCylinderCount() / (length * length) << " }";
+    }
+    f << "\n  ],\n  \"timestep_s\": " << timestep << ", \"settle_s\": " << opt.settle
+      << ",\n  \"segments\": [";
+    for (size_t i = 0; i < opt.segments.size(); ++i) {
+        const Segment &s = opt.segments[i];
+        f << (i ? "," : "") << "\n    { \"mode\": \"" << modeName(s.mode) << "\", \"rpm0\": " << s.rpm0
+          << ", \"rpm1\": " << s.rpm1 << ", \"throttle\": " << s.throttle << ", \"seconds\": " << s.seconds << " }";
+    }
+    f << "\n  ],\n  \"crank\": \"crank.f64\""
+      << ",\n  \"output\": \"output.wav\", \"output_samples\": " << rendered.size()
       << ", \"settle_samples\": " << settleSamples << ", \"kept_samples\": " << keptSamples
       << ",\n  \"frames\": [" << d.frames.str() << "\n  ]\n}\n";
     if (!f) die("write failed: " + (d.dir / "synth.json").string());
@@ -524,6 +571,10 @@ int main(int argc, char **argv) {
             if (!dump.inputs.back()) die("cannot write in " + dump.dir.string());
         }
     }
+    if (!opt.dumpSynth.empty()) {
+        dump.crank.open(dump.dir / "crank.f64", std::ios::binary);
+        if (!dump.crank) die("cannot write in " + dump.dir.string());
+    }
 
     fs::remove_all(work);
 
@@ -576,6 +627,8 @@ int main(int argc, char **argv) {
         sim->m_dyno.m_enabled = c.dyno && t >= 0.5;
         sim->m_dyno.m_rotationSpeed = units::rpm(c.rpm);
         engine->setSpeedControl(c.throttle);
+        // A cut segment turns the ignition off. The pre-roll keeps it on.
+        engine->getIgnitionModule()->m_enabled = c.ignition || segT < 0;
 
         sim->startFrame(frame);
         long long frameSteps = 0;
@@ -587,6 +640,9 @@ int main(int argc, char **argv) {
                 for (size_t i = 0; i < dump.inputs.size(); ++i) {
                     dump.inputs[i].write(reinterpret_cast<const char *>(&in[i]), sizeof(double));
                 }
+                Crankshaft *crank = engine->getOutputCrankshaft();
+                const double angle[2] = { crank->getCycleAngle(), crank->m_body.v_theta };
+                dump.crank.write(reinterpret_cast<const char *>(angle), sizeof(angle));
             }
             if (step * timestep > endTime - 2.0) {
                 idleSum += engine->getRpm();
@@ -642,7 +698,7 @@ int main(int argc, char **argv) {
     const size_t start = std::min(settleSamples, rendered.size());
     std::vector<int16_t> kept(rendered.begin() + start, rendered.begin() + std::min(rendered.size(), start + want));
     writeWav16(out.string(), resample(kept, SynthRate, opt.rate), opt.rate);
-    if (!opt.dumpSynth.empty()) writeSynthDump(dump, synth, engine, script, opt.noNoise, rendered, start, kept.size());
+    if (!opt.dumpSynth.empty()) writeSynthDump(dump, synth, engine, script, opt, timestep, rendered, start, kept.size());
 
     std::cerr << "engine-sim-render: " << engine->getName() << ", " << cylinders << " cylinders, "
               << engine->getExhaustSystemCount() << " exhaust systems, sim " << sim->getSimulationFrequency()

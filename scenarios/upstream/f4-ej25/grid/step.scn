@@ -1,0 +1,5 @@
+# f4-ej25: written by tools/cycles scenarios. Throttle steps at 3750 rpm for the intake lag of the cycle tables:
+# full throttle, closed, then full again. snarl does not read this file.
+hold 3750 1 1.5
+hold 3750 0 3
+hold 3750 1 3

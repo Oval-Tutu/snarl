@@ -42,6 +42,7 @@ A scenario is a list of segments on the command line. The segments run in the gi
 | `--hold RPM:THROTTLE:SECONDS` | The dynamometer holds the engine at `RPM`. |
 | `--sweep RPM0:RPM1:THROTTLE:SECONDS` | The dynamometer target moves linearly from `RPM0` to `RPM1`. |
 | `--free THROTTLE:SECONDS` | The dynamometer is off and the engine runs free, in neutral. |
+| `--cut RPM:THROTTLE:SECONDS` | The dynamometer holds the engine at `RPM` with the ignition off. The pre-roll keeps the ignition on. |
 
 `THROTTLE` is the engine-sim speed control value in 0 to 1. This is the value that the app sets with the Q, W, E and R keys (0.01, 0.1, 0.2, 1.0). Engines with a governor interpret it as a speed request, other engines as a throttle position.
 
@@ -61,11 +62,12 @@ A scenario is a list of segments on the command line. The segments run in the gi
 `--dump-synth DIR` writes what the synthesiser receives and what it returns, for the Go port in `internal/esynth` (`docs/research/esynth-port.md`):
 
 - `input_N.f64`: the input of exhaust channel `N`, one little-endian float64 per simulation step, as `PistonEngineSimulator::writeToSynthesizer` passes it to `Synthesizer::writeInput`.
+- `crank.f64`: two little-endian float64 per simulation step, after the step: the cycle angle of the output crankshaft (`Crankshaft::getCycleAngle`, radians from 0 to 4 pi) and its angular speed (`m_body.v_theta`, rad/s, negative when the engine turns clockwise). The RPM is the magnitude of the speed times 60 / (2 pi). engine-sim counts the cycle angle up when the crank turns clockwise. The other files of the record do not give the angle, so the driver records it.
 - `ir_N.wav`: a copy of the impulse response file of channel `N`.
 - `output.wav`: the whole synthesiser output at 44.1 kHz, with the pre-roll and before the conversion to `--rate`.
-- `synth.json`: the rates, buffer sizes, audio parameters, leveller settings, filter time steps, the impulse response of each channel (path relative to `es/`, file samples, taps after the trim, volume), the pre-roll and kept sample counts, and each frame: its simulation steps and its render blocks. A block is the samples that `Synthesizer::renderAudio()` rendered and the `rand()` calls outside the synthesiser since the previous block.
+- `synth.json`: the rates, buffer sizes, audio parameters, leveller settings, filter time steps, the impulse response of each channel (path relative to `es/`, file samples, taps after the trim, volume), the pre-roll and kept sample counts, and each frame: its simulation steps and its render blocks. A block is the samples that `Synthesizer::renderAudio()` rendered and the `rand()` calls outside the synthesiser since the previous block. It also holds the simulation step (`timestep_s`), the pre-roll (`settle_s`), the segments of the render (`segments`: mode, RPM, throttle, seconds), the name of the crank file (`crank`), and for each cylinder its exhaust channel, the steps of its exhaust delay filter and its weight in the channel sum (`cylinders`, as `PistonEngineSimulator::initialize` and `writeToSynthesizer` compute them).
 
-The driver counts the `rand()` calls with its own definition of `rand()`, which returns `random()` as glibc does, so the values do not change. `go run ./tools/esynth --dump DIR` runs the port on a record.
+The driver counts the `rand()` calls with its own definition of `rand()`, which returns `random()` as glibc does, so the values do not change. `go run ./tools/esynth --dump DIR` runs the port on a record. `just cycles-grid` renders the records of the cycle tables (`docs/research/cycle-tables.md`).
 
 ### Engine dump
 
