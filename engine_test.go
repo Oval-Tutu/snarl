@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"math/cmplx"
 	"path/filepath"
 	"slices"
 	"sync"
@@ -424,44 +423,6 @@ func TestOverrunPeak(t *testing.T) {
 	}
 }
 
-// TestOverrunOrders checks that on overrun the exhaust, not a mechanical,
-// fan or intake layer, gives the strongest engine order. It renders the
-// closed-throttle hold with and without those layers. At the strongest
-// order, the layers must add less than 1 dB.
-func TestOverrunOrders(t *testing.T) {
-	t.Parallel()
-	for _, name := range Profiles() {
-		t.Run(name, func(t *testing.T) {
-			p, err := LoadProfile(name)
-			if err != nil {
-				t.Fatal(err)
-			}
-			q := p
-			s := *p.spec
-			s.Mechanical.FanGain, s.Mechanical.TickGain, s.Noise.Intake = 0, 0, 0
-			q.spec = &s
-			orders := analysis.Orders(20)
-			spectrum := func(p Profile) []float64 {
-				x, scn := renderScenario(t, p, "overrun")
-				rpm, _ := scn.At(3)
-				lv, ok := analysis.OrderSpectrum(x[int(2.3*testRate):int(3.8*testRate)], testRate,
-					func(float64) float64 { return rpm }, orders)
-				if !ok {
-					t.Fatal("no order spectrum")
-				}
-				return lv
-			}
-			on, off := spectrum(p), spectrum(q)
-			top := analysis.DominantOrder(orders, on)
-			for i, o := range orders {
-				if o == top && on[i]-off[i] > 1 {
-					t.Errorf("strongest order %.1f is %.1f dB above the exhaust alone", o, on[i]-off[i])
-				}
-			}
-		})
-	}
-}
-
 func TestBadInputBounded(t *testing.T) {
 	e := newTestEngine(t, "v8")
 	bad := []float32{float32(math.NaN()), float32(math.Inf(1)), -5000, 1e9}
@@ -872,65 +833,6 @@ func TestLimiterBounce(t *testing.T) {
 			}
 			if hf > 1 {
 				t.Errorf("band above 3 kHz %.1f dB above full throttle below the limiter", hf)
-			}
-		})
-	}
-}
-
-// TestLimiterToneHolds checks that no tonal layer slides with the limiter
-// dip. engine-sim has no such layer: only the exhaust harmonics follow the
-// internal RPM. The difference between a limiter hold with and without the
-// fan is the fan tone. Its frequency, from the strongest bin from 100 Hz to
-// 2 kHz in 85 ms windows with parabolic interpolation, moves by at most
-// 5 Hz from the 10th to the 90th percentile, while the RPM dip would move
-// it by about 12 percent.
-func TestLimiterToneHolds(t *testing.T) {
-	t.Parallel()
-	const n, hop = 4096, 480
-	for _, name := range Profiles() {
-		t.Run(name, func(t *testing.T) {
-			p, err := LoadProfile(name)
-			if err != nil {
-				t.Fatal(err)
-			}
-			q, err := LoadProfileWith(name, "mechanical.fan_gain=0")
-			if err != nil {
-				t.Fatal(err)
-			}
-			x, _ := limiterHold(t, p, p.LimiterRPM, 2)
-			y, _ := limiterHold(t, q, p.LimiterRPM, 2)
-			d := make([]float64, len(x))
-			var e float64
-			for i := range x {
-				d[i] = float64(x[i] - y[i])
-				e += d[i] * d[i]
-			}
-			if e == 0 {
-				return
-			}
-			win := analysis.Hann(n)
-			buf := make([]complex128, n)
-			var track []float64
-			for i := testRate / 2; i+n <= len(d); i += hop {
-				for k := range buf {
-					buf[k] = complex(d[i+k]*win[k], 0)
-				}
-				analysis.FFT(buf)
-				lo, hi := 100*n/testRate, 2000*n/testRate
-				k := lo
-				for j := lo; j <= hi; j++ {
-					if cmplx.Abs(buf[j]) > cmplx.Abs(buf[k]) {
-						k = j
-					}
-				}
-				a, b, c := math.Log(cmplx.Abs(buf[k-1])), math.Log(cmplx.Abs(buf[k])), math.Log(cmplx.Abs(buf[k+1]))
-				track = append(track, (float64(k)+0.5*(a-c)/(a-2*b+c))*testRate/n)
-			}
-			slices.Sort(track)
-			swing := track[len(track)*9/10] - track[len(track)/10]
-			t.Logf("fan tone from %.0f to %.0f Hz", track[len(track)/10], track[len(track)*9/10])
-			if swing > 5 {
-				t.Errorf("fan tone moves by %.0f Hz in the limiter bounce, want at most 5 Hz", swing)
 			}
 		})
 	}

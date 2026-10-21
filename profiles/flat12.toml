@@ -45,13 +45,6 @@ am_redline = 0.25
 am_idle = 0.5
 jet = 0.025
 jet_hz = 2000
-intake = 0.05
-intake_hz = 520
-
-[mechanical]
-tick_gain = 0.02
-tick_hz = 3500
-tick_lp_hz = 9000
 
 [pops]
 density = 0.2

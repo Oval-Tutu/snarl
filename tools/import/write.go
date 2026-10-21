@@ -4,7 +4,6 @@ import (
 	_ "embed"
 	"fmt"
 	"hash/fnv"
-	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -50,11 +49,6 @@ low_shelf_hz = 250
 am = 0.2
 jet = 0.02
 jet_hz = 1500
-intake = 0.08
-intake_hz = %s
-
-[mechanical]
-tick_gain = 0.01
 
 [pops]
 density = 0.15
@@ -108,12 +102,6 @@ func seed(id string) int {
 	return int(h.Sum32()%65535) + 1
 }
 
-// intakeHz is the quarter-wave resonance of the intake runner in air,
-// from 150 to 1200 Hz.
-func intakeHz(runnerM float64) float64 {
-	return math.Round(min(1200, max(150, 343/(4*runnerM))))
-}
-
 func profileTOML(e *engine) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Imported from %s by just import-profiles. Do not edit: change tools/import\n", e.Project)
@@ -123,7 +111,7 @@ func profileTOML(e *engine) string {
 	fmt.Fprintf(&b, "seed = %d\n", seed(e.ID))
 	fmt.Fprintf(&b, "idle_rpm = %s\nredline_rpm = %s\n", num(e.IdleRPM), num(e.RedlineRPM))
 	fmt.Fprintf(&b, "limiter_rpm = %s\nlimiter_kind = %q\nlimiter_ms = %s\n\n", num(e.LimiterRPM), e.LimiterKind, num(e.LimiterMS))
-	fmt.Fprintf(&b, sections, e.Crossover, num(e.Coupling), num(intakeHz(e.IntakeRunnerM)),
+	fmt.Fprintf(&b, sections, e.Crossover, num(e.Coupling),
 		num(e.IdleRPM+1400), num(e.OutputDB), num(e.IdleGainDB))
 	for i, c := range e.Cylinders {
 		fmt.Fprintf(&b, "\n[[cylinder]] # %d\ncrank_deg = %s\nbank = %d\nprimary_m = %s\n", i+1, num(c.CrankDeg), c.Bank, num(c.PrimaryM))

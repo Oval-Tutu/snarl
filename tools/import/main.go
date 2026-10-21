@@ -29,7 +29,6 @@ type engine struct {
 
 	IdleRPM, RedlineRPM, LimiterRPM, LimiterMS float64
 	LimiterKind                                string
-	IntakeRunnerM                              float64
 	Crossover                                  string
 	Coupling                                   float64
 	Cylinders                                  []cylinder

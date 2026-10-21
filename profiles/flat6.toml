@@ -2,7 +2,7 @@
 # cylinders 1 to 3, bank 1 is cylinders 4 to 6. Each bank fires every 240
 # degrees. The heat exchangers feed a centre mixing chamber, a full merge.
 name = "flat6"
-description = "Air-cooled flat-6, heat exchangers into a mixing chamber, fan"
+description = "Air-cooled flat-6, heat exchangers into a mixing chamber"
 seed = 6
 idle_rpm = 800
 redline_rpm = 6800
@@ -44,16 +44,6 @@ am_redline = 0.25
 am_idle = 0.5
 jet = 0.02
 jet_hz = 1500
-intake = 0.06
-intake_hz = 330
-
-[mechanical]
-fan_ratio = 1.8
-fan_blades = 5
-fan_gain = 0.02
-tick_gain = 0.05
-tick_hz = 2500
-tick_lp_hz = 9000
 
 [pops]
 density = 0.2

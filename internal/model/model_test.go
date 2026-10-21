@@ -69,7 +69,6 @@ func limiterSpec(kind string) Spec {
 	s.Cylinders = []CylinderSpec{{CrankDeg: 0, PrimaryM: 0.4}, {CrankDeg: 180, PrimaryM: 0.4}, {CrankDeg: 360, PrimaryM: 0.4}, {CrankDeg: 540, PrimaryM: 0.4}}
 	s.Paths = []PathSpec{{CollectorM: 1.3, Reflection: -0.4, DampingHz: 3000, PipeRadiusM: 0.025, OutletM: 0.025, Gain: 1}}
 	s.Pops.Density = 0.5
-	s.Mechanical.FanRatio, s.Mechanical.FanBlades = 1, 5
 	return s
 }
 
@@ -107,15 +106,12 @@ func TestLimiterCuts(t *testing.T) {
 // checks the cut rate and the mean dip against the profile values. The
 // coefficient of variation of the intervals between cuts is at most 0.03
 // with no jitter, and from 0.5 to 1.5 times jitter/sqrt(3) with a jitter.
-// The fan tone holds its pitch: it moves by less than a quarter of the
-// largest pitch dip.
 func checkBounce(t *testing.T, name string, s *Spec, y *Synth) {
 	t.Helper()
 	buf := make([]float32, chunk)
 	c := Control{RPM: float32(s.LimiterRPM), Throttle: 1, Load: 1, Running: true, Overrun: true, Gear: 1}
-	var top, dip float32
+	var dip float32
 	var dips, gaps []float64
-	fanLo, fanHi := float32(math.Inf(1)), float32(0)
 	n, rot, start := 0, 0, -1
 	for i := range 2 * rate / chunk {
 		if i == rate/5/chunk {
@@ -134,15 +130,10 @@ func checkBounce(t *testing.T, name string, s *Spec, y *Synth) {
 				rot, start, dip = y.limRot, i, 0
 			}
 			dip = max(dip, c.RPM-y.PitchRPM())
-			top = max(top, dip)
-			fanLo, fanHi = min(fanLo, y.fanInc), max(fanHi, y.fanInc)
 		}
 	}
 	if len(gaps) < 3 {
 		t.Fatalf("%s: %d bounces", name, len(gaps))
-	}
-	if fanHi-fanLo > 0.25*fanHi*top/c.RPM {
-		t.Errorf("%s: fan increment from %v to %v with a pitch dip of %.0f RPM", name, fanLo, fanHi, top)
 	}
 	ms := s.LimiterMS
 	wantDip := s.LimiterFallRPMS * s.LimiterLoadScale * ms / 1000

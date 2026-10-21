@@ -104,41 +104,33 @@ type Synth struct {
 	out   output
 
 	// Profile constants.
-	cycleVar, jitter             float32
-	redline, camRPM              float32
-	camGain, camAttack, attack   float32
-	decay                        float32
-	amCfg, jetCfg                float32
-	intakeCfg, intakeCamGain     float32
-	intakeHz, intakeCamHz        float32
-	fanOrder, fanCfg, tickCfg    float32
-	fanInc                       float32
-	steepCfg, voiceGain          float32
-	overlap                      float32
-	limKind                      string
-	limRPM, limFall, limRise     float32
-	limCut                       int
-	limJitter                    float32
-	pumpLvl, notchLvl, barkLvl   float32
-	notchStep, kBark             float32
-	kRPM, kCtl, kMaster, kCam    float32
-	kLim, kHand                  float32
-	jit                          dsp.OnePole
-	idleRPM, ovLevel, ovIdle     float32
-	partLoad                     float32
-	idleGain, knee               float32
-	rpmG, rpmStep                float32
-	shape                        float32
-	intakeBP, jetBP, tickHP      dsp.Biquad
-	intakeSetMix                 float32
-	tickDec                      float32
-	fanPhase, tickEnv            float32
-	rpm, throttle, load, master  float32
-	overrun, camMix              float32
-	camHigh                      bool
-	inc, step, amp, amDepth      float32
-	jetGain, intakeGain, fanGain float32
-	tickGain, ka, kb, liveNorm   float32
+	cycleVar, jitter            float32
+	redline, camRPM             float32
+	camGain, camAttack, attack  float32
+	decay                       float32
+	amCfg, jetCfg               float32
+	steepCfg, voiceGain         float32
+	overlap                     float32
+	limKind                     string
+	limRPM, limFall, limRise    float32
+	limCut                      int
+	limJitter                   float32
+	pumpLvl, notchLvl, barkLvl  float32
+	notchStep, kBark            float32
+	kRPM, kCtl, kMaster, kCam   float32
+	kLim, kHand                 float32
+	jit                         dsp.OnePole
+	idleRPM, ovLevel, ovIdle    float32
+	partLoad                    float32
+	idleGain, knee              float32
+	rpmG, rpmStep               float32
+	shape                       float32
+	jetBP                       dsp.Biquad
+	rpm, throttle, load, master float32
+	overrun, camMix             float32
+	camHigh                     bool
+	inc, step, amp, amDepth     float32
+	jetGain, ka, kb, liveNorm   float32
 
 	// Pulse placement for one chunk. aStep and bStep are the attack and
 	// decay rates per pulse step, so that a voice starts its envelope at
@@ -157,13 +149,6 @@ type Synth struct {
 	amLP, amLP2              dsp.OnePole
 	amIdleA, amTopA, amTopA2 float32
 	amIdle, amTaper          float32
-
-	// tickLP band-limits the valve tick when tickLow is true.
-	tickLP  dsp.Biquad
-	tickLow bool
-
-	// fanSine holds the fan sine of each sample of the chunk.
-	fanSine [chunk]float32
 
 	// Engine level for the pops. engS and engE sum the output and its
 	// square over the chunk, before the RPM gain and the output stage,
@@ -231,11 +216,6 @@ func New(s *Spec, rate int) (*Synth, error) {
 		decay:      float32(s.Pulse.Decay),
 		amCfg:      float32(s.Noise.AM),
 		jetCfg:     float32(s.Noise.Jet),
-		intakeCfg:  float32(s.Noise.Intake),
-		intakeHz:   float32(s.Noise.IntakeHz),
-		fanOrder:   float32(2 * s.Mechanical.FanRatio * s.Mechanical.FanBlades),
-		fanCfg:     float32(s.Mechanical.FanGain),
-		tickCfg:    float32(s.Mechanical.TickGain),
 		steepCfg:   float32(s.Exhaust.Steepening),
 		overlap:    float32(s.Exhaust.Overlap),
 		voiceGain:  float32(s.Voice.Gain),
@@ -275,7 +255,6 @@ func New(s *Spec, rate int) (*Synth, error) {
 		ovIdle:     float32(math.Pow(10, s.Overrun.IdleLevelDB/20)),
 		partLoad:   float32(math.Pow(10, s.Pulse.PartLoadDB/20)),
 		rpmG:       -1,
-		tickDec:    dsp.DecayCoef(40, 0.004, fs),
 		pops:       newPops(s, fs, float64(controlBlock)/fs),
 		out:        newOutput(s.Voice.OutputDB, fs),
 		idleGain:   float32(s.Voice.IdleGainDB),
@@ -288,24 +267,11 @@ func New(s *Spec, rate int) (*Synth, error) {
 	if y.camAttack <= 0 {
 		y.camAttack = y.attack
 	}
-	y.intakeCamGain = float32(s.Noise.IntakeCamGain)
-	y.intakeCamHz = float32(s.Noise.IntakeCamHz)
-	if y.intakeCamHz <= 0 {
-		y.intakeCamHz = y.intakeHz
-	}
-	if y.intakeHz > 0 {
-		y.intakeBP.SetBandPass(float64(y.intakeHz), 1.5, fs)
-	}
 	jetHz := s.Noise.JetHz
 	if jetHz <= 0 {
 		jetHz = 1500
 	}
 	y.jetBP.SetBandPass(jetHz, 0.7, fs)
-	y.tickHP.SetHighPass(s.Mechanical.TickHz, 0.9, fs)
-	if f := s.Mechanical.TickLowPassHz; f > 0 && f < 0.45*fs {
-		y.tickLP.SetLowPass(f, math.Sqrt2/2, fs)
-		y.tickLow = true
-	}
 
 	y.idle = newIdle(s, seed, chunkHz)
 	y.initCylinders(s, fs)
@@ -476,9 +442,6 @@ func (y *Synth) control(c *Control, n int) {
 	y.idle.control(rpm, y.load)
 	speed := y.invRate120 * (1 + y.jitter*j) * y.idle.speed
 	y.inc = min(y.PitchRPM()*speed, y.maxInc)
-	// The fan follows the smoothed RPM, not the pitch, so that it holds its
-	// pitch in a limiter bounce.
-	y.fanInc = y.rpm * speed * y.fanOrder
 	y.step = y.inc * y.stepPerCycle
 
 	ld := float64(y.load)
@@ -642,7 +605,7 @@ func (y *Synth) waverStep(top bool) {
 }
 
 // controlLayers sets the pulse envelope coefficients, the wave steepening
-// and the gains of the jet, intake and mechanical layers for one chunk.
+// and the gain of the jet layer for one chunk.
 func (y *Synth) controlLayers(flow, rr float32) {
 	a := float64(y.attack + (y.camAttack-y.attack)*y.camMix)
 	b := float64(y.decay)
@@ -663,19 +626,6 @@ func (y *Synth) controlLayers(flow, rr float32) {
 	}
 	jet := float32(math.Pow(math.Max(float64(flow), 0.02), 0.7)) * rr
 	y.jetGain = y.master * y.jetCfg * jet * jet
-	y.intakeGain = y.master * y.intakeCfg * (0.2 + 0.8*y.throttle) *
-		(1 + y.intakeCamGain*y.camMix)
-	if y.intakeHz > 0 && y.intakeCamHz != y.intakeHz {
-		if d := y.camMix - y.intakeSetMix; d > 0.02 || d < -0.02 {
-			y.intakeSetMix = y.camMix
-			f := y.intakeHz + (y.intakeCamHz-y.intakeHz)*y.camMix
-			y.intakeBP.SetBandPass(float64(f), 1.5, y.rate)
-		}
-	}
-	// The fan and the valve tick follow the pulse level, so that the
-	// exhaust stays on top on overrun.
-	y.fanGain = y.master * y.fanCfg * (0.3 + 0.7*rr) * y.shape
-	y.tickGain = y.master * y.tickCfg * (0.4 + 0.6*rr) * y.shape
 }
 
 // fire starts the pulse of one cylinder. In a limiter cut, the pulse is a
@@ -704,7 +654,6 @@ func (y *Synth) fire(cyl int) {
 	v.pos = (y.crank.past-late)*y.stepPerCycle - (y.delay[cyl]+lead)*y.step
 	v.active = true
 	v.started = false
-	y.tickEnv = y.tickGain
 }
 
 // pulses runs every active voice for one sample and sums the voices per
@@ -755,21 +704,6 @@ func (y *Synth) pulses(bank *[MaxBanks]float32) {
 // process renders one chunk.
 func (y *Synth) process(dst []float32) {
 	np := len(y.paths)
-	if y.fanGain > 0 {
-		// The fan sine runs for the chunk in its own loop, before the sample
-		// loop. In the sample loop, the conversion of the phase to a table
-		// index and the table read are a long chain of dependent steps, which
-		// a small processor cannot overlap with the rest of the sample.
-		ph, inc := y.fanPhase, y.fanInc
-		for i := range dst {
-			ph += inc
-			if ph >= 1 {
-				ph--
-			}
-			y.fanSine[i] = dsp.Sine(ph)
-		}
-		y.fanPhase = ph
-	}
 	for i := range dst {
 		if cyl := y.crank.step(y.inc); cyl >= 0 {
 			y.fire(cyl)
@@ -793,7 +727,7 @@ func (y *Synth) process(dst []float32) {
 			sum += y.paths[p].process(x*am, y.pops.jump[p], y.pops.live[p])
 		}
 		sum += crack
-		sum += y.layers(&bank, np, y.fanSine[i])
+		sum += y.jet()
 		y.engS += sum
 		y.engE += sum * sum
 		y.rpmG += y.rpmStep
@@ -820,32 +754,11 @@ func (y *Synth) engineLevel(n int) {
 	}
 }
 
-// layers renders the intake, jet and mechanical layers. fan is the fan
-// sine of the sample.
-func (y *Synth) layers(bank *[MaxBanks]float32, np int, fan float32) float32 {
-	var pulse float32
-	for b := range np {
-		pulse += bank[b]
-	}
-	n2 := y.noise2.Bipolar()
+// jet renders the jet noise layer for one sample.
+func (y *Synth) jet() float32 {
 	// The jet noise follows the cut through a short ramp against clicks.
 	if d := y.gateTo - y.gate; d != 0 {
 		y.gate += max(-gateStep, min(gateStep, d))
 	}
-	out := y.jetBP.Process(n2) * y.jetGain * y.gate
-	if y.intakeGain > 0 {
-		out += y.intakeBP.Process(n2) * pulse * y.intakeGain
-	}
-	if y.fanGain > 0 {
-		out += fan * y.fanGain
-	}
-	if y.tickEnv > 1e-5 {
-		tick := y.tickHP.Process(n2)
-		if y.tickLow {
-			tick = y.tickLP.Process(tick)
-		}
-		out += tick * y.tickEnv
-		y.tickEnv *= y.tickDec
-	}
-	return out
+	return y.jetBP.Process(y.noise2.Bipolar()) * y.jetGain * y.gate
 }

@@ -65,16 +65,15 @@ type Spec struct {
 	FinalGearWaver float64 `toml:"final_gear_waver"`
 	CamSwitchRPM   float64 `toml:"cam_switch_rpm"`
 
-	Pulse      PulseSpec      `toml:"pulse"`
-	Exhaust    ExhaustSpec    `toml:"exhaust"`
-	Noise      NoiseSpec      `toml:"noise"`
-	Mechanical MechanicalSpec `toml:"mechanical"`
-	Pops       PopSpec        `toml:"pops"`
-	Overrun    OverrunSpec    `toml:"overrun"`
-	Idle       IdleSpec       `toml:"idle"`
-	Voice      VoiceSpec      `toml:"voice"`
-	Cylinders  []CylinderSpec `toml:"cylinder"`
-	Paths      []PathSpec     `toml:"path"`
+	Pulse     PulseSpec      `toml:"pulse"`
+	Exhaust   ExhaustSpec    `toml:"exhaust"`
+	Noise     NoiseSpec      `toml:"noise"`
+	Pops      PopSpec        `toml:"pops"`
+	Overrun   OverrunSpec    `toml:"overrun"`
+	Idle      IdleSpec       `toml:"idle"`
+	Voice     VoiceSpec      `toml:"voice"`
+	Cylinders []CylinderSpec `toml:"cylinder"`
+	Paths     []PathSpec     `toml:"path"`
 }
 
 // PulseSpec is the shape of one exhaust pulse.
@@ -172,27 +171,9 @@ type NoiseSpec struct {
 	// from AMIdle at idle to AMRedline at the redline along the same
 	// smoothstep. A value below 1 lowers the AM at idle and in the middle
 	// of the RPM range, and 1 keeps the full depth at idle.
-	AMIdle        float64 `toml:"am_idle"`
-	Jet           float64 `toml:"jet"`
-	JetHz         float64 `toml:"jet_hz"`
-	Intake        float64 `toml:"intake"`
-	IntakeHz      float64 `toml:"intake_hz"`
-	IntakeCamGain float64 `toml:"intake_cam_gain"`
-	IntakeCamHz   float64 `toml:"intake_cam_hz"`
-}
-
-// MechanicalSpec is the mechanical layer.
-type MechanicalSpec struct {
-	FanRatio  float64 `toml:"fan_ratio"`
-	FanBlades float64 `toml:"fan_blades"`
-	FanGain   float64 `toml:"fan_gain"`
-	TickGain  float64 `toml:"tick_gain"`
-	// TickHz is the cutoff in hertz of the valve tick high pass.
-	TickHz float64 `toml:"tick_hz"`
-	// TickLowPassHz is the cutoff in hertz of a two-pole low pass after
-	// the valve tick high pass, which band-limits the tick. Zero turns it
-	// off, so that the tick runs to the Nyquist frequency.
-	TickLowPassHz float64 `toml:"tick_lp_hz"`
+	AMIdle float64 `toml:"am_idle"`
+	Jet    float64 `toml:"jet"`
+	JetHz  float64 `toml:"jet_hz"`
 }
 
 // PopSpec is the pop model.
@@ -298,9 +279,6 @@ func DefaultSpec() Spec {
 			Steepening: 0.3, LowShelfHz: 250,
 		},
 		Noise: NoiseSpec{AM: 0.35, AMCutoffHz: 800, AMRedline: 0.25, AMIdle: 0.5, Jet: 0.02, JetHz: 1500},
-		Mechanical: MechanicalSpec{
-			TickHz: 3000, TickLowPassHz: 9000,
-		},
 		Pops: PopSpec{
 			Character: "sport", Gain: 1, BodyHz: 200, BodyMS: 35, JumpMS: 3,
 			Crack: 2.5, CrackMS: 16,
@@ -370,8 +348,6 @@ func (s *Spec) validateEngine() error {
 		return errors.New("noise am_cutoff_hz must be from 0 to 2000 and am_redline from 0 to 1")
 	case s.Noise.AMIdle < 0 || s.Noise.AMIdle > 1:
 		return errors.New("noise am_idle must be from 0 to 1")
-	case s.Mechanical.TickLowPassHz != 0 && (s.Mechanical.TickLowPassHz < 1000 || s.Mechanical.TickLowPassHz > 20000):
-		return errors.New("mechanical tick_lp_hz must be 0 or from 1000 to 20000")
 	}
 	return nil
 }

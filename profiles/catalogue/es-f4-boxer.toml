@@ -33,11 +33,6 @@ low_shelf_hz = 250
 am = 0.2
 jet = 0.02
 jet_hz = 1500
-intake = 0.08
-intake_hz = 281
-
-[mechanical]
-tick_gain = 0.01
 
 [pops]
 density = 0.15
@@ -68,8 +63,8 @@ hunt_hz = 1.2
 
 [voice]
 gain = 1
-output_db = 1.7
-idle_gain_db = 8.4
+output_db = 1.91
+idle_gain_db = 8.7
 idle_gain_rpm = 0
 
 [[cylinder]] # 1

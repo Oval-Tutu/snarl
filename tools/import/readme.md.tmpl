@@ -53,7 +53,6 @@ Files are relative to `engines/` of EngineLab.
 | `redline_rpm` | `redline` of the engine node. |
 | `limiter_rpm`, `limiter_ms` | `rev_limit` and `limiter_duration` of the ignition module, the cut capped at 500 ms. |
 | `limiter_kind` | `fuel`: engine-sim cuts every cylinder, as the tuned profiles read it. |
-| `noise.intake_hz` | Quarter-wave resonance of the mean intake `runner_length` in air, 343 / (4 L), from 150 to 1200 Hz. |
 
 The dump also holds bank angles, crank throws and journal angles, bore, stroke, rod length, compression ratio, intake and exhaust runner sizes, sound attenuation, the impulse response and the simulation frequency. snarl has no values for them, so the import does not use them.
 
@@ -73,9 +72,8 @@ The dump also holds bank angles, crank throws and journal angles, bore, stroke, 
 | `idle_rpm`, `redline_rpm` | `idle_rpm`, `redline_rpm`. |
 | `limiter_rpm`, `limiter_ms` | `ignition.rev_limit_rpm` (default the redline) and `ignition.limiter_duration_s` (default 0.08 s). |
 | `limiter_kind` | `ignition` when `limiter_keeps_fuel` is true, `fuel` otherwise. |
-| `noise.intake_hz` | Quarter-wave resonance of `intake.runner_length_mm`, as for engine-sim. |
 
-The exhaust preset is the `uses.exhaust` part of `parts/exhausts.yaml`, or the `exhaust` node of the engine, over the EngineLab defaults (480 mm primaries, 58 mm collector, 65 mm outlet, no silencer, no mid pipe). The YAML also holds bore, stroke, inertia, cams, the timing curve, injection, the vehicle and the voicing. snarl has no values for them, so the import does not use them.
+The exhaust preset is the `uses.exhaust` part of `parts/exhausts.yaml`, or the `exhaust` node of the engine, over the EngineLab defaults (480 mm primaries, 58 mm collector, 65 mm outlet, no silencer, no mid pipe). The YAML also holds bore, stroke, inertia, the intake runner, cams, the timing curve, injection, the vehicle and the voicing. snarl has no values for them, so the import does not use them.
 
 ### Defaults
 
@@ -85,8 +83,7 @@ Neither source has these values, so every profile has the same ones. They are ne
 | --- | --- |
 | `[pulse]` | `width_deg` 160, `attack` 25, `decay` 7, `part_load_db` -0.8, `cycle_variation` 0.04, `jitter` 0.003, `gain_variation` 0.12, `timing_variation_deg` 2 |
 | `[exhaust]` | `speed_of_sound` 565, `outlet_direct` 0.4, `steepening` 0.3, `overlap` 1.0, `low_shelf_db` 0, `low_shelf_hz` 250 |
-| `[noise]` | `am` 0.2, `jet` 0.02, `jet_hz` 1500, `intake` 0.08 |
-| `[mechanical]` | `tick_gain` 0.01, no fan |
+| `[noise]` | `am` 0.2, `jet` 0.02, `jet_hz` 1500 |
 | `[pops]` | `density` 0.15, `character` sport, `gain` 1, `body_hz` 200, `body_ms` 35, `jump_ms` 3, `crack` 2.5, `crack_ms` 16, weights pop 0.4, boom 0.2, crackle 0.3, burble 0.1 |
 | `[overrun]` | `level_db` -1.2, `idle_level_db` -1.2 |
 | `[idle]` | `fade_rpm` idle + 1400, `variation` 0.15, `timing_deg` 1, `imbalance` 0.25, `hunt` 0.004, `rock` 0.01, `hunt_hz` 1.2 |

@@ -71,12 +71,9 @@ func BenchmarkStates(b *testing.B) {
 type layerVariant struct {
 	name      string
 	overrides []string
-	// fan is true when the variant only applies to a profile with a fan.
-	fan bool
 }
 
-// layerVariants are the layers that a profile key can mute. The
-// intake, fan and tick layers skip their work at zero gain. The jet, AM
+// layerVariants are the layers that a profile key can mute. The jet, AM
 // and steepening keys set a gain of zero, but the model still runs their
 // filters and arithmetic, so their variants measure no saving. The
 // wall-loss shelf, the expansion chamber and the mode cutoff are keys of
@@ -84,13 +81,9 @@ type layerVariant struct {
 // no key. BenchmarkPrimitives gives their cost per instance.
 var layerVariants = []layerVariant{
 	{name: "full"},
-	{name: "no-intake", overrides: []string{"noise.intake=0"}},
-	{name: "no-fan", overrides: []string{"mechanical.fan_gain=0"}, fan: true},
-	{name: "no-tick", overrides: []string{"mechanical.tick_gain=0"}},
 	{name: "no-jet", overrides: []string{"noise.jet=0"}},
 	{name: "no-steep", overrides: []string{"exhaust.steepening=0"}},
 	{name: "no-am", overrides: []string{"noise.am=0"}},
-	{name: "no-gated", overrides: []string{"noise.intake=0", "mechanical.fan_gain=0", "mechanical.tick_gain=0"}},
 }
 
 // BenchmarkLayers measures full throttle at 4000 RPM with each layer
@@ -99,14 +92,7 @@ var layerVariants = []layerVariant{
 func BenchmarkLayers(b *testing.B) {
 	st := benchStates[0]
 	for _, name := range Profiles() {
-		base, err := LoadProfile(name)
-		if err != nil {
-			b.Fatal(err)
-		}
 		for _, v := range layerVariants {
-			if v.fan && base.spec.Mechanical.FanGain == 0 {
-				continue
-			}
 			p, err := LoadProfileWith(name, v.overrides...)
 			if err != nil {
 				b.Fatal(err)
@@ -118,31 +104,6 @@ func BenchmarkLayers(b *testing.B) {
 	}
 }
 
-// BenchmarkTickLowPass measures the cost of the valve tick low pass
-// (tick_lp_hz). For each profile, it runs the state of BenchmarkRender
-// (4000 RPM at throttle 0.7) and the states of BenchmarkStates with the low
-// pass off and at 9000 Hz, one after the other, so that the two runs of a
-// state interleave. The cost is the time at 9000 Hz minus the time with
-// the low pass off.
-func BenchmarkTickLowPass(b *testing.B) {
-	states := append([]benchState{{"render", func(Profile) Snapshot {
-		return Snapshot{RPM: 4000, Throttle: 0.7, Load: 0.7, Flags: FlagRunning}
-	}}}, benchStates...)
-	for _, name := range Profiles() {
-		for _, st := range states {
-			for _, hz := range []string{"0", "9000"} {
-				p, err := LoadProfileWith(name, "mechanical.tick_lp_hz="+hz)
-				if err != nil {
-					b.Fatal(err)
-				}
-				b.Run(name+"/"+st.name+"/tick_lp_hz="+hz, func(b *testing.B) {
-					benchBlocks(b, newEngine(b, p), st.snap(p))
-				})
-			}
-		}
-	}
-}
-
 // sink keeps the primitive results live.
 var sink float32
 
@@ -150,8 +111,7 @@ var sink float32
 // override can mute, for one instance over one 256-frame block. A path
 // runs one wall-loss shelf, one expansion chamber (one delay write
 // and two reads) and a mode cutoff of two biquads per sample. The jet runs
-// one band-pass biquad and one noise draw per sample for the engine. The
-// fan-sine case is the fan layer, for comparison with its mute variant.
+// one band-pass biquad and one noise draw per sample for the engine.
 func BenchmarkPrimitives(b *testing.B) {
 	in := make([]float32, blockFrames)
 	nz := dsp.NewNoise(7)
@@ -188,21 +148,6 @@ func BenchmarkPrimitives(b *testing.B) {
 				w := x + 0.6*ch.Read(2*d-1)
 				ch.Write(w)
 				acc += 0.4 * ch.Read(d)
-			}
-		}
-		sink = acc
-	})
-	b.Run("fan-sine", func(b *testing.B) {
-		// The fan layer: a phase accumulator into the sine table.
-		const inc = 0.0275
-		var phase, acc float32
-		for b.Loop() {
-			for range blockFrames {
-				phase += inc
-				if phase >= 1 {
-					phase--
-				}
-				acc += dsp.Sine(phase)
 			}
 		}
 		sink = acc

@@ -88,7 +88,7 @@ func TestEngineSimDump(t *testing.T) {
 	if len(e.Paths) != 2 || e.Paths[0].CollectorM != 3 || e.Paths[0].Gain != 0.5 || e.Paths[1].Gain != 1 {
 		t.Errorf("paths %+v", e.Paths)
 	}
-	if e.IdleRPM != 1200 || e.LimiterMS != 500 || e.Layout != "V3, 90 degree" || intakeHz(e.IntakeRunnerM) != 343 {
-		t.Errorf("idle %v, limiter %v ms, layout %q, intake %v Hz", e.IdleRPM, e.LimiterMS, e.Layout, intakeHz(e.IntakeRunnerM))
+	if e.IdleRPM != 1200 || e.LimiterMS != 500 || e.Layout != "V3, 90 degree" {
+		t.Errorf("idle %v, limiter %v ms, layout %q", e.IdleRPM, e.LimiterMS, e.Layout)
 	}
 }

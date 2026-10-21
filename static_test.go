@@ -22,7 +22,7 @@ import (
 
 // staticSilent are the overrides of the silent engine.
 var staticSilent = []string{
-	"noise.am=0", "noise.jet=0", "noise.intake=0", "mechanical.tick_gain=0",
+	"noise.am=0", "noise.jet=0",
 	"pulse.cycle_variation=0", "pulse.jitter=0",
 	"idle.variation=0", "idle.timing_deg=0", "idle.hunt=0", "idle.rock=0", "idle.imbalance=0",
 	"pops.density=0",
@@ -33,8 +33,6 @@ var staticLayers = []struct{ name, keys string }{
 	{"silent", ""},
 	{"am", "noise.am"},
 	{"jet", "noise.jet"},
-	{"intake", "noise.intake"},
-	{"tick", "mechanical.tick_gain"},
 	{"cycle variation", "pulse.cycle_variation"},
 	{"jitter", "pulse.jitter"},
 	{"all", "all"},
@@ -97,22 +95,22 @@ func TestStaticLayerFloor(t *testing.T) {
 }
 
 // staticFixes are the variants of TestStaticFixFloor, each named by its
-// overrides. "before" has neither option A nor option B, and "final" has
-// the profile values.
+// overrides. "before" has the full AM depth at idle (no option B), and
+// "final" has the profile values. Option A was the low pass of the valve
+// tick, which is no longer part of the model.
 var staticFixes = []struct {
 	name      string
 	overrides []string
 }{
-	{"before", []string{"noise.am_idle=1", "mechanical.tick_lp_hz=0"}},
-	{"A", []string{"mechanical.tick_lp_hz=0"}},
-	{"B", []string{"noise.am_idle=1"}},
+	{"before", []string{"noise.am_idle=1"}},
 	{"final", nil},
 }
 
 // staticFixFloor is the highest final floor in dB that TestStaticFixFloor
-// accepts at the idle and the 3000 RPM holds of holds-t100. With options A
-// and B, the floor was -18.3 and -15.0 dB (flat12), -21.6 and -21.5 dB
-// (flat6), -22.4 and -21.4 dB (inline4) and -18.1 and -16.8 dB (v8).
+// accepts at the idle and the 3000 RPM holds of holds-t100. With option B
+// and no valve tick, the floor was -18.3 and -15.1 dB (flat12), -22.3 and
+// -23.3 dB (flat6), -22.9 and -22.7 dB (inline4) and -18.2 and -17.0 dB
+// (v8).
 var staticFixFloor = map[string][2]float64{
 	"flat12":  {-17.5, -14.5},
 	"flat6":   {-21, -21},
@@ -125,7 +123,7 @@ var staticFixFloor = map[string][2]float64{
 // staticFixes and for the engine-sim reference in out/reference/engine-sim
 // when it is present. At the idle and the 3000 RPM holds of each tuned
 // profile, the final floor is at most staticFixFloor and at least 3 dB
-// below the floor before options A and B.
+// below the floor before option B.
 func TestStaticFixFloor(t *testing.T) {
 	if testing.Short() {
 		t.Skip("renders 24 scenarios")

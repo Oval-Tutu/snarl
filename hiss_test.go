@@ -170,11 +170,9 @@ func hissProfile(t *testing.T, name string, overrides ...string) (Profile, strin
 // the noise AM of HEAD a553aef, the worst holds were at -12.2 and 19.4 dB
 // (flat6), -14.6 and 16.1 dB (inline4), -15.2 and 19.8 dB (v8), -14.4
 // and 17.1 dB (flat12), -29.4 and 23.4 dB (es-v12-60-aero) and -39.3 and
-// 24.1 dB (el-v12-60-aero). The valve tick low pass (tick_lp_hz) raises
-// the 4 to 12 kHz level of the top hold of es-v12-60-aero and
-// el-v12-60-aero by 1.3 and 1.4 dB, to -37.4 and -48.2 dB. The tick, the
-// jet and the intake noise share one noise source, and the low pass
-// changes the phase of the tick against the other two.
+// 24.1 dB (el-v12-60-aero). With no valve tick and no intake noise, the
+// 4 to 12 kHz level of the top hold of es-v12-60-aero and el-v12-60-aero
+// is -40.5 and -52.0 dB.
 var hissBounds = map[string]struct{ hf, hnr float64 }{
 	"flat12":         {-17.5, 19},
 	"flat6":          {-14, 23.5},

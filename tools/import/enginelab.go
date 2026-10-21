@@ -22,10 +22,7 @@ type elEngine struct {
 	IdleRPM       float64 `json:"idle_rpm"`
 	RedlineRPM    float64 `json:"redline_rpm"`
 	BankAngleDeg  float64 `json:"bank_angle_deg"`
-	Intake        struct {
-		RunnerLengthMM float64 `json:"runner_length_mm"`
-	} `json:"intake"`
-	Ignition struct {
+	Ignition      struct {
 		RevLimitRPM *float64 `json:"rev_limit_rpm"`
 		LimiterS    *float64 `json:"limiter_duration_s"`
 		KeepsFuel   bool     `json:"limiter_keeps_fuel"`
@@ -148,10 +145,7 @@ func fromEngineLab(rel string, d *elEngine, presets map[string]map[string]any) (
 	e := engine{
 		ID: n.id, Project: "EngineLab", File: rel, Description: n.description,
 		IdleRPM: d.IdleRPM, RedlineRPM: d.RedlineRPM, LimiterRPM: d.RedlineRPM, LimiterMS: 80,
-		LimiterKind: "fuel", Crossover: "none", IntakeRunnerM: d.Intake.RunnerLengthMM / 1000,
-	}
-	if d.Intake.RunnerLengthMM <= 0 {
-		e.IntakeRunnerM = 0.3
+		LimiterKind: "fuel", Crossover: "none",
 	}
 	if v := d.Ignition.RevLimitRPM; v != nil {
 		e.LimiterRPM = *v

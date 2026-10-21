@@ -20,7 +20,7 @@ import (
 // silentEngine are the overrides that turn off every random and noise
 // layer and the pops.
 var silentEngine = []string{
-	"noise.am=0", "noise.jet=0", "noise.intake=0", "mechanical.tick_gain=0",
+	"noise.am=0", "noise.jet=0",
 	"pulse.cycle_variation=0", "pulse.jitter=0",
 	"idle.variation=0", "idle.timing_deg=0", "idle.hunt=0", "idle.rock=0", "idle.imbalance=0",
 	"pops.density=0",
@@ -129,46 +129,35 @@ func TestStaticIntegerPeriod(t *testing.T) {
 // throttle 1 and 0.5. Each pulse starts at its fractional sample position
 // with a band-limited corner and ends at zero, so that the pulses repeat
 // from cycle to cycle as in the integer-period holds of
-// TestStaticIntegerPeriod. With the fan off, the residual must stay at or
-// below staticFractionalBound. The flat6 fan sine runs on its own phase,
-// which drifts slowly against the crank, so the log also gives the
-// residual with the fan on, which is not bounded. The bands are relative
-// to the signal in the same band.
+// TestStaticIntegerPeriod. The residual must stay at or below
+// staticFractionalBound. The bands are relative to the signal in the same
+// band.
 func TestStaticFractionalStart(t *testing.T) {
 	if testing.Short() {
-		t.Skip("renders 48 holds")
+		t.Skip("renders 24 holds")
 	}
 	for _, name := range snarl.Profiles() {
-		for _, fan := range []bool{false, true} {
-			o := silentEngine
-			label := "fan off"
-			if !fan {
-				o = append(o[:len(o):len(o)], "mechanical.fan_gain=0")
-			} else {
-				label = "fan on "
-			}
-			p, err := snarl.LoadProfileWith(name, o...)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, rpm := range staticHolds(p) {
-				var line string
-				for _, thr := range []float64{1, 0.5} {
-					r, ok := analysis.Residual(staticHold(t, p, rpm, thr), staticRate, rpm)
-					if !ok {
-						t.Fatalf("%s %.0f RPM: no residual", name, rpm)
-					}
-					line += fmt.Sprintf(" | throttle %.1f: %6.1f dB, bands", thr, r.ResidualDB)
-					for _, b := range r.Bands {
-						line += fmt.Sprintf(" %6.1f", b.InBandDB)
-					}
-					if !fan && r.ResidualDB > staticFractionalBound {
-						t.Errorf("%s %.0f RPM throttle %.1f: residual %.1f dB, want at most %.1f dB",
-							name, rpm, thr, r.ResidualDB, staticFractionalBound)
-					}
+		p, err := snarl.LoadProfileWith(name, silentEngine...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, rpm := range staticHolds(p) {
+			var line string
+			for _, thr := range []float64{1, 0.5} {
+				r, ok := analysis.Residual(staticHold(t, p, rpm, thr), staticRate, rpm)
+				if !ok {
+					t.Fatalf("%s %.0f RPM: no residual", name, rpm)
 				}
-				t.Logf("%-8s %s %5.0f RPM%s", name, label, rpm, line)
+				line += fmt.Sprintf(" | throttle %.1f: %6.1f dB, bands", thr, r.ResidualDB)
+				for _, b := range r.Bands {
+					line += fmt.Sprintf(" %6.1f", b.InBandDB)
+				}
+				if r.ResidualDB > staticFractionalBound {
+					t.Errorf("%s %.0f RPM throttle %.1f: residual %.1f dB, want at most %.1f dB",
+						name, rpm, thr, r.ResidualDB, staticFractionalBound)
+				}
 			}
+			t.Logf("%-8s %5.0f RPM%s", name, rpm, line)
 		}
 	}
 }
@@ -329,7 +318,7 @@ func TestStaticWholeSamplePops(t *testing.T) {
 }
 
 // staticFractionalBound is the highest residual in dB of the silent
-// engine with the fan off that TestStaticFractionalStart accepts. With
+// engine that TestStaticFractionalStart accepts. With
 // each pulse on the whole sample before it, the residual was -25 to -51
 // dB.
 const staticFractionalBound = -75.0

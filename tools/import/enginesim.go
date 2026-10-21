@@ -22,9 +22,6 @@ type esDump struct {
 	Banks []struct {
 		AngleDeg float64 `json:"angle_deg"`
 	} `json:"banks"`
-	Intakes []struct {
-		RunnerLengthM float64 `json:"runner_length_m"`
-	} `json:"intakes"`
 	Exhaust []struct {
 		LengthM         float64 `json:"length_m"`
 		PrimaryTubeM    float64 `json:"primary_tube_length_m"`
@@ -36,7 +33,6 @@ type esDump struct {
 		SparkDeg       float64 `json:"spark_deg"`
 		SparkEnabled   bool    `json:"spark_enabled"`
 		ExhaustSystem  int     `json:"exhaust_system"`
-		Intake         int     `json:"intake"`
 		HeaderPrimaryM float64 `json:"header_primary_length_m"`
 	} `json:"cylinders"`
 }
@@ -178,13 +174,6 @@ func fromEngineSim(rel string, d *esDump) (engine, error) {
 			ChamberM: defaultChamberM, ChamberArea: defaultChamberArea, Gain: gain,
 		})
 	}
-	var runner float64
-	for _, c := range d.Cylinders {
-		if c.Intake >= 0 && c.Intake < len(d.Intakes) {
-			runner += d.Intakes[c.Intake].RunnerLengthM
-		}
-	}
-	e.IntakeRunnerM = runner / float64(len(d.Cylinders))
 	return e, nil
 }
 

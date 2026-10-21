@@ -111,7 +111,6 @@ gain = 1
 		"bad am cut":   strings.Replace(good, "[[cylinder]]", "[noise]\nam_cutoff_hz = 3000\n[[cylinder]]", 1),
 		"bad am top":   strings.Replace(good, "[[cylinder]]", "[noise]\nam_redline = 1.5\n[[cylinder]]", 1),
 		"bad am idle":  strings.Replace(good, "[[cylinder]]", "[noise]\nam_idle = -0.1\n[[cylinder]]", 1),
-		"bad tick lp":  strings.Replace(good, "[[cylinder]]", "[mechanical]\ntick_lp_hz = 500\n[[cylinder]]", 1),
 		"bad overrun":  strings.Replace(good, "[[cylinder]]", "[overrun]\nlevel_db = 10\n[[cylinder]]", 1),
 		"bad idle":     strings.Replace(good, "[[cylinder]]", "[idle]\nfade_rpm = 500\n[[cylinder]]", 1),
 		"bad hunt":     strings.Replace(good, "[[cylinder]]", "[idle]\nhunt = 0.5\n[[cylinder]]", 1),
@@ -124,10 +123,16 @@ gain = 1
 			t.Errorf("%s: no error", name)
 		}
 	}
-	// The removed keys are unknown keys.
-	for _, kv := range []string{"[noise]\nair = 0.03", "[noise]\nair_cutoff_hz = 1800", "[voice]\ntier1_db = 1", "[voice]\ntier1_idle_gain_db = 1"} {
+	// The removed keys are unknown keys, and the removed [mechanical] table
+	// is an unknown table.
+	for _, kv := range []string{
+		"[noise]\nair = 0.03", "[noise]\nair_cutoff_hz = 1800", "[voice]\ntier1_db = 1", "[voice]\ntier1_idle_gain_db = 1",
+		"[noise]\nintake = 0.08", "[noise]\nintake_hz = 420", "[noise]\nintake_cam_gain = 1.2", "[noise]\nintake_cam_hz = 560",
+		"[mechanical]\ntick_gain = 0.01", "[mechanical]\ntick_hz = 3000", "[mechanical]\ntick_lp_hz = 9000",
+		"[mechanical]\nfan_ratio = 1.8", "[mechanical]\nfan_blades = 5", "[mechanical]\nfan_gain = 0.02",
+	} {
 		_, err := parseProfile(strings.Replace(good, "[[cylinder]]", kv+"\n[[cylinder]]", 1))
-		if err == nil || !strings.Contains(err.Error(), "unknown key") {
+		if err == nil || !strings.Contains(err.Error(), "unknown key") && !strings.Contains(err.Error(), "unknown table mechanical") {
 			t.Errorf("%q: got %v, want an unknown key error", kv, err)
 		}
 	}
