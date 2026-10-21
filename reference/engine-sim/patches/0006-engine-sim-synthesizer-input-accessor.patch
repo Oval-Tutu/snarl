@@ -1,0 +1,11 @@
+--- a/include/piston_engine_simulator.h
++++ b/include/piston_engine_simulator.h
+@@ -34,6 +34,8 @@
+         int getFluidSimulationFrequency() const { return m_fluidSimulationSteps * getSimulationFrequency(); }
+
+         virtual double getAverageOutputSignal() const override;
++
++        inline const double *getExhaustFlowStagingBuffer() const { return m_exhaustFlowStagingBuffer; }
+
+         DerivativeFilter m_derivativeFilter;
+

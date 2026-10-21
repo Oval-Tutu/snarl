@@ -13,6 +13,7 @@
 #include "include/impulse_response.h"
 #include "include/intake.h"
 #include "include/piston.h"
+#include "include/piston_engine_simulator.h"
 #include "include/simulator.h"
 #include "include/units.h"
 
@@ -36,6 +37,15 @@
 
 namespace fs = std::filesystem;
 
+// Counts every rand() call of the process, for the --dump-synth record of
+// the calls outside the synthesiser. glibc defines rand() as (int) random(),
+// so this definition returns the same values as the glibc one.
+static long long g_randCalls = 0;
+extern "C" int rand(void) noexcept {
+    ++g_randCalls;
+    return static_cast<int>(random());
+}
+
 namespace {
 
 constexpr int SynthRate = 44100;
@@ -55,8 +65,10 @@ struct Options {
     std::string out;
     std::string csv;
     std::string dumpJson;
+    std::string dumpSynth;
     std::string dataDir = ENGINE_SIM_DATA_DIR;
     std::vector<Segment> segments;
+    bool noNoise = false;
     double settle = 3.0;
     double idleSeconds = 8.0;
     double volume = 1.0;
@@ -91,6 +103,9 @@ void usage() {
         "  --dump-json PATH   write the engine that the script builds as JSON, with the idle rpm\n"
         "                     of a free run at speed control 0, instead of a WAV\n"
         "  --idle-seconds S   length of that free run (default 8); the last 2 s give the idle rpm\n"
+        "  --dump-synth DIR   also write the synthesiser input of each exhaust channel, its\n"
+        "                     parameters and its whole 44.1 kHz output to DIR\n"
+        "  --no-noise         set the synthesiser jitter and air noise to 0, for a deterministic output\n"
         "\n"
         "THROTTLE is engine-sim speed control in 0..1, the value of the app's Q/W/E/R keys.\n";
 }
@@ -114,12 +129,14 @@ Options parseArgs(int argc, char **argv) {
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "-h" || a == "--help") { usage(); std::exit(0); }
+        if (a == "--no-noise") { o.noNoise = true; continue; }
         if (i + 1 >= argc) die("missing value for " + a);
         const std::string v = argv[++i];
         if (a == "--script") o.script = v;
         else if (a == "--out") o.out = v;
         else if (a == "--csv") o.csv = v;
         else if (a == "--dump-json") o.dumpJson = v;
+        else if (a == "--dump-synth") o.dumpSynth = v;
         else if (a == "--idle-seconds") o.idleSeconds = parseNumbers(v, 1, a)[0];
         else if (a == "--data-dir") o.dataDir = v;
         else if (a == "--settle") o.settle = parseNumbers(v, 1, a)[0];
@@ -141,7 +158,9 @@ Options parseArgs(int argc, char **argv) {
         else { usage(); die("unknown option " + a); }
     }
     if (!o.dumpJson.empty()) {
-        if (!o.out.empty() || !o.segments.empty() || !o.csv.empty()) die("--dump-json takes no --out, --csv or segments");
+        if (!o.out.empty() || !o.segments.empty() || !o.csv.empty() || !o.dumpSynth.empty()) {
+            die("--dump-json takes no --out, --csv, --dump-synth or segments");
+        }
         if (o.idleSeconds < 3) die("--idle-seconds must be at least 3");
         // The idle run: no pre-roll, the starter cranks for 0.5 s, then the engine runs free at speed control 0.
         o.out = o.dumpJson;
@@ -351,6 +370,74 @@ void writeDump(const fs::path &path, Engine *engine, double idleRpm, double idle
     if (!f) die("write failed: " + path.string());
 }
 
+// The --dump-synth record. input_N.f64 holds the input of channel N, one
+// little-endian float64 per simulation step, as
+// PistonEngineSimulator::writeToSynthesizer passes it to
+// Synthesizer::writeInput. Each frame records its step count and its render
+// blocks: the samples that Synthesizer::renderAudio() rendered, and the
+// rand() calls outside the synthesiser since the previous block.
+struct SynthDump {
+    struct Channel {
+        std::string impulseResponse;
+        std::string impulseResponsePath;
+        size_t fileSamples = 0;
+        int taps = 0;
+        double volume = 0;
+    };
+    fs::path dir;
+    std::vector<std::ofstream> inputs;
+    std::vector<Channel> channels;
+    std::ostringstream frames;
+    long long randMark = 0;
+    long long frameCount = 0;
+};
+
+void writeSynthDump(SynthDump &d, Synthesizer &synth, Engine *engine, const fs::path &script, bool noNoise,
+                    const std::vector<int16_t> &rendered, size_t settleSamples, size_t keptSamples) {
+    for (std::ofstream &in : d.inputs) {
+        in.close();
+        if (!in) die("write failed in " + d.dir.string());
+    }
+    writeWav16((d.dir / "output.wav").string(), std::vector<float>(rendered.begin(), rendered.end()), SynthRate);
+
+    const Synthesizer::AudioParameters a = synth.getAudioParameters();
+    std::ofstream f(d.dir / "synth.json");
+    if (!f) die("cannot write " + (d.dir / "synth.json").string());
+    f.precision(17);
+    f << "{\n  \"engine\": " << jsonString(engine->getName())
+      << ",\n  \"script\": " << jsonString(script.filename().string())
+      << ",\n  \"no_noise\": " << (noNoise ? "true" : "false")
+      << ",\n  \"simulation_frequency_hz\": " << engine->getSimulationFrequency()
+      << ",\n  \"input_sample_rate_hz\": " << synth.getInputSampleRate()
+      << ",\n  \"audio_sample_rate_hz\": " << synth.m_audioSampleRate
+      << ",\n  \"input_channel_count\": " << synth.m_inputChannelCount
+      << ",\n  \"input_buffer_size\": " << synth.m_inputBufferSize
+      << ",\n  \"audio_buffer_size\": " << synth.m_audioBufferSize
+      << ",\n  \"audio_parameters\": { \"volume\": " << a.volume << ", \"convolution\": " << a.convolution
+      << ", \"dF_F_mix\": " << a.dF_F_mix << ", \"inputSampleNoise\": " << a.inputSampleNoise
+      << ", \"inputSampleNoiseFrequencyCutoff\": " << a.inputSampleNoiseFrequencyCutoff
+      << ", \"airNoise\": " << a.airNoise << ", \"airNoiseFrequencyCutoff\": " << a.airNoiseFrequencyCutoff
+      << ", \"levelerTarget\": " << a.levelerTarget << ", \"levelerMaxGain\": " << a.levelerMaxGain
+      << ", \"levelerMinGain\": " << a.levelerMinGain << " }"
+      << ",\n  \"leveling_filter\": { \"p_target\": " << synth.m_levelingFilter.p_target
+      << ", \"p_maxLevel\": " << synth.m_levelingFilter.p_maxLevel
+      << ", \"p_minLevel\": " << synth.m_levelingFilter.p_minLevel << " }"
+      << ",\n  \"derivative_dt\": " << synth.m_filters[0].derivative.m_dt
+      << ",\n  \"input_dc_filter_dt\": " << synth.m_filters[0].inputDcFilter.m_dt
+      << ",\n  \"channels\": [";
+    for (size_t i = 0; i < d.channels.size(); ++i) {
+        const SynthDump::Channel &c = d.channels[i];
+        f << (i ? "," : "") << "\n    { \"input\": \"input_" << i << ".f64\", \"impulse_response\": "
+          << jsonString(c.impulseResponse) << ", \"impulse_response_path\": " << jsonString(c.impulseResponsePath)
+          << ", \"impulse_response_copy\": \"ir_" << i << ".wav\", \"impulse_response_file_samples\": " << c.fileSamples
+          << ", \"impulse_response_taps\": " << c.taps << ", \"impulse_response_volume\": " << c.volume << " }";
+    }
+    f << "\n  ],\n  \"output\": \"output.wav\", \"output_samples\": " << rendered.size()
+      << ", \"settle_samples\": " << settleSamples << ", \"kept_samples\": " << keptSamples
+      << ",\n  \"frames\": [" << d.frames.str() << "\n  ]\n}\n";
+    if (!f) die("write failed: " + (d.dir / "synth.json").string());
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -359,6 +446,7 @@ int main(int argc, char **argv) {
     const fs::path script = fs::absolute(opt.script);
     const fs::path out = fs::absolute(opt.out);
     const fs::path csvPath = opt.csv.empty() ? fs::path() : fs::absolute(opt.csv);
+    const fs::path dumpDir = opt.dumpSynth.empty() ? fs::path() : fs::absolute(opt.dumpSynth);
     if (!fs::exists(script)) die("script not found: " + script.string());
     if (opt.dataDir.empty() || !fs::exists(fs::path(opt.dataDir) / "es" / "engine_sim.mr")) {
         die("engine-sim es/ library not found; pass --data-dir");
@@ -404,7 +492,17 @@ int main(int argc, char **argv) {
     audio.airNoise = static_cast<float>(engine->getInitialNoise());
     audio.dF_F_mix = static_cast<float>(engine->getInitialHighFrequencyGain());
     audio.volume = static_cast<float>(opt.volume);
+    if (opt.noNoise) {
+        audio.inputSampleNoise = 0;
+        audio.airNoise = 0;
+    }
     synth.setAudioParameters(audio);
+
+    SynthDump dump;
+    if (!opt.dumpSynth.empty()) {
+        dump.dir = dumpDir;
+        fs::create_directories(dump.dir);
+    }
 
     for (int i = 0; i < engine->getExhaustSystemCount(); ++i) {
         ImpulseResponse *ir = engine->getExhaustSystem(i)->getImpulseResponse();
@@ -413,6 +511,18 @@ int main(int argc, char **argv) {
         const std::vector<int16_t> samples = readWav16(irPath.string());
         synth.initializeImpulseResponse(samples.data(), static_cast<unsigned int>(samples.size()),
             static_cast<float>(ir->getVolume()), i);
+        if (!opt.dumpSynth.empty()) {
+            const fs::path file = fs::canonical(irPath);
+            const fs::path copy = dump.dir / ("ir_" + std::to_string(i) + ".wav");
+            // The package files are read-only, so the copy of an earlier dump is too.
+            fs::remove(copy);
+            fs::copy_file(file, copy);
+            fs::permissions(copy, fs::perms::owner_write, fs::perm_options::add);
+            dump.channels.push_back({ fs::relative(file, fs::canonical(work / "es")).string(), file.string(),
+                samples.size(), synth.m_filters[i].convolution.getSampleCount(), static_cast<float>(ir->getVolume()) });
+            dump.inputs.emplace_back(dump.dir / ("input_" + std::to_string(i) + ".f64"), std::ios::binary);
+            if (!dump.inputs.back()) die("cannot write in " + dump.dir.string());
+        }
     }
 
     fs::remove_all(work);
@@ -468,8 +578,16 @@ int main(int argc, char **argv) {
         engine->setSpeedControl(c.throttle);
 
         sim->startFrame(frame);
+        long long frameSteps = 0;
         while (sim->simulateStep()) {
             ++step;
+            ++frameSteps;
+            if (!opt.dumpSynth.empty()) {
+                const double *in = static_cast<PistonEngineSimulator *>(sim)->getExhaustFlowStagingBuffer();
+                for (size_t i = 0; i < dump.inputs.size(); ++i) {
+                    dump.inputs[i].write(reinterpret_cast<const char *>(&in[i]), sizeof(double));
+                }
+            }
             if (step * timestep > endTime - 2.0) {
                 idleSum += engine->getRpm();
                 ++idleSteps;
@@ -484,14 +602,28 @@ int main(int argc, char **argv) {
         }
         sim->endFrame();
 
+        if (!opt.dumpSynth.empty()) {
+            dump.frames << (dump.frameCount++ ? ",\n    " : "\n    ") << "{ \"steps\": " << frameSteps << ", \"blocks\": [";
+        }
+        int blocks = 0;
         while (synth.m_inputChannels[0].data.size() > 0) {
+            const long long randBefore = g_randCalls;
             synth.renderAudio();
             const int n = static_cast<int>(synth.m_audioBuffer.size());
+            if (!opt.dumpSynth.empty()) {
+                // Synthesizer::renderAudio(int) calls rand() twice per channel and sample.
+                if (g_randCalls - randBefore != 2LL * synth.m_inputChannelCount * n) {
+                    die("unexpected rand() calls in a synthesiser block");
+                }
+                dump.frames << (blocks++ ? ", " : "") << "[" << n << ", " << randBefore - dump.randMark << "]";
+                dump.randMark = g_randCalls;
+            }
             if (n > static_cast<int>(chunk.size())) chunk.resize(n);
             synth.readAudioOutput(n, chunk.data());
             rendered.insert(rendered.end(), chunk.begin(), chunk.begin() + n);
             synth.endInputBlock();
         }
+        if (!opt.dumpSynth.empty()) dump.frames << "] }";
 
         t = step * timestep;
         if (t <= opt.settle) settleSamples = rendered.size();
@@ -510,6 +642,7 @@ int main(int argc, char **argv) {
     const size_t start = std::min(settleSamples, rendered.size());
     std::vector<int16_t> kept(rendered.begin() + start, rendered.begin() + std::min(rendered.size(), start + want));
     writeWav16(out.string(), resample(kept, SynthRate, opt.rate), opt.rate);
+    if (!opt.dumpSynth.empty()) writeSynthDump(dump, synth, engine, script, opt.noNoise, rendered, start, kept.size());
 
     std::cerr << "engine-sim-render: " << engine->getName() << ", " << cylinders << " cylinders, "
               << engine->getExhaustSystemCount() << " exhaust systems, sim " << sim->getSimulationFrequency()

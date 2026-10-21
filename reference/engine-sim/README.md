@@ -53,6 +53,19 @@ A scenario is a list of segments on the command line. The segments run in the gi
 | `--csv PATH` | none | Per-step CSV: `time_s` (0 at the end of the pre-roll), `rpm`, `throttle`, `dyno_torque_nm`, then `runner_pressure_pa_N` (the exhaust runner pressure that feeds the sound) and `exhaust_flow_mol_N` for each cylinder. |
 | `--csv-every N` | 1 | Write every Nth simulation step to the CSV. |
 | `--data-dir DIR` | build output | Directory that contains `es/`. |
+| `--dump-synth DIR` | none | Also write the synthesiser record to `DIR` (see below). |
+| `--no-noise` | off | Set the synthesiser jitter (`inputSampleNoise`) and air noise (`airNoise`) to 0, so that the output does not depend on the random numbers. |
+
+### Synthesiser record
+
+`--dump-synth DIR` writes what the synthesiser receives and what it returns, for the Go port in `internal/esynth` (`docs/research/esynth-port.md`):
+
+- `input_N.f64`: the input of exhaust channel `N`, one little-endian float64 per simulation step, as `PistonEngineSimulator::writeToSynthesizer` passes it to `Synthesizer::writeInput`.
+- `ir_N.wav`: a copy of the impulse response file of channel `N`.
+- `output.wav`: the whole synthesiser output at 44.1 kHz, with the pre-roll and before the conversion to `--rate`.
+- `synth.json`: the rates, buffer sizes, audio parameters, leveller settings, filter time steps, the impulse response of each channel (path relative to `es/`, file samples, taps after the trim, volume), the pre-roll and kept sample counts, and each frame: its simulation steps and its render blocks. A block is the samples that `Synthesizer::renderAudio()` rendered and the `rand()` calls outside the synthesiser since the previous block.
+
+The driver counts the `rand()` calls with its own definition of `rand()`, which returns `random()` as glibc does, so the values do not change. `go run ./tools/esynth --dump DIR` runs the port on a record.
 
 ### Engine dump
 
@@ -87,6 +100,7 @@ Upstream scripts of the embedded snarl profiles (`profiles/README.md`):
 - `0003` (simple-2d-constraint-solver): adds missing includes.
 - `0004`: adds read accessors for the spark plug angles, the rev limit, the limiter duration and the idle throttle plate position, for `--dump-json`.
 - `0005`: sets the synthesiser latency to 0 in its constructor. Upstream reads it uninitialised in the first frame, so the first frame had a random step count, and an engine near a stall at idle could stall or run depending on the memory layout.
+- `0006`: adds a read accessor for the exhaust staging buffer of `PistonEngineSimulator`, the synthesiser input of the last step, for `--dump-synth`.
 
 The build uses Clang. Upstream uses explicit template specialisations inside class scope, which GCC rejects.
 
