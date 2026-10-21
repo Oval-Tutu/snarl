@@ -47,6 +47,9 @@ func meanSquare(x []float64) float64 {
 // small RPM offset from the nominal RPM, gives a residual below -100 dB in
 // total and in each band, and that the measurement finds the RPM.
 func TestResidualPeriodic(t *testing.T) {
+	if raceEnabled {
+		t.Skip("minutes under the race detector")
+	}
 	for _, c := range []struct {
 		rate          int
 		rpm, nominal  float64
@@ -82,6 +85,9 @@ func TestResidualPeriodic(t *testing.T) {
 // 500 Hz to 16 kHz. The interpolator passes the noise up to about 21 kHz
 // of the 24 kHz, so the expected total is the noise power below 22.5 kHz.
 func TestResidualWhiteNoise(t *testing.T) {
+	if raceEnabled {
+		t.Skip("minutes under the race detector")
+	}
 	const rate = 48000
 	for _, c := range []struct {
 		rpm, noiseDB float64
@@ -124,6 +130,9 @@ func TestResidualWhiteNoise(t *testing.T) {
 // noise gives a flat sector power, and noise only in the first half of
 // each cycle gives a peak of +3 dB and a trough at the floor.
 func TestResidualAM(t *testing.T) {
+	if raceEnabled {
+		t.Skip("minutes under the race detector")
+	}
 	const rate, rpm = 48000, 1500
 	for _, gated := range []bool{false, true} {
 		x := periodic(rate, rpm, 8000, 3, 5)
