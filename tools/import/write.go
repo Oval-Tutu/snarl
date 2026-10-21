@@ -16,10 +16,11 @@ import (
 const (
 	defaultChamberM    = 0.3
 	defaultChamberArea = 7.0
-	// idleGap is the calibration target of idle_gain_db: the full-throttle
-	// hold at the idle RPM is this many LU below the hold at the top RPM,
-	// near the middle of the four tuned profiles.
-	idleGap = 2.0
+	// kneeMargin is the calibration target of leveller_db: the
+	// closed-throttle hold at the idle RPM is this many dB below the knee
+	// of the leveller, near the four tuned profiles, so that the leveller
+	// leaves the idle character alone.
+	kneeMargin = 3.0
 )
 
 // sections are the fixed defaults of every imported profile, in profile
@@ -79,9 +80,8 @@ hunt_hz = 1.2
 
 [voice]
 gain = 1
+leveller_db = %s
 output_db = %s
-idle_gain_db = %s
-idle_gain_rpm = 0
 `
 
 // pathDefaults are the path values that neither source has.
@@ -112,7 +112,7 @@ func profileTOML(e *engine) string {
 	fmt.Fprintf(&b, "idle_rpm = %s\nredline_rpm = %s\n", num(e.IdleRPM), num(e.RedlineRPM))
 	fmt.Fprintf(&b, "limiter_rpm = %s\nlimiter_kind = %q\nlimiter_ms = %s\n\n", num(e.LimiterRPM), e.LimiterKind, num(e.LimiterMS))
 	fmt.Fprintf(&b, sections, e.Crossover, num(e.Coupling),
-		num(e.IdleRPM+1400), num(e.OutputDB), num(e.IdleGainDB))
+		num(e.IdleRPM+1400), num(e.LevellerDB), num(e.OutputDB))
 	for i, c := range e.Cylinders {
 		fmt.Fprintf(&b, "\n[[cylinder]] # %d\ncrank_deg = %s\nbank = %d\nprimary_m = %s\n", i+1, num(c.CrankDeg), c.Bank, num(c.PrimaryM))
 	}

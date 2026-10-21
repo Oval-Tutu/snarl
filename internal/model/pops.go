@@ -445,7 +445,7 @@ func (p *pops) calibrate(s *Spec, rate float64) {
 				c.subU = float32(d) / calDraws
 				e := c.fire(len(s.Paths), kind, src, 1, 1, 1)
 				q := newPath(ps, s.Exhaust, rate)
-				o := newOutput(0, rate)
+				o := newOutput(0, 0, rate)
 				// The render stops when the train has ended and a step is
 				// 40 dB below the loudest step.
 				var top float64
@@ -454,7 +454,8 @@ func (p *pops) calibrate(s *Spec, rate float64) {
 					var en float64
 					for j := n; j < n+step; j++ {
 						crack := c.tick()
-						v := o.lp.Process(o.dc.Process(q.process(0, c.jump[i], false) + crack))
+						pe, _ := q.process(0, c.jump[i], false)
+						v := o.lp.Process(o.dc.Process(pe + crack))
 						buf[j] = v
 						en += float64(v) * float64(v)
 					}

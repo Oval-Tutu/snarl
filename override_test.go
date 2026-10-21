@@ -33,7 +33,7 @@ func TestLoadProfileWith(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if again.spec.Noise.Jet != 0.025 || again.spec.Pops.Gain != 1 || again.LimiterRPM != 6250 {
+	if again.spec.Noise.Jet != 0.015 || again.spec.Pops.Gain != 1 || again.LimiterRPM != 6250 {
 		t.Error("the embedded profile changed")
 	}
 	same, err := LoadProfileWith("v8")

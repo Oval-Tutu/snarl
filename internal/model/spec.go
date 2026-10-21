@@ -157,23 +157,19 @@ type PathSpec struct {
 
 // NoiseSpec holds the noise layer gains.
 type NoiseSpec struct {
+	// HFGain is the engine-sim hf_gain: the share of the derivative of
+	// the pulse in the input of each exhaust path. The rest is the pulse
+	// times the AM term.
+	HFGain float64 `toml:"hf_gain"`
+	// AM is the engine-sim noise: the share of the pulse that the AM
+	// noise modulates, from 0 to 1. At 1, the AM term is the noise alone,
+	// with no constant part.
 	AM float64 `toml:"am"`
-	// AMCutoffHz is the cutoff in hertz of the AM noise low pass at the
-	// redline. At idle, the low pass is one pole at 2 kHz. As the RPM
-	// rises to the redline, it moves to two poles at AMCutoffHz. Zero
-	// keeps the idle low pass at every RPM.
+	// AMCutoffHz is the cutoff in hertz of the AM noise low pass, a
+	// fourth-order Butterworth, as the engine-sim air noise low pass.
 	AMCutoffHz float64 `toml:"am_cutoff_hz"`
-	// AMRedline is the AM depth at the redline as a fraction of the depth
-	// at idle. The depth and the low pass change between idle and the
-	// redline along a smoothstep over RPM.
-	AMRedline float64 `toml:"am_redline"`
-	// AMIdle is the AM depth at idle as a fraction of AM. The depth moves
-	// from AMIdle at idle to AMRedline at the redline along the same
-	// smoothstep. A value below 1 lowers the AM at idle and in the middle
-	// of the RPM range, and 1 keeps the full depth at idle.
-	AMIdle float64 `toml:"am_idle"`
-	Jet    float64 `toml:"jet"`
-	JetHz  float64 `toml:"jet_hz"`
+	Jet        float64 `toml:"jet"`
+	JetHz      float64 `toml:"jet_hz"`
 }
 
 // PopSpec is the pop model.
@@ -245,15 +241,14 @@ type IdleSpec struct {
 // VoiceSpec is the output voicing.
 type VoiceSpec struct {
 	Gain float64 `toml:"gain"`
-	// OutputDB is the fixed output gain in decibels. It calibrates the
-	// full-throttle sweep-wot scenario to -16 LUFS.
+	// LevellerDB is the gain in decibels into the leveller. It sets the
+	// knee: an engine whose peak into the leveller is above the leveller
+	// target over its largest gain keeps its output peak at the target,
+	// and a quieter engine has the largest gain.
+	LevellerDB float64 `toml:"leveller_db"`
+	// OutputDB is the fixed output gain in decibels after the leveller. It
+	// calibrates the full-throttle sweep-wot scenario to -16 LUFS.
 	OutputDB float64 `toml:"output_db"`
-	// IdleGainDB is the extra output gain in decibels at and below
-	// IdleGainRPM, for all loads. Above IdleGainRPM, it falls along a
-	// smoothstep to 0 dB at the redline. A positive value makes the level
-	// fall less as the RPM falls. IdleGainRPM 0 selects the idle RPM.
-	IdleGainDB  float64 `toml:"idle_gain_db"`
-	IdleGainRPM float64 `toml:"idle_gain_rpm"`
 }
 
 // DefaultSpec returns the defaults that a profile file overrides.
@@ -278,7 +273,7 @@ func DefaultSpec() Spec {
 			SpeedOfSound: 565, Crossover: "none", OutletDirect: 0.4,
 			Steepening: 0.3, LowShelfHz: 250,
 		},
-		Noise: NoiseSpec{AM: 0.35, AMCutoffHz: 800, AMRedline: 0.25, AMIdle: 0.5, Jet: 0.02, JetHz: 1500},
+		Noise: NoiseSpec{AM: 0.35, AMCutoffHz: 2000, Jet: 0.02, JetHz: 1500},
 		Pops: PopSpec{
 			Character: "sport", Gain: 1, BodyHz: 200, BodyMS: 35, JumpMS: 3,
 			Crack: 2.5, CrackMS: 16,
@@ -334,20 +329,18 @@ func (s *Spec) validateEngine() error {
 	case min(s.Pops.WeightPop, s.Pops.WeightBoom, s.Pops.WeightCrackle, s.Pops.WeightBurble) < 0 ||
 		s.Pops.WeightPop+s.Pops.WeightBoom+s.Pops.WeightCrackle+s.Pops.WeightBurble <= 0:
 		return errors.New("pops weights must not be negative, and at least one must be positive")
-	case s.Voice.Gain <= 0 || math.Abs(s.Voice.OutputDB) > 40:
-		return errors.New("voice gain must be positive and output_db from -40 to 40")
-	case math.Abs(s.Voice.IdleGainDB) > 20 || s.Voice.IdleGainRPM < 0 || s.Voice.IdleGainRPM >= s.RedlineRPM:
-		return errors.New("voice idle_gain_db must be from -20 to 20, and idle_gain_rpm from 0 to below redline_rpm")
+	case s.Voice.Gain <= 0 || math.Abs(s.Voice.OutputDB) > 40 || math.Abs(s.Voice.LevellerDB) > 60:
+		return errors.New("voice gain must be positive, output_db from -40 to 40 and leveller_db from -60 to 60")
 	case math.Abs(s.Exhaust.LowShelfDB) > 20 || s.Exhaust.LowShelfHz <= 0:
 		return errors.New("exhaust low_shelf_db must be from -20 to 20 and low_shelf_hz positive")
 	case s.Overrun.LevelDB > 6 || s.Overrun.IdleLevelDB > 6 || s.Overrun.LevelDB < -40 || s.Overrun.IdleLevelDB < -40:
 		return errors.New("overrun level_db and idle_level_db must be from -40 to 6")
 	case s.Pulse.PartLoadDB >= 0 || s.Pulse.PartLoadDB < -20:
 		return errors.New("pulse part_load_db must be from -20 to below 0")
-	case s.Noise.AMCutoffHz < 0 || s.Noise.AMCutoffHz > 2000 || s.Noise.AMRedline < 0 || s.Noise.AMRedline > 1:
-		return errors.New("noise am_cutoff_hz must be from 0 to 2000 and am_redline from 0 to 1")
-	case s.Noise.AMIdle < 0 || s.Noise.AMIdle > 1:
-		return errors.New("noise am_idle must be from 0 to 1")
+	case s.Noise.AMCutoffHz < 100 || s.Noise.AMCutoffHz > 8000 || s.Noise.AM < 0 || s.Noise.AM > 1:
+		return errors.New("noise am_cutoff_hz must be from 100 to 8000 and am from 0 to 1")
+	case s.Noise.HFGain < 0 || s.Noise.HFGain > 0.1:
+		return errors.New("noise hf_gain must be from 0 to 0.1")
 	}
 	return nil
 }

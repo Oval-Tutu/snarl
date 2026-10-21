@@ -20,7 +20,7 @@ limiter_load_scale = 1.0
 # and the re-fire bark, measured from the same reference.
 limiter_pump_db = 0
 limiter_notch_db = -2
-limiter_bark_db = 2
+limiter_bark_db = 0
 
 [pulse]
 width_deg = 120
@@ -39,10 +39,12 @@ overlap = 1.0
 low_shelf_db = 10
 
 [noise]
-am = 0.3
-am_cutoff_hz = 800
-am_redline = 0.25
-am_idle = 0.5
+# hf_gain stays 0 until an exhaust stage spreads each pulse as the engine-sim
+# impulse response does. am puts the 2 to 6 kHz residual of the full-throttle
+# idle hold at the engine-sim value.
+hf_gain = 0
+am = 0.36
+am_cutoff_hz = 2000
 jet = 0.025
 jet_hz = 2000
 
@@ -69,9 +71,9 @@ hunt = 0.008
 rock = 0.02
 
 [voice]
-output_db = -8.5
-idle_gain_db = 7.5
-idle_gain_rpm = 5350
+# leveller_db puts the closed-throttle idle below the knee of the leveller.
+leveller_db = -1.1
+output_db = 3.2
 
 [[cylinder]] # 1
 crank_deg = 0

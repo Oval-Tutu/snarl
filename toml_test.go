@@ -108,13 +108,13 @@ gain = 1
 		"bad waver":    strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nfinal_gear_waver = 0.1", 1),
 		"bad crossing": strings.Replace(good, "[[cylinder]]", "[exhaust]\ncrossover = \"some\"\n[[cylinder]]", 1),
 		"bad shelf":    strings.Replace(good, "[[cylinder]]", "[exhaust]\nlow_shelf_db = 30\n[[cylinder]]", 1),
-		"bad am cut":   strings.Replace(good, "[[cylinder]]", "[noise]\nam_cutoff_hz = 3000\n[[cylinder]]", 1),
-		"bad am top":   strings.Replace(good, "[[cylinder]]", "[noise]\nam_redline = 1.5\n[[cylinder]]", 1),
-		"bad am idle":  strings.Replace(good, "[[cylinder]]", "[noise]\nam_idle = -0.1\n[[cylinder]]", 1),
+		"bad am cut":   strings.Replace(good, "[[cylinder]]", "[noise]\nam_cutoff_hz = 9000\n[[cylinder]]", 1),
+		"bad am":       strings.Replace(good, "[[cylinder]]", "[noise]\nam = 1.5\n[[cylinder]]", 1),
+		"bad hf gain":  strings.Replace(good, "[[cylinder]]", "[noise]\nhf_gain = -0.1\n[[cylinder]]", 1),
 		"bad overrun":  strings.Replace(good, "[[cylinder]]", "[overrun]\nlevel_db = 10\n[[cylinder]]", 1),
 		"bad idle":     strings.Replace(good, "[[cylinder]]", "[idle]\nfade_rpm = 500\n[[cylinder]]", 1),
 		"bad hunt":     strings.Replace(good, "[[cylinder]]", "[idle]\nhunt = 0.5\n[[cylinder]]", 1),
-		"bad knee":     strings.Replace(good, "[[cylinder]]", "[voice]\nidle_gain_rpm = 6000\n[[cylinder]]", 1),
+		"bad leveller": strings.Replace(good, "[[cylinder]]", "[voice]\nleveller_db = 70\n[[cylinder]]", 1),
 		"bad weight":   strings.Replace(good, "[[cylinder]]", "[pops]\nweight_boom = -0.1\n[[cylinder]]", 1),
 		"no weight":    strings.Replace(good, "[[cylinder]]", "[pops]\nweight_pop = 0\nweight_boom = 0\nweight_crackle = 0\nweight_burble = 0\n[[cylinder]]", 1),
 	}
@@ -130,6 +130,7 @@ gain = 1
 		"[noise]\nintake = 0.08", "[noise]\nintake_hz = 420", "[noise]\nintake_cam_gain = 1.2", "[noise]\nintake_cam_hz = 560",
 		"[mechanical]\ntick_gain = 0.01", "[mechanical]\ntick_hz = 3000", "[mechanical]\ntick_lp_hz = 9000",
 		"[mechanical]\nfan_ratio = 1.8", "[mechanical]\nfan_blades = 5", "[mechanical]\nfan_gain = 0.02",
+		"[voice]\nidle_gain_db = 1", "[voice]\nidle_gain_rpm = 3000", "[noise]\nam_redline = 0.25", "[noise]\nam_idle = 0.5",
 	} {
 		_, err := parseProfile(strings.Replace(good, "[[cylinder]]", kv+"\n[[cylinder]]", 1))
 		if err == nil || !strings.Contains(err.Error(), "unknown key") && !strings.Contains(err.Error(), "unknown table mechanical") {

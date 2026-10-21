@@ -55,28 +55,31 @@ func parse(e *engine) (snarl.Profile, error) {
 	return snarl.ParseProfile([]byte(profileTOML(e)))
 }
 
-// calibrate sets idle_gain_db so that the full-throttle hold at idle is
-// idleGap LU below the hold at the top RPM, from 0 to 12 dB, and then
-// output_db so that the sweep-wot scenario is at -16 LUFS, as
-// TestOutputCalibration checks.
+// calibrate sets leveller_db so that the closed-throttle hold at idle is
+// kneeMargin dB below the knee of the leveller, and then output_db so that
+// the sweep-wot scenario is at -16 LUFS, as TestOutputCalibration checks.
+// Below the knee, the level of the hold follows leveller_db, and far above
+// it, the level stays at the level of the knee. The knee is where the two
+// meet.
 func calibrate(e *engine) error {
-	e.OutputDB, e.IdleGainDB = 0, 0
-	p, err := parse(e)
+	e.OutputDB = 0
+	idle := func(levDB float64) (float64, error) {
+		e.LevellerDB = levDB
+		p, err := parse(e)
+		if err != nil {
+			return 0, err
+		}
+		return loudness(p, fmt.Sprintf("hold %s 0 3\n", num(e.IdleRPM)), 1)
+	}
+	low, err := idle(-40)
 	if err != nil {
 		return err
 	}
-	hold := func(rpm float64) (float64, error) {
-		return loudness(p, fmt.Sprintf("hold %s 1 3\n", num(rpm)), 1)
-	}
-	idle, err := hold(e.IdleRPM)
+	high, err := idle(40)
 	if err != nil {
 		return err
 	}
-	top, err := hold(topRPM(e))
-	if err != nil {
-		return err
-	}
-	e.IdleGainDB = round(min(12, max(0, top-idle-idleGap)), 1)
+	e.LevellerDB = round(min(60, max(-60, high-low-40-kneeMargin)), 1)
 	sweep := scenarioText(e, "sweep-wot")
 	for range 8 {
 		p, err := parse(e)

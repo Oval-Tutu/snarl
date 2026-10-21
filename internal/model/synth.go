@@ -15,10 +15,12 @@ const (
 	pulseLen = 512
 	// maxRPM bounds the input RPM.
 	maxRPM = 20000
-	// noiseScale brings the 2 kHz low-passed noise to about unit range.
-	noiseScale = 3
-	// gateStep is the change of the limiter jet noise gate per sample.
-	gateStep = 1.0 / 16
+	// harmonicHz is the cutoff of the low pass of the pulse, the
+	// engine-sim low pass of the synthesiser input.
+	harmonicHz = 1900
+	// derivNormHz is the frequency at which the derivative of the
+	// synthesiser input has the gain of the pulse.
+	derivNormHz = 400
 	// notchLen is the length in seconds of the limiter notch at the start
 	// of a cut.
 	notchLen = 0.07
@@ -108,7 +110,7 @@ type Synth struct {
 	redline, camRPM             float32
 	camGain, camAttack, attack  float32
 	decay                       float32
-	amCfg, jetCfg               float32
+	jetCfg                      float32
 	steepCfg, voiceGain         float32
 	overlap                     float32
 	limKind                     string
@@ -122,14 +124,12 @@ type Synth struct {
 	jit                         dsp.OnePole
 	idleRPM, ovLevel, ovIdle    float32
 	partLoad                    float32
-	idleGain, knee              float32
-	rpmG, rpmStep               float32
 	shape                       float32
 	jetBP                       dsp.Biquad
 	rpm, throttle, load, master float32
 	overrun, camMix             float32
 	camHigh                     bool
-	inc, step, amp, amDepth     float32
+	inc, step, amp              float32
 	jetGain, ka, kb, liveNorm   float32
 
 	// Pulse placement for one chunk. aStep and bStep are the attack and
@@ -142,20 +142,23 @@ type Synth struct {
 	aStep, bStep, endVal float32
 	corner, invStep      float32
 
-	// amLP and amLP2 are the AM noise low pass. Their coefficients move
-	// with the RPM from amIdleA and 1 at idle to amTopA and amTopA2 at the
-	// redline. amIdle is the AM depth factor at idle, and amTaper is its
-	// fall from idle to the redline.
-	amLP, amLP2              dsp.OnePole
-	amIdleA, amTopA, amTopA2 float32
-	amIdle, amTaper          float32
+	// The engine-sim synthesiser input of each path. hLP is the fourth-
+	// order low pass of the pulse, and hPrev its last output, for the
+	// derivative. amLP is the fourth-order low pass of the AM noise. kD is
+	// the gain of the derivative per sample step, and kNoise and kFlat the
+	// gains of the noise and of the pulse in the AM term. amGain is the
+	// noise gain of the chunk.
+	hLP               [MaxBanks][2]dsp.Biquad
+	hPrev             [MaxBanks]float32
+	amLP              [2]dsp.Biquad
+	kD, kNoise, kFlat float32
+	amGain            float32
 
-	// Engine level for the pops. engS and engE sum the output and its
-	// square over the chunk, before the RPM gain and the output stage,
-	// which the pops also pass. engMean and engMS follow their means over
-	// the chunks with no pop with the coefficient kEng, and hold while a
-	// pop sounds. The level is the RMS level with no DC, which the output
-	// stage removes.
+	// Engine level for the pops. engS and engE sum the levelled engine and
+	// its square over the chunk, which is where the pops join it. engMean
+	// and engMS follow their means over the chunks with no pop with the
+	// coefficient kEng, and hold while a pop sounds. The level is the RMS
+	// level with no DC, which the output stage removes.
 	engS, engE, engMean, engMS, kEng float32
 
 	// Rev limiter state. cut is the samples left of the cut, and cutLen is
@@ -165,20 +168,23 @@ type Synth struct {
 	// internal RPM lrpm climbs back to the limiter RPM after a cut of a
 	// bounce. dip is the pitch offset below the smoothed RPM. limRot
 	// counts the cuts. bangAt is the time into an ignition cut in samples
-	// at which the unburnt fuel bangs, or -1. gate is the jet noise gain of
-	// the cut, and gateTo is its target. gear is the last gear. pump is
-	// the gain of a pumping pulse in a cut, notch is the phase of the notch
-	// in cycles, and bark is the extra firing gain after a cut. fade is the
-	// firing gain after the final gear ends a cut. It starts at the pump
-	// level and rises by the factor fadeRate per chunk to 1.
-	cut, cutLen, limRot     int
-	bangAt                  int
-	cutting, limEvent       bool
-	bounce, climb           bool
-	gear                    uint8
-	lrpm, dip, gate, gateTo float32
-	pump, notch, bark       float32
-	fade, fadeRate          float32
+	// at which the unburnt fuel bangs, or -1. gear is the last gear. pump
+	// is the level of the pumping in a cut, notch is the phase of the notch
+	// in cycles, and bark is the extra firing level after a cut. fade is
+	// the firing level after the final gear ends a cut. It starts at the
+	// pump level and rises by the factor fadeRate per chunk to 1. These
+	// levels set env, the gain of the levelled engine, which ramps by
+	// envStep per sample over each chunk, so that the leveller does not
+	// undo them.
+	cut, cutLen, limRot int
+	bangAt              int
+	cutting, limEvent   bool
+	bounce, climb       bool
+	gear                uint8
+	lrpm, dip           float32
+	pump, notch, bark   float32
+	fade, fadeRate      float32
+	env, envStep        float32
 
 	// Final gear waver. waver is the depth from the profile, and wavMix
 	// fades it in and out at the limiter RPM. wav is the pitch offset of
@@ -214,7 +220,6 @@ func New(s *Spec, rate int) (*Synth, error) {
 		attack:     float32(s.Pulse.Attack),
 		camAttack:  float32(s.Pulse.CamAttack),
 		decay:      float32(s.Pulse.Decay),
-		amCfg:      float32(s.Noise.AM),
 		jetCfg:     float32(s.Noise.Jet),
 		steepCfg:   float32(s.Exhaust.Steepening),
 		overlap:    float32(s.Exhaust.Overlap),
@@ -235,8 +240,7 @@ func New(s *Spec, rate int) (*Synth, error) {
 		barkLvl:    float32(math.Pow(10, s.LimiterBarkDB/20) - 1),
 		notchStep:  float32(1 / (notchLen * fs)),
 		kBark:      1 - dsp.TimeCoef(barkDecay, chunkHz),
-		gate:       1,
-		gateTo:     1,
+		env:        -1,
 		kRPM:       dsp.TimeCoef(0.012, chunkHz),
 		kCtl:       dsp.TimeCoef(0.025, chunkHz),
 		kMaster:    dsp.TimeCoef(0.02, chunkHz),
@@ -245,25 +249,14 @@ func New(s *Spec, rate int) (*Synth, error) {
 		kHand:      1 - dsp.TimeCoef(handover, chunkHz),
 		kEng:       dsp.TimeCoef(engLevelSec, chunkHz),
 		jit:        dsp.OnePole{A: dsp.OnePoleCoef(2, chunkHz)},
-		amIdleA:    dsp.OnePoleCoef(2000, fs),
-		amTopA:     dsp.OnePoleCoef(2000, fs),
-		amTopA2:    1,
-		amIdle:     float32(s.Noise.AMIdle),
-		amTaper:    float32(s.Noise.AMIdle - s.Noise.AMRedline),
 		idleRPM:    float32(s.IdleRPM),
 		ovLevel:    float32(math.Pow(10, s.Overrun.LevelDB/20)),
 		ovIdle:     float32(math.Pow(10, s.Overrun.IdleLevelDB/20)),
 		partLoad:   float32(math.Pow(10, s.Pulse.PartLoadDB/20)),
-		rpmG:       -1,
 		pops:       newPops(s, fs, float64(controlBlock)/fs),
-		out:        newOutput(s.Voice.OutputDB, fs),
-		idleGain:   float32(s.Voice.IdleGainDB),
+		out:        newOutput(s.Voice.LevellerDB, s.Voice.OutputDB, fs),
 	}
-	if s.Noise.AMCutoffHz > 0 {
-		y.amTopA = dsp.OnePoleCoef(s.Noise.AMCutoffHz, fs)
-		y.amTopA2 = y.amTopA
-	}
-	y.knee = float32(max(s.Voice.IdleGainRPM, s.IdleRPM))
+	y.initSynthInput(s, fs)
 	if y.camAttack <= 0 {
 		y.camAttack = y.attack
 	}
@@ -336,6 +329,31 @@ func (y *Synth) initPaths(s *Spec, fs float64) {
 	}
 }
 
+// initSynthInput sets the stages from engine-sim that make the input of
+// each path from its pulse sum x, as Synthesizer::renderAudio makes the
+// input of its convolution: a fourth-order Butterworth low pass at
+// harmonicHz, then hf_gain times the derivative plus 1-hf_gain times x
+// times the AM term am*r+1-am, where r is uniform noise through a
+// fourth-order Butterworth low pass at am_cutoff_hz. The derivative is
+// per second, as in engine-sim, so its gain does not depend on the sample
+// rate. The input scales by 1/(1-hf_gain+hf_gain*2*pi*derivNormHz), which
+// gives the derivative of a sine at derivNormHz the gain of the pulse,
+// so that the input keeps about the scale of the pulse, which the wave
+// steepening and the jet layer assume. The leveller removes the scale.
+func (y *Synth) initSynthInput(s *Spec, fs float64) {
+	hf := s.Noise.HFGain
+	norm := 1 / (1 - hf + hf*2*math.Pi*derivNormHz)
+	y.kD = float32(hf * fs * norm)
+	y.kNoise = float32((1 - hf) * s.Noise.AM * norm)
+	y.kFlat = float32((1 - hf) * (1 - s.Noise.AM) * norm)
+	for p := range y.banks {
+		y.hLP[p][0].SetLowPass(harmonicHz, 0.5412, fs)
+		y.hLP[p][1].SetLowPass(harmonicHz, 1.3066, fs)
+	}
+	y.amLP[0].SetLowPass(s.Noise.AMCutoffHz, 0.5412, fs)
+	y.amLP[1].SetLowPass(s.Noise.AMCutoffHz, 1.3066, fs)
+}
+
 // envelopePeak returns the peak of (1-exp(-a x))exp(-b x) for x >= 0.
 func envelopePeak(a, b float64) float64 {
 	x := math.Log((a+b)/b) / a
@@ -397,17 +415,6 @@ func loadLevel(ld float64, lvl, part float32) float32 {
 	return lvl + (1-lvl)*float32(math.Pow(ld, min(max(k, 0.2), 8)))
 }
 
-// rpmGain returns the output gain at the RPM for an extra gain of db
-// decibels at and below the knee RPM. Above the knee, the gain in decibels
-// falls along a smoothstep to 0 at the redline.
-func rpmGain(rpm, knee, redline, db float32) float32 {
-	if db == 0 {
-		return 1
-	}
-	w := min(1, max(0, (redline-rpm)/(redline-knee)))
-	return float32(math.Pow(10, float64(db*w*w*(3-2*w))/20))
-}
-
 // control runs once per chunk of n samples.
 func (y *Synth) control(c *Control, n int) {
 	rpm := clampf(c.RPM, 0, maxRPM)
@@ -454,21 +461,23 @@ func (y *Synth) control(c *Control, n int) {
 	y.shape = shape + (lvl-shape)*y.overrun
 	y.amp = y.master * y.voiceGain * y.shape * (0.5 + 0.5*rr) *
 		(1 + y.camGain*y.camMix) * (1 + 2*y.jitter*j) * y.idle.rock
-	gate := float32(math.Pow(math.Max(ld, 0.02), 0.7))
-	// Towards the redline, the AM noise gets narrower and shallower along
-	// a smoothstep, so that the harmonics rise above it. The depth moves
-	// from its idle factor to its redline factor.
-	w := pos * pos * (3 - 2*pos)
-	y.amDepth = y.amCfg * gate * (y.amIdle - y.amTaper*w)
-	y.amLP.A = y.amIdleA + (y.amTopA-y.amIdleA)*w
-	y.amLP2.A = 1 + (y.amTopA2-1)*w
-
-	// The RPM gain ramps over the chunk. It starts at its first value.
-	g := rpmGain(y.rpm, y.knee, y.redline, y.idleGain)
-	if y.rpmG < 0 {
-		y.rpmG = g
+	// The engine-sim derivative weights each harmonic by its frequency,
+	// so that the share of the noise falls as the RPM rises. With no
+	// derivative, the noise falls with the square root of the RPM over
+	// idle in its place.
+	y.amGain = y.kNoise
+	if y.kD == 0 {
+		y.amGain *= float32(math.Sqrt(float64(y.idleRPM / max(y.rpm, y.idleRPM))))
 	}
-	y.rpmStep = (g - y.rpmG) / float32(n)
+	// The limiter level ramps over the chunk. It starts at its first value.
+	g := (1 + y.bark) * y.fade
+	if y.cutting {
+		g = y.pump
+	}
+	if y.env < 0 {
+		y.env = g
+	}
+	y.envStep = (g - y.env) / float32(n)
 
 	heat := b2f(y.throttle > 0.2) * y.load * min(rr, 1)
 	y.pops.control(&popInput{
@@ -542,7 +551,6 @@ func (y *Synth) limit(rpm, thr float32, gear uint8, final bool, n int) bool {
 	if was && !y.cutting && !final {
 		y.bark = y.barkLvl
 	}
-	y.gateTo = 1
 	switch {
 	case y.cutting:
 		y.cut -= n
@@ -554,7 +562,6 @@ func (y *Synth) limit(rpm, thr float32, gear uint8, final bool, n int) bool {
 			y.pump += (y.notchLvl - y.pumpLvl) * (0.5 - 0.5*dsp.Sine(y.notch+0.25))
 			y.notch += y.notchStep * float32(n)
 		}
-		y.gateTo = y.pump
 	case y.climb:
 		y.lrpm += y.limRise * float32(n)
 		if y.lrpm >= y.limRPM {
@@ -570,7 +577,6 @@ func (y *Synth) limit(rpm, thr float32, gear uint8, final bool, n int) bool {
 		}
 		if y.fade < 1 {
 			y.fade = min(1, max(y.fade, 1e-3)*y.fadeRate)
-			y.gateTo = y.fade
 		}
 		return false
 	}
@@ -629,18 +635,18 @@ func (y *Synth) controlLayers(flow, rr float32) {
 }
 
 // fire starts the pulse of one cylinder. In a limiter cut, the pulse is a
-// pumping pulse, with no combustion variation in gain or delay.
+// pumping pulse, with no combustion variation in gain or delay. The
+// limiter levels act on the levelled engine, through env.
 func (y *Synth) fire(cyl int) {
-	var g, late float32
+	g, late := float32(1), float32(0)
 	if y.cutting {
-		g = y.pump
 		if y.bangAt >= 0 && y.cutLen-y.cut >= y.bangAt {
 			y.pops.bang(len(y.paths))
 			y.bangAt = -1
 		}
 	} else {
 		g, late = y.idle.firing()
-		g *= (1 + y.bark) * y.fade * (1 + y.cycleVar*y.noise.Bipolar())
+		g *= 1 + y.cycleVar*y.noise.Bipolar()
 	}
 	v := &y.voices[cyl]
 	v.gain = y.amp * (y.cylGain[cyl] + y.idle.imbalance*y.cylDev[cyl]) * g
@@ -714,9 +720,8 @@ func (y *Synth) process(dst []float32) {
 			bank[b] += y.overlap * bank[b] * bank[b]
 		}
 
-		nz := y.amLP2.Process(y.amLP.Process(y.noise.Bipolar())) * noiseScale
-		am := 1 + y.amDepth*nz
-		crack := y.pops.tick()
+		am := y.amGain*y.amLP[1].Process(y.amLP[0].Process(y.noise.Bipolar())) + y.kFlat
+		pop := y.pops.tick()
 
 		var sum float32
 		for p := range np {
@@ -724,14 +729,21 @@ func (y *Synth) process(dst []float32) {
 			for b := range np {
 				x += y.mix[p][b] * bank[b]
 			}
-			sum += y.paths[p].process(x*am, y.pops.jump[p], y.pops.live[p])
+			// From engine-sim: the low pass of the synthesiser input, and
+			// the derivative plus the noise AM of the pulse.
+			x = y.hLP[p][1].Process(y.hLP[p][0].Process(x))
+			d := x - y.hPrev[p]
+			y.hPrev[p] = x
+			e, q := y.paths[p].process(y.kD*d+x*am, y.pops.jump[p], y.pops.live[p])
+			sum += e
+			pop += q
 		}
-		sum += crack
 		sum += y.jet()
-		y.engS += sum
-		y.engE += sum * sum
-		y.rpmG += y.rpmStep
-		dst[i] = y.out.process(sum * y.rpmG)
+		y.env += y.envStep
+		e := y.out.level(sum) * y.env
+		y.engS += e
+		y.engE += e * e
+		dst[i] = y.out.process(e + pop)
 	}
 	y.engineLevel(len(dst))
 }
@@ -756,9 +768,5 @@ func (y *Synth) engineLevel(n int) {
 
 // jet renders the jet noise layer for one sample.
 func (y *Synth) jet() float32 {
-	// The jet noise follows the cut through a short ramp against clicks.
-	if d := y.gateTo - y.gate; d != 0 {
-		y.gate += max(-gateStep, min(gateStep, d))
-	}
-	return y.jetBP.Process(y.noise2.Bipolar()) * y.jetGain * y.gate
+	return y.jetBP.Process(y.noise2.Bipolar()) * y.jetGain
 }

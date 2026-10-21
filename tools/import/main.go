@@ -37,7 +37,7 @@ type engine struct {
 	Notes []string
 
 	// Calibration results.
-	OutputDB, IdleGainDB, SweepLUFS float64
+	LevellerDB, OutputDB, SweepLUFS float64
 }
 
 type cylinder struct {
@@ -102,8 +102,8 @@ func run(args []string) error {
 		if err := writeScenarios(filepath.Join(*scenarios, e.ID), e); err != nil {
 			return err
 		}
-		fmt.Printf("%-34s %2d cylinders, %d banks, output_db %6.2f, idle_gain_db %4.1f, sweep-wot %.2f LUFS\n",
-			e.ID, len(e.Cylinders), len(e.Paths), e.OutputDB, e.IdleGainDB, e.SweepLUFS)
+		fmt.Printf("%-34s %2d cylinders, %d banks, leveller_db %5.1f, output_db %6.2f, sweep-wot %.2f LUFS\n",
+			e.ID, len(e.Cylinders), len(e.Paths), e.LevellerDB, e.OutputDB, e.SweepLUFS)
 	}
 	if err := writeScripts(filepath.Join(*scenarios, "engine-sim-scripts.txt"), all); err != nil {
 		return err

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/oval-tutu/snarl/internal/analysis"
 	"github.com/oval-tutu/snarl/internal/scenario"
 	"github.com/oval-tutu/snarl/internal/wav"
 )
@@ -94,36 +95,28 @@ func TestStaticLayerFloor(t *testing.T) {
 	}
 }
 
-// staticFixes are the variants of TestStaticFixFloor, each named by its
-// overrides. "before" has the full AM depth at idle (no option B), and
-// "final" has the profile values. Option A was the low pass of the valve
-// tick, which is no longer part of the model.
-var staticFixes = []struct {
-	name      string
-	overrides []string
-}{
-	{"before", []string{"noise.am_idle=1"}},
-	{"final", nil},
-}
-
-// staticFixFloor is the highest final floor in dB that TestStaticFixFloor
-// accepts at the idle and the 3000 RPM holds of holds-t100. With option B
-// and no valve tick, the floor was -18.3 and -15.1 dB (flat12), -22.3 and
-// -23.3 dB (flat6), -22.9 and -22.7 dB (inline4) and -18.2 and -17.0 dB
-// (v8).
+// staticFixFloor is the highest floor in dB that TestStaticFixFloor
+// accepts at the idle and the 3000 RPM holds of holds-t100. With the
+// engine-sim noise AM, whose depth TestNoiseCycle sets against the
+// engine-sim residual, the floor is -19.2 and -17.0 dB (flat12), -17.4 and
+// -21.4 dB (flat6), -33.5 and -32.8 dB (inline4) and -19.5 and -19.9 dB
+// (v8). The bounds are about 1 dB above them. The flat6 idle floor is 4 dB
+// above its earlier bound, and the inline4 floor 11 dB below it, because
+// the AM depth now follows the engine-sim residual at idle: -16.7 dB for
+// flat6 and -23.9 dB for inline4.
 var staticFixFloor = map[string][2]float64{
-	"flat12":  {-17.5, -14.5},
-	"flat6":   {-21, -21},
-	"inline4": {-22, -21},
-	"v8":      {-17.5, -16.5},
+	"flat12":  {-18, -16},
+	"flat6":   {-16.5, -20.5},
+	"inline4": {-32.5, -32},
+	"v8":      {-18.5, -19},
 }
 
 // TestStaticFixFloor measures the noise floor between the harmonics and
-// the 4 to 12 kHz level of each hold of holds-t100, for each variant of
-// staticFixes and for the engine-sim reference in out/reference/engine-sim
-// when it is present. At the idle and the 3000 RPM holds of each tuned
-// profile, the final floor is at most staticFixFloor and at least 3 dB
-// below the floor before option B.
+// the 4 to 12 kHz level of each hold of holds-t100, with the profile
+// values, with no noise AM, and for the engine-sim reference in
+// out/reference/engine-sim when it is present, resampled to the test rate.
+// At the idle and the 3000 RPM holds of each tuned profile, the floor is
+// at most staticFixFloor.
 func TestStaticFixFloor(t *testing.T) {
 	if testing.Short() {
 		t.Skip("renders 24 scenarios")
@@ -132,42 +125,30 @@ func TestStaticFixFloor(t *testing.T) {
 	for name := range hissBounds {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			var before, final []hissHold
-			var dir string
-			for _, v := range staticFixes {
-				var p Profile
-				p, dir = hissProfile(t, name, v.overrides...)
-				h := hissHolds(t, p, dir, "holds-t100")
-				t.Log(staticFixLine(name, v.name, h))
-				switch v.name {
-				case "before":
-					before = h
-				case "final":
-					final = h
-				}
-			}
+			p, dir := hissProfile(t, name)
+			final := hissHolds(t, p, dir)
+			t.Log(staticFixLine(name, "final", final))
+			q, _ := hissProfile(t, name, noAM...)
+			t.Log(staticFixLine(name, "no AM", hissHolds(t, q, dir)))
 			ref := filepath.Join("out", "reference", "engine-sim", strings.TrimPrefix(dir, "scenarios"+string(filepath.Separator)), "holds-t100.wav")
-			if a, err := wav.ReadFile(ref); err != nil || a.SampleRate != testRate {
-				t.Logf("%s: no reference at %d Hz", ref, testRate)
+			if a, err := wav.ReadFile(ref); err != nil {
+				t.Logf("%s: no reference", ref)
 			} else {
 				sc, err := scenario.ParseFile(filepath.Join(dir, "holds-t100.scn"))
 				if err != nil {
 					t.Fatal(err)
 				}
-				x := a.Mono()
+				x := analysis.Resample(a.Mono(), a.SampleRate, testRate)
 				t.Log(staticFixLine(name, "engine-sim", hissScenarioHolds(sc, func(i int) float64 { return x[min(i, len(x)-1)] })))
 			}
 			b, ok := staticFixFloor[name]
 			if !ok {
 				return
 			}
-			for i, h := range final {
+			for _, h := range final {
 				j := slices.Index([]float64{final[0].rpm, 3000}, h.rpm)
-				if j < 0 {
-					continue
-				}
-				if h.floor > b[j] || h.floor > before[i].floor-3 {
-					t.Errorf("%.0f RPM: floor %.1f dB, want at most %.1f dB and 3 dB below %.1f dB", h.rpm, h.floor, b[j], before[i].floor)
+				if j >= 0 && h.floor > b[j] {
+					t.Errorf("%.0f RPM: floor %.1f dB, want at most %.1f dB", h.rpm, h.floor, b[j])
 				}
 			}
 		})

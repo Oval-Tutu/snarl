@@ -22,7 +22,7 @@ Files are relative to `assets/engines/` of engine-sim.
 
 | Id | Upstream file | Layout | Cylinders | Banks | Idle rpm | Redline rpm | Limiter rpm | Cut ms | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `es-single-atv` | `atg-video-1/01_honda_trx520.mr` | single | 1 | 1 | 1270 | 5000 | 6000 | 500 | Calibration stops at -17.22 LUFS. |
+| `es-single-atv` | `atg-video-1/01_honda_trx520.mr` | single | 1 | 1 | 1270 | 5000 | 6000 | 500 | Calibration stops at -17.77 LUFS. |
 | `es-v2-90-industrial` | `atg-video-1/02_kohler_ch750.mr` | V2, 90 degree | 2 | 1 | 1590 | 3600 | 5000 | 500 |  |
 | `es-v2-45-big-twin` | `atg-video-1/03_harley_davidson_shovelhead.mr` | V2, 45 degree | 2 | 2 | 820 | 5000 | 5500 | 500 |  |
 | `es-i4-moto-litre` | `atg-video-1/04_hayabusa.mr` | inline-4 | 4 | 2 | 1410 | 11000 | 11500 | 50 |  |
@@ -60,7 +60,7 @@ Files are relative to `engines/` of EngineLab.
 | `el-f4-boxer-turbo` | `04_subaru_ej25_like.engine.yaml` | flat-4 | 4 | 1 | 820 | 6800 | 6800 | 70 |  |
 | `el-i5-turbo` | `05_audi_i5_like.engine.yaml` | inline-5 | 5 | 1 | 780 | 7100 | 7300 | 65 |  |
 | `el-i4-moto-litre` | `06_hayabusa_i4_like.engine.yaml` | inline-4 | 4 | 1 | 1250 | 11200 | 11200 | 45 |  |
-| `el-v2-45-big-twin` | `07_harley_v_twin_like.engine.yaml` | V2, 45 degree | 2 | 2 | 760 | 5600 | 5900 | 85 |  |
+| `el-v2-45-big-twin` | `07_harley_v_twin_like.engine.yaml` | V2, 45 degree | 2 | 2 | 760 | 5600 | 5900 | 85 | Calibration stops at -16.77 LUFS. |
 | `el-v12-60-aero` | `08_merlin_v12_like.engine.yaml` | V12, 60 degree | 12 | 2 | 800 | 3800 | 3200 | 90 |  |
 | `el-f6-aircooled` | `09_porsche_flat6_like.engine.yaml` | flat-6 | 6 | 2 | 780 | 7600 | 7400 | 60 |  |
 | `el-r5-radial` | `10_radial5_like.engine.yaml` | radial-5 | 5 | 1 | 640 | 2400 | 2450 | 100 |  |
@@ -123,7 +123,7 @@ Neither source has these values, so every profile has the same ones. They are ne
 | `[pops]` | `density` 0.15, `character` sport, `gain` 1, `body_hz` 200, `body_ms` 35, `jump_ms` 3, `crack` 2.5, `crack_ms` 16, weights pop 0.4, boom 0.2, crackle 0.3, burble 0.1 |
 | `[overrun]` | `level_db` -1.2, `idle_level_db` -1.2 |
 | `[idle]` | `fade_rpm` idle + 1400, `variation` 0.15, `timing_deg` 1, `imbalance` 0.25, `hunt` 0.004, `rock` 0.01, `hunt_hz` 1.2 |
-| `[voice]` | `gain` 1, `idle_gain_rpm` 0 (the idle rpm) |
+| `[voice]` | `gain` 1 |
 | `[[path]]` | `reflection` -0.4, `damping_hz` 2500, `wall_loss_db` 2.5, `wall_loss_hz` 2000. engine-sim paths: `chamber_m` 0.3, `chamber_area_ratio` 7 |
 | Engine | `seed` from a hash of the id, `cam_switch_rpm` 0, the limiter rates and levels of the model defaults |
 
@@ -131,7 +131,7 @@ Neither source has these values, so every profile has the same ones. They are ne
 
 The import renders each profile with the snapshots of `snarl-render`:
 
-1. `idle_gain_db`: a 3 s full-throttle hold at the idle rpm and at the top rpm, measured over the last 2 s. The gain makes the idle hold 2 LU below the top hold, from 0 to 12 dB.
+1. `leveller_db`: a 3 s closed-throttle hold at the idle rpm, measured over the last 2 s, at a leveller gain of -40 dB and of +40 dB. Below the knee of the leveller, the level follows the gain, and far above it, the level stays at the level of the knee. The gain puts the hold 3 dB below the knee, so that the leveller leaves the idle character alone.
 2. `output_db`: the `sweep-wot` scenario, measured over its length, moved to -16 LUFS in up to 8 steps, as `TestOutputCalibration` checks.
 
 ## Scenarios

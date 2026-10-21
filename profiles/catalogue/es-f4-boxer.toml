@@ -63,9 +63,8 @@ hunt_hz = 1.2
 
 [voice]
 gain = 1
-output_db = 1.91
-idle_gain_db = 8.7
-idle_gain_rpm = 0
+leveller_db = 1.8
+output_db = 5.86
 
 [[cylinder]] # 1
 crank_deg = 0

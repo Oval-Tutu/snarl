@@ -20,9 +20,8 @@ import (
 // hissFFT is the spectrum size of the hiss measures.
 const hissFFT = 65536
 
-// legacyAM are the overrides that give the noise AM of HEAD a553aef: one
-// pole at 2 kHz and the full depth at every RPM.
-var legacyAM = []string{"noise.am_cutoff_hz=0", "noise.am_redline=1", "noise.am_idle=1"}
+// noAM is the override that turns the noise AM off.
+var noAM = []string{"noise.am=0"}
 
 // hissHold holds the measures of one hold, in decibels.
 type hissHold struct {
@@ -105,11 +104,11 @@ func hissMeasure(x []float64, rpm float64) hissHold {
 	}
 }
 
-// hissHolds renders the holds scenario name of p from dir and measures
+// hissHolds renders the holds-t100 scenario of p from dir and measures
 // each hold of at least 2.5 s.
-func hissHolds(t *testing.T, p Profile, dir, name string) []hissHold {
+func hissHolds(t *testing.T, p Profile, dir string) []hissHold {
 	t.Helper()
-	scn, err := scenario.ParseFile(filepath.Join(dir, name+".scn"))
+	scn, err := scenario.ParseFile(filepath.Join(dir, "holds-t100.scn"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,42 +165,40 @@ func hissProfile(t *testing.T, name string, overrides ...string) (Profile, strin
 }
 
 // hissBounds are the bounds at the high full-throttle holds: the most 4
-// to 12 kHz level and the least HNR from 20 to 500 Hz, in decibels. With
-// the noise AM of HEAD a553aef, the worst holds were at -12.2 and 19.4 dB
-// (flat6), -14.6 and 16.1 dB (inline4), -15.2 and 19.8 dB (v8), -14.4
-// and 17.1 dB (flat12), -29.4 and 23.4 dB (es-v12-60-aero) and -39.3 and
-// 24.1 dB (el-v12-60-aero). With no valve tick and no intake noise, the
-// 4 to 12 kHz level of the top hold of es-v12-60-aero and el-v12-60-aero
-// is -40.5 and -52.0 dB.
+// to 12 kHz level and the least HNR from 20 to 500 Hz, in decibels. The
+// engine-sim low pass of the pulse at 1.9 kHz and the engine-sim noise AM
+// put the worst holds at -34.6 and 21.3 dB (flat12), -37.0 and 24.3 dB
+// (flat6), -36.2 and 27.2 dB (inline4), -36.1 and 22.8 dB (v8), -38.9 and
+// 27.0 dB (es-v12-60-aero) and -48.2 and 28.8 dB (el-v12-60-aero). The
+// bounds are about 1 dB from them. Before these stages, the 4 to 12 kHz
+// bounds of the tuned profiles were -14 to -24 dB.
 var hissBounds = map[string]struct{ hf, hnr float64 }{
-	"flat12":         {-17.5, 19},
-	"flat6":          {-14, 23.5},
-	"inline4":        {-15.3, 18.5},
-	"v8":             {-24, 22},
-	"es-v12-60-aero": {-36.5, 26},
+	"flat12":         {-33.5, 20},
+	"flat6":          {-36, 23.5},
+	"inline4":        {-35, 26},
+	"v8":             {-35, 22},
+	"es-v12-60-aero": {-38, 26},
 	"el-v12-60-aero": {-47.5, 28},
 }
 
-// TestHissHighRPM checks that the noise AM leaves the harmonics clear at
-// high RPM, on the holds-t100 scenario. The high holds are the holds from
-// 4000 RPM up, or the top hold of an engine with a lower redline. At each
-// high hold, the 4 to 12 kHz level and the HNR from 20 to 500 Hz stay
-// within hissBounds. Against the noise AM of HEAD a553aef, the 4 to 12
-// kHz level is at least 1 dB lower and the HNR at least 1.5 dB higher.
-// The log gives the measures of every hold with the HEAD measures beside
-// them.
+// TestHissHighRPM checks that the noise leaves the harmonics clear at high
+// RPM, on the holds-t100 scenario. The high holds are the holds from 4000
+// RPM up, or the top hold of an engine with a lower redline. At each high
+// hold, the 4 to 12 kHz level and the HNR from 20 to 500 Hz stay within
+// hissBounds. The log gives the measures of every hold with the measures
+// with no noise AM beside them.
 func TestHissHighRPM(t *testing.T) {
 	t.Parallel()
 	for name, b := range hissBounds {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			p, dir := hissProfile(t, name)
-			q, _ := hissProfile(t, name, legacyAM...)
-			now, was := hissHolds(t, p, dir, "holds-t100"), hissHolds(t, q, dir, "holds-t100")
+			q, _ := hissProfile(t, name, noAM...)
+			now, off := hissHolds(t, p, dir), hissHolds(t, q, dir)
 			for i, h := range now {
-				w := was[i]
-				t.Logf("%5.0f RPM: 4-12 kHz %6.1f dB (was %6.1f), HNR 20-500 Hz %5.1f dB (was %5.1f), floor %6.1f dB (was %6.1f), RMS %+.2f dB",
-					h.rpm, h.hf, w.hf, h.hnr, w.hnr, h.floor, w.floor, h.rmsDB-w.rmsDB)
+				w := off[i]
+				t.Logf("%5.0f RPM: 4-12 kHz %6.1f dB (no AM %6.1f), HNR 20-500 Hz %5.1f dB (no AM %5.1f), floor %6.1f dB (no AM %6.1f)",
+					h.rpm, h.hf, w.hf, h.hnr, w.hnr, h.floor, w.floor)
 				if h.rpm < 4000 && i < len(now)-1 {
 					continue
 				}
@@ -209,23 +206,22 @@ func TestHissHighRPM(t *testing.T) {
 					t.Errorf("%.0f RPM: 4-12 kHz %.1f dB, want at most %.1f; HNR 20-500 Hz %.1f dB, want at least %.1f",
 						h.rpm, h.hf, b.hf, h.hnr, b.hnr)
 				}
-				if h.hf > w.hf-1 || h.hnr < w.hnr+1.5 {
-					t.Errorf("%.0f RPM: 4-12 kHz %.1f dB and HNR %.1f dB, against %.1f and %.1f dB at HEAD", h.rpm, h.hf, h.hnr, w.hf, w.hnr)
-				}
 			}
 		})
 	}
 }
 
 // hissPops renders the pop schedule of newPopSchedule on p for seconds,
-// with pops and with no pops, and returns the difference: the pops alone.
-func hissPops(t *testing.T, p Profile, request bool, seconds float64) []float64 {
+// with pops and with no pops, and returns the difference, the pops alone,
+// and the mean square of the render with no pops.
+func hissPops(t *testing.T, p Profile, request bool, seconds float64) ([]float64, float64) {
 	t.Helper()
 	a, b := newEngine(t, p), newEngine(t, p)
 	sa, sb := newPopSchedule(p, request, 0.5), newPopSchedule(p, request, 0.5)
 	n := int(seconds * testRate / 256)
 	buf := make([]float32, 256)
 	d := make([]float64, 0, n*256)
+	var eng float64
 	for i := range n {
 		s, _ := sa.next(i)
 		a.Set(s)
@@ -239,18 +235,21 @@ func hissPops(t *testing.T, p Profile, request bool, seconds float64) []float64 
 		b.Set(s)
 		b.Render(buf)
 		for j, v := range buf {
+			eng += float64(v) * float64(v)
 			d[i*256+j] -= float64(v)
 		}
 	}
-	return d
+	return d, eng / float64(len(d))
 }
 
-// TestHissPops checks that the noise AM change leaves the pops alone. On
-// each profile, the requested pops at full throttle and the own pops of a
-// lift-off keep their level within 1 dB and their wave, with a
-// correlation of at least 0.999, against the noise AM of HEAD a553aef.
-// The level changes only with the engine level that the pops follow. The
-// output gain is 20 dB lower, so that the output limiter does not act.
+// TestHissPops checks that the noise AM leaves the pops alone. On each
+// profile, the requested pops at full throttle and the own pops of a
+// lift-off keep their level over the engine within 1 dB and their wave,
+// with a correlation of at least 0.999, against the pops with no noise AM.
+// The pops join the engine after the leveller and follow the engine
+// level. Below the knee, the noise AM changes the engine level, because
+// the AM term keeps 1-am of the pulse, and the pops follow it. The output
+// gain is 20 dB lower, so that the output limiter does not act.
 func TestHissPops(t *testing.T) {
 	t.Parallel()
 	for _, name := range Profiles() {
@@ -264,8 +263,8 @@ func TestHissPops(t *testing.T) {
 					p.spec = &s
 					return p
 				}
-				x := hissPops(t, load(), request, 10)
-				y := hissPops(t, load(legacyAM...), request, 10)
+				x, ex := hissPops(t, load(), request, 10)
+				y, ey := hissPops(t, load(noAM...), request, 10)
 				var xy, xx, yy float64
 				for i := range x {
 					xy += x[i] * y[i]
@@ -273,44 +272,81 @@ func TestHissPops(t *testing.T) {
 					yy += y[i] * y[i]
 				}
 				db := 10 * math.Log10(xx/yy)
+				eng := 10 * math.Log10(ex/ey)
 				r := xy / math.Sqrt(xx*yy)
-				t.Logf("pops %+.2f dB against HEAD, correlation %.4f", db, r)
-				if math.Abs(db) > 1 || r < 0.999 {
-					t.Errorf("pops %+.2f dB against HEAD with a correlation of %.4f, want within 1 dB and at least 0.999", db, r)
+				t.Logf("pops %+.2f dB and engine %+.2f dB against no AM, correlation %.4f", db, eng, r)
+				if math.Abs(db-eng) > 1 || r < 0.999 {
+					t.Errorf("pops %+.2f dB over the engine against no AM with a correlation of %.4f, want within 1 dB and at least 0.999", db-eng, r)
 				}
 			})
 		}
 	}
 }
 
-// TestHissIdle checks the noise AM at idle and at 2000 RPM against the
-// noise AM of HEAD a553aef, where am_idle 0.5 halves the AM depth at idle.
-// At the idle and the 2000 RPM holds of the holds-t000, holds-t050 and
-// holds-t100 scenarios, the 4 to 12 kHz level and the floor are not higher
-// by more than 0.2 dB, the HNR from 20 to 500 Hz is not lower by more
-// than 0.2 dB, and the RMS level is within 0.3 dB. On holds-t100, the
-// floor is at least 3.5 dB lower at both holds. With am_idle 0.5, it was
-// 4.2 to 5.3 dB lower at idle and 4.8 to 6.2 dB lower at 2000 RPM, and
-// the RMS level changed by -0.04 to -0.26 dB.
-func TestHissIdle(t *testing.T) {
+// noiseTargets are the engine-sim residual from 2 to 6 kHz relative to the
+// whole signal, in decibels, at the idle hold and the 3000 RPM hold of
+// holds-t100 (docs/research/engine-sim-target.md section 5). In that band,
+// the output is the noise AM alone.
+var noiseTargets = map[string][2]float64{
+	"flat12":  {-28.4, -29.8},
+	"flat6":   {-25.2, -33.9},
+	"inline4": {-48.2, -43.0},
+	"v8":      {-26.4, -31.2},
+}
+
+// TestNoiseCycle checks that the noise follows the engine cycle as the
+// engine-sim noise does, at the idle hold and the 3000 RPM hold of
+// holds-t100, measured from 0.5 s into the hold to its end. The residual
+// power of the noise over the cycle has a peak 2 to 12 dB above its mean
+// and a trough 3 to 24 dB below it: engine-sim has 2.8 to 11.2 dB and 4.1
+// to 18.3 dB. A noise that is steady over the cycle has about 0 dB for
+// both. The residual from 2 to 6 kHz is within 2 dB of noiseTargets at idle
+// and within 6 dB at 3000 RPM. The AM depth is set at idle. At 3000 RPM,
+// the residual is 3 to 5 dB above engine-sim, because the slow RPM jitter
+// adds to it.
+func TestNoiseCycle(t *testing.T) {
 	t.Parallel()
-	for _, name := range Profiles() {
-		for _, scn := range []string{"holds-t000", "holds-t050", "holds-t100"} {
-			t.Run(name+"/"+scn, func(t *testing.T) {
-				t.Parallel()
-				p, dir := hissProfile(t, name)
-				q, _ := hissProfile(t, name, legacyAM...)
-				now, was := hissHolds(t, p, dir, scn), hissHolds(t, q, dir, scn)
-				for i, h := range now[:2] {
-					w := was[i]
-					d := hissHold{rpm: h.rpm, hnr: h.hnr - w.hnr, floor: h.floor - w.floor, hf: h.hf - w.hf, rmsDB: h.rmsDB - w.rmsDB}
-					t.Logf("%5.0f RPM: change of 4-12 kHz %+.2f dB, HNR 20-500 Hz %+.2f dB, floor %+.2f dB, RMS %+.3f dB", d.rpm, d.hf, d.hnr, d.floor, d.rmsDB)
-					worse := d.hf > 0.2 || d.floor > 0.2 || d.hnr < -0.2 || math.Abs(d.rmsDB) > 0.3
-					if worse || scn == "holds-t100" && d.floor > -3.5 {
-						t.Errorf("%.0f RPM: 4-12 kHz %+.2f dB, HNR %+.2f dB, floor %+.2f dB, RMS %+.3f dB against HEAD", d.rpm, d.hf, d.hnr, d.floor, d.rmsDB)
-					}
-				}
+	for name, want := range noiseTargets {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			p, dir := hissProfile(t, name)
+			scn, err := scenario.ParseFile(filepath.Join(dir, "holds-t100.scn"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			x := render(newEngine(t, p), scn.Duration(), func(t float64) Snapshot {
+				rpm, thr := scn.At(t)
+				return Snapshot{RPM: float32(rpm), Throttle: float32(thr), Load: float32(thr), Flags: FlagRunning}
 			})
-		}
+			start, i := 0.0, 0
+			for _, g := range scn.Segments {
+				if g.Kind == scenario.Hold && (i == 0 || g.RPM0 == 3000) {
+					y := make([]float64, int((g.Seconds-0.5)*testRate))
+					for j := range y {
+						y[j] = float64(x[int((start+0.5)*testRate)+j])
+					}
+					r, ok := analysis.Residual(y, testRate, g.RPM0)
+					if !ok {
+						t.Fatalf("%.0f RPM: no residual", g.RPM0)
+					}
+					band := r.Bands[2].DB
+					tol := 2.0
+					if i > 0 {
+						tol = 6
+					}
+					t.Logf("%5.0f RPM: residual %.1f dB, 2-6 kHz %.1f dB (engine-sim %.1f), AM peak %+.1f dB, trough %+.1f dB",
+						g.RPM0, r.ResidualDB, band, want[i], r.AMPeakDB, r.AMTroughDB)
+					if r.AMPeakDB < 2 || r.AMPeakDB > 12 || r.AMTroughDB > -3 || r.AMTroughDB < -24 || math.Abs(band-want[i]) > tol {
+						t.Errorf("%.0f RPM: AM peak %+.1f dB, trough %+.1f dB and 2-6 kHz %.1f dB, want 2 to 12, -3 to -24 and %.1f within %.0f",
+							g.RPM0, r.AMPeakDB, r.AMTroughDB, band, want[i], tol)
+					}
+					i++
+				}
+				start += g.Seconds
+			}
+			if i != 2 {
+				t.Fatalf("%d holds measured, want 2", i)
+			}
+		})
 	}
 }

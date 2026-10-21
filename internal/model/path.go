@@ -26,10 +26,14 @@ type path struct {
 	// stages clear, so that the next pop starts from silence.
 	popLeft, popTail int
 
-	outlet       dsp.Biquad
-	direct, gain float32
-	air          *dsp.Delay
-	airD         int
+	// outlet and air are the outlet filter and the air delay of the
+	// engine wave. popOutlet and popAir are the same stages for the pop
+	// alone, which run with the pop stages, so that the pops pass the
+	// leveller of the output stage unchanged.
+	outlet, popOutlet dsp.Biquad
+	direct, gain      float32
+	air, popAir       *dsp.Delay
+	airD              int
 }
 
 // linear holds the state of the linear stages of a path: the collector,
@@ -59,8 +63,10 @@ func newPath(p PathSpec, e ExhaustSpec, rate float64) path {
 		l.colLP.A = 1
 	}
 	q.outlet.SetOutlet(p.OutletM, c, rate)
+	q.popOutlet = q.outlet
 	if d := int(math.Round(p.ListenerM / 343 * rate)); d > 0 {
 		q.air = dsp.NewDelay(d)
+		q.popAir = dsp.NewDelay(d)
 		q.airD = d
 	}
 
@@ -104,20 +110,33 @@ func (l *linear) reset() {
 
 // process runs the path for one sample of the engine wave x and the pop
 // jump j: the linear stages, the wave steepening of the engine wave, the
-// outlet filter and the air delay to the listener. live is true while the
-// pop jump of the path sounds. The pop stages run from then until popTail
-// samples after the last live sample, so that the steepening leaves out
-// the pop.
-func (p *path) process(x, j float32, live bool) float32 {
+// outlet filter and the air delay to the listener. It returns the engine
+// output and the pop output. live is true while the pop jump of the path
+// sounds. The pop stages run from then until popTail samples after the
+// last live sample, so that the steepening and the leveller leave out the
+// pop. Outside the pop stages, the pop output is zero and a pop jump in j
+// is part of the engine output.
+func (p *path) process(x, j float32, live bool) (eng, pop float32) {
 	if live {
 		p.popLeft = p.popTail
 	}
 	var y, w float32
 	if p.popLeft > 0 {
 		y, w = p.linear2(x+j, j)
+		v := y - w
+		pop = p.gain * (p.direct*v + p.popOutlet.Process(v))
+		if p.popAir != nil {
+			p.popAir.Write(pop)
+			pop = p.popAir.Read(p.airD)
+		}
+		y = w
 		p.popLeft--
 		if p.popLeft == 0 {
 			p.pop.reset()
+			p.popOutlet.Reset()
+			if p.popAir != nil {
+				p.popAir.Reset()
+			}
 		}
 	} else {
 		// The engine stages are written out here, so that they need no call.
@@ -143,10 +162,10 @@ func (p *path) process(x, j float32, live bool) float32 {
 	y += p.steep * w * a
 	y = p.gain * (p.direct*y + p.outlet.Process(y))
 	if p.air == nil {
-		return y
+		return y, pop
 	}
 	p.air.Write(y)
-	return p.air.Read(p.airD)
+	return p.air.Read(p.airD), pop
 }
 
 // linear2 runs the linear stages for one sample of the engine and the pop

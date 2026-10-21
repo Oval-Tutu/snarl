@@ -18,12 +18,15 @@ import (
 // that does not repeat from one engine cycle to the next.
 
 // silentEngine are the overrides that turn off every random and noise
-// layer and the pops.
+// layer and the pops. The leveller gain puts the engine far below the
+// knee, so that the leveller gain is fixed: above the knee, its peak
+// follower catches a different sample of each cycle, which moves the gain
+// by about -60 dB from cycle to cycle.
 var silentEngine = []string{
 	"noise.am=0", "noise.jet=0",
 	"pulse.cycle_variation=0", "pulse.jitter=0",
 	"idle.variation=0", "idle.timing_deg=0", "idle.hunt=0", "idle.rock=0", "idle.imbalance=0",
-	"pops.density=0",
+	"pops.density=0", "voice.leveller_db=-40",
 }
 
 // staticRate is the sample rate of the static tests.

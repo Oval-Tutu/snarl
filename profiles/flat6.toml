@@ -38,11 +38,13 @@ overlap = 1.0
 low_shelf_db = 1
 
 [noise]
-am = 0.2
-am_cutoff_hz = 800
-am_redline = 0.25
-am_idle = 0.5
-jet = 0.02
+# hf_gain stays 0 until an exhaust stage spreads each pulse as the engine-sim
+# impulse response does. am puts the 2 to 6 kHz residual of the full-throttle
+# idle hold at the engine-sim value.
+hf_gain = 0
+am = 0.44
+am_cutoff_hz = 2000
+jet = 0.003
 jet_hz = 1500
 
 [pops]
@@ -68,9 +70,9 @@ hunt = 0.005
 rock = 0.02
 
 [voice]
-output_db = 5.7
-idle_gain_db = 3.5
-idle_gain_rpm = 5600
+# leveller_db puts the closed-throttle idle below the knee of the leveller.
+leveller_db = 5.5
+output_db = 4.2
 
 [[cylinder]] # 1
 crank_deg = 0

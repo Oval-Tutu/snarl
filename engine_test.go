@@ -248,10 +248,13 @@ func rms(x []float64) float64 {
 }
 
 // TestOverrunLevel checks that the overrun scenario keeps the level of
-// full throttle at the top RPM. Every 200 ms window from the lift-off at
-// 2 s to the end is within 3 dB of the full-throttle level from 1 to 2 s.
-// The lower bound holds with pops. The upper bound holds without pops,
-// because a pop adds to the level.
+// full throttle. Every 200 ms window from the lift-off at 2 s to the end
+// is within 3 dB of the 200 ms window of the sweep-wot scenario at the
+// nearest RPM. The lower bound holds with pops. The upper bound holds
+// without pops, because a pop adds to the level. The leveller holds the
+// peak, so the full-throttle level moves with the crest factor over RPM,
+// and the overrun follows the full-throttle level at the same RPM, not at
+// the top RPM.
 func TestOverrunLevel(t *testing.T) {
 	t.Parallel()
 	for _, name := range Profiles() {
@@ -266,14 +269,25 @@ func TestOverrunLevel(t *testing.T) {
 			q.spec = &s
 			x, scn := renderScenario(t, p, "overrun")
 			quiet, _ := renderScenario(t, q, "overrun")
-			ref := rms(x[testRate : 2*testRate])
+			full, sweep := renderScenario(t, p, "sweep-wot")
+			fullDB := func(rpm float64) float64 {
+				best, at := math.Inf(1), 0.0
+				for w := 0; float64(w+1)/5 <= sweep.Duration(); w++ {
+					r, _ := sweep.At(float64(w)/5 + 0.1)
+					if d := math.Abs(r - rpm); d < best {
+						best, at = d, float64(w)/5
+					}
+				}
+				return windowDB(full, at, 1)
+			}
 			least, most := math.Inf(1), math.Inf(-1)
 			for w := 10; float64(w+1)/5 <= scn.Duration(); w++ {
 				t0 := float64(w) / 5
-				lo, hi := windowDB(x, t0, ref), windowDB(quiet, t0, ref)
+				rpm, _ := scn.At(t0 + 0.1)
+				ref := fullDB(rpm)
+				lo, hi := windowDB(x, t0, 1)-ref, windowDB(quiet, t0, 1)-ref
 				least, most = min(least, lo), max(most, hi)
 				if lo < -3 || hi > 3 {
-					rpm, _ := scn.At(t0 + 0.1)
 					t.Errorf("window at %.1f s, %.0f RPM: %.1f dB, %.1f dB without pops, want within 3 dB",
 						t0, rpm, lo, hi)
 				}
@@ -283,12 +297,14 @@ func TestOverrunLevel(t *testing.T) {
 	}
 }
 
-// TestLoadLevelOrder checks the level order over load at each hold RPM of
-// the holds-t000, holds-t050 and holds-t100 scenarios. In a 1 s window in
-// the middle of each hold, throttle 0.5 is not below closed throttle, and
-// throttle 1 is the loudest by at least 0.5 dB. Throttle 0.5 is 0.5 to
-// 4 dB below throttle 1. The closed-throttle render has no pops, because a
-// pop adds to the level.
+// TestLoadLevelOrder checks the level over load at each hold RPM of the
+// holds-t000, holds-t050 and holds-t100 scenarios, in a 1 s window in the
+// middle of each hold. Above its knee, the engine-sim leveller holds the
+// level over load: in the engine-sim references, throttle 0.5 is within
+// 1.3 dB of throttle 1, and closed throttle is within 1 dB of it except
+// below the knee. Throttle 0.5 is within 1.5 dB of throttle 1, and closed
+// throttle is from 4 dB below throttle 1 to 1 dB above it. The
+// closed-throttle render has no pops, because a pop adds to the level.
 func TestLoadLevelOrder(t *testing.T) {
 	t.Parallel()
 	for _, name := range Profiles() {
@@ -313,7 +329,7 @@ func TestLoadLevelOrder(t *testing.T) {
 					t0 := start + seg.Seconds/2 - 0.5
 					o, h, f := level(over, t0), level(part, t0), level(full, t0)
 					t.Logf("%.0f RPM: overrun %.2f dB, part %.2f dB, relative to full throttle", seg.RPM0, o-f, h-f)
-					if o > h || h > f-0.5 || h < f-4 {
+					if math.Abs(h-f) > 1.5 || o > f+1 || o < f-4 {
 						t.Errorf("%.0f RPM: overrun %.1f dB, part %.1f dB, relative to full throttle",
 							seg.RPM0, o-f, h-f)
 					}
@@ -398,6 +414,41 @@ func TestOutputCalibration(t *testing.T) {
 			t.Logf("sweep-wot at %.2f LUFS", l)
 			if math.Abs(l+16) > 1 {
 				t.Errorf("sweep-wot at %.2f LUFS, want -16 within 1 LU", l)
+			}
+		})
+	}
+}
+
+// TestLevellerSweep checks the level of the full-throttle sweep-wot
+// scenario in 0.5 s windows from 0.25 s. The leveller holds the peak of
+// each window within a band of 4.5 dB, and the loudness within 4.5 LU.
+// The engine-sim references hold 1.3 to 2.3 dB and 1.4 to 3.0 LU. With no
+// leveller, snarl had 3.6 to 5.6 dB and 2.9 to 5.8 LU. The loudness band
+// is wider than in engine-sim, because the crest factor of the snarl
+// exhaust path rises from about 6 dB to about 14 dB with RPM, and the
+// leveller holds the peak, not the loudness.
+func TestLevellerSweep(t *testing.T) {
+	t.Parallel()
+	for _, name := range Profiles() {
+		t.Run(name, func(t *testing.T) {
+			p, err := LoadProfile(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			x, scn := renderScenario(t, p, "sweep-wot")
+			loLU, hiLU, loPk, hiPk := math.Inf(1), math.Inf(-1), math.Inf(1), math.Inf(-1)
+			for t0 := 0.25; t0+0.5 <= scn.Duration(); t0 += 0.5 {
+				l := segmentLoudness(x, t0, t0+0.5)
+				var pk float64
+				for _, v := range x[int(t0*testRate):int((t0+0.5)*testRate)] {
+					pk = max(pk, math.Abs(v))
+				}
+				pk = 20 * math.Log10(pk)
+				loLU, hiLU, loPk, hiPk = min(loLU, l), max(hiLU, l), min(loPk, pk), max(hiPk, pk)
+			}
+			t.Logf("loudness %.1f to %.1f LUFS, peak %.1f to %.1f dBFS", loLU, hiLU, loPk, hiPk)
+			if hiLU-loLU > 4.5 || hiPk-loPk > 4.5 {
+				t.Errorf("loudness band %.1f LU and peak band %.1f dB, want at most 4.5 and 4.5", hiLU-loLU, hiPk-loPk)
 			}
 		})
 	}

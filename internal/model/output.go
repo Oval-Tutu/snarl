@@ -17,15 +17,75 @@ const (
 	limRelease = 0.02
 )
 
-// output is the output stage: DC block, low pass at 0.45 times the sample
-// rate, a fixed calibration gain, and a look-ahead peak limiter into a
-// soft clipper. The engine model sets the level, so no gain here follows
-// the signal except the peak limiter.
+// The engine-sim leveller (LevelingFilter), with its constants at the
+// engine-sim sample rate of 44.1 kHz. levTarget is the output peak that
+// the leveller holds above its knee: the engine-sim target of 30000 at a
+// volume of 0.5, 0.458 of full scale, lowered by 3.8 dB, so that the
+// sweep-wot scenario is near -16 LUFS in place of the -12.2 LUFS of the
+// engine-sim references.
+const (
+	levRate    = 44100
+	levRelease = 0.999
+	levSmooth  = 0.9
+	levMaxGain = 1.9
+	levTarget  = 0.296
+)
+
+// output is the output stage. The engine passes the leveller gain, a DC
+// block and the leveller. The pops join the engine after the leveller, and
+// both pass a DC block, a low pass at 0.45 times the sample rate, the
+// calibration gain and a look-ahead peak limiter into a soft clipper.
 type output struct {
-	dc   dsp.DCBlock
-	lp   dsp.Biquad
-	gain float32
-	lim  limiter
+	pre, gain float32
+	engDC     dsp.DCBlock
+	lev       leveller
+	dc        dsp.DCBlock
+	lp        dsp.Biquad
+	lim       limiter
+}
+
+// leveller is the engine-sim peak leveller. The peak follows the input
+// magnitude at once and decays by levRelease per sample. The gain moves
+// towards levTarget over the peak, at most levMaxGain, by a one-pole
+// smoothing. A signal with a peak above levTarget/levMaxGain keeps its
+// output peak at levTarget: that is the knee. inv is levTarget over the
+// peak, which grows as the peak decays, so that only a new peak needs a
+// division. When inv reaches levMaxGain, the peak stops its decay, which
+// gives the same gain and keeps the peak away from subnormal values.
+type leveller struct {
+	peak, inv, g float32
+	rel, grow, k float32
+}
+
+func newLeveller(rate float64) leveller {
+	r := levRate / rate
+	rel := math.Pow(levRelease, r)
+	return leveller{
+		peak: levTarget,
+		inv:  1,
+		g:    1,
+		rel:  float32(rel),
+		grow: float32(1 / rel),
+		k:    float32(1 - math.Pow(levSmooth, r)),
+	}
+}
+
+// process levels one sample.
+func (l *leveller) process(x float32) float32 {
+	a := x
+	if a < 0 {
+		a = -a
+	}
+	if l.inv < levMaxGain {
+		l.peak *= l.rel
+		l.inv *= l.grow
+	}
+	if a > l.peak {
+		l.peak = a
+		l.inv = levTarget / a
+	}
+	l.g += (min(l.inv, levMaxGain) - l.g) * l.k
+	return x * l.g
 }
 
 // limiter is a look-ahead peak limiter. A sample above limCeil sets a gain
@@ -88,17 +148,29 @@ func (l *limiter) process(x float32) float32 {
 	return l.buf.Read(l.n) * l.g
 }
 
-func newOutput(gainDB, rate float64) output {
+// newOutput returns the output stage with the leveller gain and the
+// calibration gain in decibels.
+func newOutput(levDB, gainDB, rate float64) output {
 	o := output{
-		dc:   dsp.NewDCBlock(10, rate),
-		gain: float32(math.Pow(10, gainDB/20)),
-		lim:  newLimiter(rate),
+		pre:   float32(math.Pow(10, levDB/20)),
+		gain:  float32(math.Pow(10, gainDB/20)),
+		engDC: dsp.NewDCBlock(10, rate),
+		lev:   newLeveller(rate),
+		dc:    dsp.NewDCBlock(10, rate),
+		lim:   newLimiter(rate),
 	}
 	o.lp.SetLowPass(0.45*rate, 0.7071, rate)
 	return o
 }
 
-// process runs one sample.
+// level runs the leveller gain, the DC block and the leveller for one
+// engine sample.
+func (o *output) level(x float32) float32 {
+	return o.lev.process(o.engDC.Process(x * o.pre))
+}
+
+// process runs the rest of the output stage for one sample of the levelled
+// engine and the pops.
 func (o *output) process(x float32) float32 {
 	x = o.lp.Process(o.dc.Process(x))
 	return dsp.SoftClip(o.lim.process(x * o.gain))
