@@ -53,6 +53,10 @@ type Point struct {
 	RPM      float64 `json:"rpm"`
 	Throttle float64 `json:"throttle"`
 	Ignition bool    `json:"ignition"`
+	// Since is 0 for a steady hold. For a slice of a closing transient
+	// (CloseSlices), it is the time in seconds from the close to the middle
+	// of the slice.
+	Since float64 `json:"since_s,omitempty"`
 	// MeasuredRPM is the mean crank speed of the hold, and Cycles the whole
 	// cycles that the tables average.
 	MeasuredRPM float64 `json:"measured_rpm"`

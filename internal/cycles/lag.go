@@ -38,7 +38,7 @@ type StepSample struct {
 // with the ignition on, or -1.
 func findPoint(t *Tables, rpm, throttle float64) int {
 	for i, p := range t.Points {
-		if p.Ignition && p.RPM == rpm && p.Throttle == throttle {
+		if p.Ignition && p.Since == 0 && p.RPM == rpm && p.Throttle == throttle {
 			return i
 		}
 	}
@@ -81,7 +81,7 @@ func (r *Record) StepResponse(t *Tables, k int, opt MeasureOptions) ([]StepSampl
 	// The throttle rows at the RPM, for the best-matching throttle.
 	var rows []int
 	for i, p := range t.Points {
-		if p.Ignition && p.RPM == seg.RPM0 {
+		if p.Ignition && p.Since == 0 && p.RPM == seg.RPM0 {
 			rows = append(rows, i)
 			h = min(h, p.Harmonics)
 		}

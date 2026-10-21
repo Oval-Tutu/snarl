@@ -60,6 +60,10 @@ type Weight struct {
 func NewPlayer(t *Tables, opt PlayOptions) *Player {
 	p := &Player{t: t, opt: opt, dt: 1 / t.Rate, rows: map[bool][]row{}, rng: rand.New(rand.NewPCG(opt.Seed, 0x5eed))} //nolint:gosec // Noise, not security.
 	for i, pt := range t.Points {
+		// The player has no closing transient.
+		if pt.Since > 0 {
+			continue
+		}
 		rs := p.rows[pt.Ignition]
 		k := slices.IndexFunc(rs, func(r row) bool { return r.throttle == pt.Throttle })
 		if k < 0 {
