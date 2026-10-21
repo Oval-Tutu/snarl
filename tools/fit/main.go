@@ -30,10 +30,22 @@
 // its fitted gain, so that the pop crack keeps its balance with the pop
 // body.
 //
+// With --pulse, it measures instead the engine-sim runner pressure pulse
+// of one firing in each hold of the CSV files given as arguments (rendered
+// with one row per step), as the sum of the runner pressures of each
+// exhaust system that the engine dump of --engine names, with the scenario
+// of the same name in --scenarios. The report gives the shape of the pulse
+// of each hold, the error of one table whose length follows the RPM, and
+// the error of one row per hold RPM, at the holds and left out. With --out,
+// it writes the rows of the holds that --throttle, --min-rpm and --max-rpm
+// select as the pulse file that the model embeds
+// (internal/model/pulses/<profile>.txt).
+//
 // Usage:
 //
 //	go run ./tools/fit --ir IR.wav [--base ir] [--profile LEGACY.toml] [--out out/analysis/fit/v8.toml] > fit.md
 //	go run ./tools/fit --pop --profile LEGACY.toml [--out out/analysis/fit/v8-pop.toml] > fit.md
+//	go run ./tools/fit --pulse --throttle 1 --engine engine.json --scenarios scenarios/v8 [--out internal/model/pulses/v8.txt] holds-t100.csv [holds-t050.csv] > pulse.md
 package main
 
 import (
@@ -68,6 +80,13 @@ type config struct {
 	minN, maxN, rate           int
 	name                       string
 	pop                        bool
+	// The pulse fit: --pulse, the engine dump, the scenario directory, the
+	// table points, and the throttle and lowest RPM of the fitted holds.
+	pulse             bool
+	engine, scenarios string
+	points            int
+	throttle, minRPM  float64
+	maxRPM            float64
 }
 
 // smoothing names the smoothing of the target.
@@ -124,8 +143,21 @@ func run(args []string, w io.Writer) error {
 	fs.IntVar(&cfg.minN, "min", 4, "fewest sections in the report")
 	fs.IntVar(&cfg.maxN, "max", 12, "most sections")
 	fs.IntVar(&cfg.rate, "rate", 48000, "sample rate in `Hz` that the bank runs at")
+	fs.BoolVar(&cfg.pulse, "pulse", false, "measure the runner pressure pulse of the engine-sim CSV files given as arguments, in place of a bank fit")
+	fs.StringVar(&cfg.engine, "engine", "", "engine-sim-render --dump-json `file` of the engine of the --pulse CSV files")
+	fs.StringVar(&cfg.scenarios, "scenarios", "", "`directory` with the scenario of each --pulse CSV file, of the same name")
+	fs.IntVar(&cfg.points, "points", 128, "number of values of the --pulse table")
+	fs.Float64Var(&cfg.throttle, "throttle", 0.5, "lowest throttle of the holds that the --pulse table follows")
+	fs.Float64Var(&cfg.minRPM, "min-rpm", 0, "lowest RPM of the holds that the --pulse table follows")
+	fs.Float64Var(&cfg.maxRPM, "max-rpm", 100000, "highest RPM of the holds that the --pulse table follows")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if cfg.pulse {
+		if cfg.name == "" {
+			cfg.name = filepath.Base(cfg.scenarios)
+		}
+		return runPulse(&cfg, fs.Args(), w)
 	}
 	switch {
 	case fs.NArg() != 0 || (cfg.ir == "") == !cfg.pop || cfg.pop && cfg.profile == "":

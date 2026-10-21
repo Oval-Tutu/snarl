@@ -1,10 +1,82 @@
 package main
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/oval-tutu/snarl/internal/analysis"
 )
+
+// TestPulseMode checks the --pulse mode on a small engine dump, scenario
+// and CSV: the engine dump gives the exhaust system and the spark angle of
+// each cylinder, the report names every hold, and the pulse file has one
+// row per RPM with the RPM, the length and the values.
+func TestPulseMode(t *testing.T) {
+	dir := t.TempDir()
+	dump := `{"cylinders": [{"exhaust_system": 0, "spark_deg": 0}, {"exhaust_system": 0, "spark_deg": 360}]}`
+	if err := os.WriteFile(filepath.Join(dir, "engine.json"), []byte(dump), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "holds-t100.scn"), []byte("hold 3000 1 1.5\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// 1.5 s at 10 kHz and 3000 RPM: each cylinder fires every 40 ms, a
+	// pulse of 2 ms in its runner and 0.3 of it in the other.
+	var csv strings.Builder
+	csv.WriteString("time_s,rpm,runner_pressure_pa_0,runner_pressure_pa_1\n")
+	for s := range 15000 {
+		var p [2]float64
+		for c := range p {
+			ms := float64((s-c*200)%400) / 10
+			if ms >= 0 && ms < 2 {
+				v := 1000 * (ms / 2) * (2 - ms)
+				p[c] += v
+				p[1-c] += 0.3 * v
+			}
+		}
+		csv.WriteString(strings.Join([]string{ftoa(float64(s) / 10000), "3000", ftoa(101325 + p[0]), ftoa(101325 + p[1])}, ",") + "\n")
+	}
+	path := filepath.Join(dir, "holds-t100.csv")
+	if err := os.WriteFile(path, []byte(csv.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "pulse.txt")
+	var w bytes.Buffer
+	err := run([]string{
+		"--pulse", "--throttle", "1", "--points", "32", "--engine", filepath.Join(dir, "engine.json"),
+		"--scenarios", dir, "--out", out, path,
+	}, &w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(w.String(), "holds-t100 1 hold 3000 rpm") {
+		t.Errorf("report names no hold:\n%s", w.String())
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []string
+	for line := range strings.SplitSeq(string(data), "\n") {
+		if strings.HasPrefix(line, "row ") {
+			rows = append(rows, line)
+		}
+	}
+	if len(rows) != 1 || len(strings.Fields(rows[0])) != 3+32 || !strings.HasPrefix(rows[0], "row 3000 ") {
+		t.Errorf("pulse file rows %q, want one row of 32 values at 3000 RPM", rows)
+	}
+	if err := run([]string{"--pulse", path}, &w); err == nil {
+		t.Error("--pulse with no engine dump gave no error")
+	}
+}
+
+func ftoa(x float64) string {
+	return strconv.FormatFloat(x, 'f', 6, 64)
+}
 
 // TestPopTarget checks that the pop target leaves out the collector, that
 // paths may differ in their collector, gain and listener distance, and
