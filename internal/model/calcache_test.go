@@ -26,8 +26,8 @@ func twoPathSpec() Spec {
 
 // TestCalibrationCache checks that New takes the kind gains from the cache
 // and that they equal a fresh calibration, for one and two paths. Specs
-// that differ only in the pop density, character, gain or kind weights
-// share one calibration, and specs that differ in a pop shape value, a
+// that differ only in the pop density, character, gain or kind weights, or
+// in the crossover, overlap or formant gain, share one calibration, and specs that differ in a pop shape value, a
 // path or the sample rate do not.
 func TestCalibrationCache(t *testing.T) {
 	for _, s := range []Spec{popSpec(), twoPathSpec()} {
@@ -47,6 +47,14 @@ func TestCalibrationCache(t *testing.T) {
 		}
 		if newCalKey(&v, rate) != newCalKey(&s, rate) {
 			t.Errorf("%d paths: the density, character, gain and weights change the cache key", len(s.Paths))
+		}
+		v = s
+		v.Exhaust.Crossover, v.Exhaust.Coupling, v.Exhaust.Overlap, v.Exhaust.FormantGainDB = "partial", 0.3, 0.5, -6
+		if g := freshGains(&v); g != want {
+			t.Errorf("%d paths: the crossover, overlap and formant gain change the calibration", len(s.Paths))
+		}
+		if newCalKey(&v, rate) != newCalKey(&s, rate) {
+			t.Errorf("%d paths: the crossover, overlap and formant gain change the cache key", len(s.Paths))
 		}
 		for name, change := range map[string]func(*Spec){
 			"body_hz": func(q *Spec) { q.Pops.BodyHz *= 1.1 },

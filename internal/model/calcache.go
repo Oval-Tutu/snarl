@@ -10,9 +10,10 @@ const calCacheMax = 64
 // calKey holds every input of pops.calibrate: the exhaust paths, the
 // shared exhaust settings, the pop bank, the pop shape and the sample
 // rate. The pop settings that only the triggers and the gains of the own
-// and requested pops read are zero, so that specs that differ only in them
-// share one calibration. TestCalibrationCache checks that these settings do
-// not change the calibration.
+// and requested pops read, and the exhaust settings of the engine sound
+// only, are zero, so that specs that differ only in them share one
+// calibration. TestCalibrationCache checks that these settings do not
+// change the calibration.
 type calKey struct {
 	paths   [MaxBanks]PathSpec
 	n       int
@@ -29,6 +30,7 @@ func newCalKey(s *Spec, rate float64) calKey {
 	copy(k.bank[:], s.PopFormants)
 	k.pops.Density, k.pops.Character, k.pops.Gain = 0, "", 0
 	k.pops.WeightPop, k.pops.WeightBoom, k.pops.WeightCrackle, k.pops.WeightBurble = 0, 0, 0, 0
+	k.exhaust.Crossover, k.exhaust.Coupling, k.exhaust.Overlap, k.exhaust.FormantGainDB = "", 0, 0, 0
 	return k
 }
 

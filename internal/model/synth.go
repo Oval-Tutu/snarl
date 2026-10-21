@@ -398,7 +398,7 @@ func (y *Synth) initSynthInput(s *Spec, fs float64) {
 // from uniform noise through a low pass, with linear interpolation between
 // two samples. engine-sim uses a fourth-order Butterworth low pass. One
 // second-order section at the same cutoff costs half as much, and the 6 to
-// 16 kHz noise of the tuned profiles stays within 0.5 dB. The engine draws
+// 16 kHz residual of the v8 holds moves by at most 0.3 dB. The engine draws
 // one low-passed offset per sample, and path p reads it p*jitterLag samples
 // late: the offset at 10 kHz has no correlation over that lag, so the
 // paths jitter independently, as the engine-sim channels do, for one noise

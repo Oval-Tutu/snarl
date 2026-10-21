@@ -244,7 +244,7 @@ func TestPulseFile(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Logf("%-8s %d rows of %d values, from %.0f to %.0f RPM", name, len(p.rpm), p.points(), p.rpm[0], p.rpm[len(p.rpm)-1])
+		t.Logf("%-8s %d rows of %d values, from %.0f to %.0f RPM", name, len(p.rpm), len(p.v[0]), p.rpm[0], p.rpm[len(p.rpm)-1])
 	}
 	row := func(rpm, ms string) string {
 		return "row " + rpm + " " + ms + strings.Repeat(" 0.5", 20) + "\n"

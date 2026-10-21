@@ -10,8 +10,8 @@ func SetControlBlock(n int) (restore func()) {
 }
 
 // SetWholeSampleStart makes each pulse start on the whole sample at or
-// after its position, with no band-limited corner and no end at zero, and
-// returns a function that restores the fractional start. A test that
+// after its position, and returns a function that restores the fractional
+// start. A test that
 // calls it must not run in parallel with other tests of the package.
 func SetWholeSampleStart() (restore func()) {
 	wholeSampleStart = true

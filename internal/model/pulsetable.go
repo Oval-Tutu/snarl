@@ -168,11 +168,6 @@ func (t *pulseTable) at(a, b int, w float64) []float32 {
 	return t.blend[a][j]
 }
 
-// points returns the number of values of each row.
-func (t *pulseTable) points() int {
-	return len(t.v[0])
-}
-
 // bracket returns the rows j-1 and j around the RPM, and the weight of row
 // j from 0 to 1 by the distance in RPM. Below the first row and above the
 // last, both rows are that row.
