@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -113,6 +115,30 @@ func TestPopKey(t *testing.T) {
 	e.Paths[1].ChamberM = 0.4
 	if _, note := popKey(&e); note == "" {
 		t.Error("paths with other chambers gave no note")
+	}
+}
+
+// TestFitBanksMissingIR checks that fitBanks returns an error for each
+// missing impulse response. The fits that fail fast write their results
+// while the other fits start, so this test also finds a race on the maps
+// of fitBanks under -race.
+func TestFitBanksMissingIR(t *testing.T) {
+	const n = 64
+	all := make([]engine, n)
+	for i := range all {
+		all[i] = engine{
+			ImpulseResponse: fmt.Sprintf("missing-%d.wav", i),
+			Paths:           []exhaustPath{{PipeRadiusM: 0.03, OutletRadiusM: 0.03, ChamberM: 0.3, ChamberArea: 7, Gain: 1}},
+		}
+	}
+	err := fitBanks(all, t.TempDir())
+	if err == nil {
+		t.Fatal("fitBanks gave no error for missing impulse responses")
+	}
+	for i := range all {
+		if want := fmt.Sprintf("no impulse response missing-%d.wav", i); !strings.Contains(err.Error(), want) {
+			t.Errorf("the error has no %q", want)
+		}
 	}
 }
 

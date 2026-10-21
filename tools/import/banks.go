@@ -180,22 +180,35 @@ func fitBanks(all []engine, lib string) error {
 	}
 	irs := map[string]analysis.FormantBank{}
 	pops := map[analysis.LegacyPath]popFitResult{}
+	keys := make([]analysis.LegacyPath, len(all))
+	var irNames []string
+	var popKeys []analysis.LegacyPath
 	for i := range all {
 		e := &all[i]
 		if e.ImpulseResponse == "" {
 			e.ImpulseResponse = defaultIR
 		}
-		irs[e.ImpulseResponse] = analysis.FormantBank{}
+		if _, ok := irs[e.ImpulseResponse]; !ok {
+			irs[e.ImpulseResponse] = analysis.FormantBank{}
+			irNames = append(irNames, e.ImpulseResponse)
+		}
 		k, note := popKey(e)
-		pops[k] = popFitResult{}
+		keys[i] = k
+		if _, ok := pops[k]; !ok {
+			pops[k] = popFitResult{}
+			popKeys = append(popKeys, k)
+		}
 		if note != "" {
 			e.Notes = append(e.Notes, note)
 		}
 	}
+	// The goroutines write the maps, so the loops range over the key
+	// slices: a range over a map that another goroutine writes is a fatal
+	// error.
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var errs []error
-	for name := range irs {
+	for _, name := range irNames {
 		wg.Go(func() {
 			var b analysis.FormantBank
 			path, err := findIR(lib, name)
@@ -210,7 +223,7 @@ func fitBanks(all []engine, lib string) error {
 			}
 		})
 	}
-	for k := range pops {
+	for _, k := range popKeys {
 		wg.Go(func() {
 			b, d, err := fitPop(k)
 			mu.Lock()
@@ -228,8 +241,7 @@ func fitBanks(all []engine, lib string) error {
 	for i := range all {
 		e := &all[i]
 		e.Bank = irs[e.ImpulseResponse]
-		k, _ := popKey(e)
-		e.PopBank, e.PopDelayMS = pops[k].bank, pops[k].delay
+		e.PopBank, e.PopDelayMS = pops[keys[i]].bank, pops[keys[i]].delay
 	}
 	return nil
 }
