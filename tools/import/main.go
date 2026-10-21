@@ -6,9 +6,17 @@
 // directory for each engine, calibrates the output level of each profile
 // by rendering it, and writes profiles/catalogue/README.md.
 //
+// With --reference, it writes the reference set of just import-reference
+// in place of the catalogue: six engines from their upstream files and
+// their own upstream reference renders, each with a sources file that
+// gives the source of every key, and the README of the set
+// (reference.go). --enginelab then holds the JSON of the EngineLab engine,
+// and --scenarios the upstream scenarios (scenarios/upstream).
+//
 // Usage:
 //
 //	go run ./tools/import --engine-sim DIR --enginelab DIR --profiles DIR --scenarios DIR [--sound-library DIR]
+//	go run ./tools/import --reference profiles --enginelab DIR --scenarios scenarios/upstream [--work DIR] [--ref id=DIR ...]
 package main
 
 import (
@@ -49,10 +57,9 @@ type engine struct {
 	Bank, PopBank analysis.FormantBank
 	PopDelayMS    float64
 
-	// PulseTable is the pulse table of the tuned profile closest in
-	// layout, and Overlap the collector overlap of that profile.
+	// PulseTable is the pulse table of the reference engine closest in
+	// cylinder count.
 	PulseTable string
-	Overlap    float64
 
 	// Calibration results.
 	LevellerDB, OutputDB, SweepLUFS float64
@@ -86,8 +93,28 @@ func run(args []string) error {
 	profiles := fs.String("profiles", "", "output `directory` for the profiles and README.md")
 	scenarios := fs.String("scenarios", "", "output `directory` for the scenarios")
 	library := fs.String("sound-library", "", "engine-sim sound library `directory` with the impulse responses (default: share/engine-sim/es/sound-library of nix build -f reference/engine-sim)")
+	reference := fs.String("reference", "", "write the reference set to this `directory`, in place of the catalogue")
+	ro := refOptions{refs: map[string]string{}}
+	fs.StringVar(&ro.work, "work", "out/import/reference", "with --reference, `directory` of the tools/fit --pulse --json files, <id>/pulse.json")
+	fs.StringVar(&ro.elScenarios, "enginelab-scenarios", "reference/enginelab/scenarios", "with --reference, `directory` of the EngineLab scenarios of just ref-enginelab")
+	fs.StringVar(&ro.share, "engine-sim-share", "", "with --reference, share/engine-sim `directory` of the engine-sim package (default: that of nix build -f reference/engine-sim)")
+	fs.Func("ref", "with --reference, `id=directory` of the reference renders of one engine, in place of its default (repeatable)", func(s string) error {
+		id, dir, ok := strings.Cut(s, "=")
+		if !ok || dir == "" || !slices.ContainsFunc(referenceEngines, func(r refEngine) bool { return r.id == id }) {
+			return fmt.Errorf("%q is not id=directory of a reference engine", s)
+		}
+		ro.refs[id] = dir
+		return nil
+	})
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *reference != "" {
+		if *elDir == "" || *scenarios == "" || fs.NArg() != 0 {
+			return errors.New("--reference needs --enginelab and --scenarios, and no other arguments")
+		}
+		ro.out, ro.enginelab, ro.scenarios = *reference, *elDir, *scenarios
+		return runReference(&ro)
 	}
 	if *esDir == "" || *elDir == "" || *profiles == "" || *scenarios == "" {
 		fs.Usage()
@@ -122,8 +149,8 @@ func run(args []string) error {
 	}
 	for i := range all {
 		e := &all[i]
-		e.PulseTable, e.Overlap = pulseFor(len(e.Cylinders))
-		if err := calibrate(e); err != nil {
+		e.PulseTable = pulseFor(len(e.Cylinders))
+		if err := calibrate(e, profileTOML); err != nil {
 			return fmt.Errorf("%s: %w", e.ID, err)
 		}
 		if err := os.WriteFile(filepath.Join(*profiles, e.ID+".toml"), []byte(profileTOML(e)), 0o644); err != nil {

@@ -13,9 +13,12 @@ import (
 
 // esDump is the JSON that engine-sim-render --dump-json writes.
 type esDump struct {
+	Name        string   `json:"name"`
+	SimHz       float64  `json:"simulation_frequency_hz"`
 	RedlineRPM  float64  `json:"redline_rpm"`
 	RevLimitRPM float64  `json:"rev_limit_rpm"`
 	LimiterS    float64  `json:"limiter_duration_s"`
+	StarterRPM  float64  `json:"starter_speed_rpm"`
 	HFGain      *float64 `json:"hf_gain"`
 	Noise       *float64 `json:"noise"`
 	Jitter      *float64 `json:"jitter"`
@@ -38,6 +41,7 @@ type esDump struct {
 		SparkEnabled   bool    `json:"spark_enabled"`
 		ExhaustSystem  int     `json:"exhaust_system"`
 		HeaderPrimaryM float64 `json:"header_primary_length_m"`
+		Attenuation    float64 `json:"sound_attenuation"`
 	} `json:"cylinders"`
 }
 
@@ -145,14 +149,17 @@ func fromEngineSim(rel string, d *esDump) (engine, error) {
 	if len(systems) > 4 {
 		return engine{}, fmt.Errorf("%d exhaust systems, snarl takes 4 banks", len(systems))
 	}
-	first := d.Cylinders[0].SparkDeg
+	if d.reversed() {
+		e.Notes = append(e.Notes, fmt.Sprintf("The starter speed is %.0f rpm, so the crank turns the other way and the cylinders fire in falling spark angle.", d.StarterRPM))
+	}
+	first := d.timeSpark(0)
 	for i, c := range d.Cylinders {
 		if !c.SparkEnabled {
 			return engine{}, fmt.Errorf("cylinder %d has no ignition wire", i+1)
 		}
 		x := d.Exhaust[c.ExhaustSystem]
 		e.Cylinders = append(e.Cylinders, cylinder{
-			CrankDeg: wrap720(c.SparkDeg - first),
+			CrankDeg: wrap720(d.timeSpark(i) - first),
 			Bank:     banks[i],
 			PrimaryM: c.HeaderPrimaryM + x.PrimaryTubeM,
 		})
@@ -189,6 +196,22 @@ func fromEngineSim(rel string, d *esDump) (engine, error) {
 		})
 	}
 	return e, nil
+}
+
+// reversed reports that the crank turns the other way. engine-sim turns
+// the crank in the direction of the starter speed for the whole run, so a
+// negative starter speed fires the cylinders in falling spark angle.
+func (d *esDump) reversed() bool {
+	return d.StarterRPM < 0
+}
+
+// timeSpark returns the spark angle of cylinder i in the order of time:
+// the dump spark angle, negated when the crank turns the other way.
+func (d *esDump) timeSpark(i int) float64 {
+	if d.reversed() {
+		return -d.Cylinders[i].SparkDeg
+	}
+	return d.Cylinders[i].SparkDeg
 }
 
 // orDefault returns *v, or def when the dump has no value.

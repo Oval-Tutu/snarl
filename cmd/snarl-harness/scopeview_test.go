@@ -11,12 +11,12 @@ import (
 )
 
 func TestCylinderCounts(t *testing.T) {
-	ps, _, _, err := loadProfiles("v8", findCatalogue())
+	ps, _, _, err := loadProfiles("v8-ls", findCatalogue())
 	if err != nil {
 		t.Fatal(err)
 	}
 	n := cylinderCounts(ps, findCatalogue())
-	want := map[string]int{"flat12": 12, "inline4": 4, "flat6": 6, "v8": 8}
+	want := map[string]int{"i4-vtec": 4, "v8-ls": 8, "f4-ej25": 4, "v12-412": 12, "v12-merlin": 12, "f6-aircooled": 6}
 	for i, p := range ps {
 		if w, ok := want[p.Name]; ok && n[i] != w {
 			t.Errorf("%s: %d cylinders, want %d", p.Name, n[i], w)
@@ -43,7 +43,7 @@ type countTap struct{ n int }
 func (c *countTap) Capture([]float32) { c.n++ }
 
 func TestReadWithTeeDoesNotAllocate(t *testing.T) {
-	p, err := snarl.LoadProfile("flat6")
+	p, err := snarl.LoadProfile("f6-aircooled")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,11 +67,11 @@ func TestReadWithTeeDoesNotAllocate(t *testing.T) {
 
 // BenchmarkDrawScope measures the draw cost of the meter and the spectrum.
 func BenchmarkDrawScope(b *testing.B) {
-	ps, i, _, err := loadProfiles("v8", "")
+	ps, i, _, err := loadProfiles("v8-ls", "")
 	if err != nil {
 		b.Fatal(err)
 	}
-	h := &harness{profiles: ps, profile: i, scope: scope.New(stream.SampleRate, stream.Block), cylinders: []int{12, 4, 6, 8}}
+	h := &harness{profiles: ps, profile: i, scope: scope.New(stream.SampleRate, stream.Block), cylinders: []int{4, 8, 4, 12, 12, 6}}
 	h.snap.RPM = 3000
 	screen := ebiten.NewImage(screenW, screenH)
 	for b.Loop() {

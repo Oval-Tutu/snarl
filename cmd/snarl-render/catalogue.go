@@ -33,7 +33,7 @@ func findCatalogue() string {
 	}
 }
 
-// loadProfile returns the tuned profile with the given name, or else the
+// loadProfile returns the embedded profile with the given name, or else the
 // catalogue profile with that id in the catalogue directory, with the
 // overrides applied.
 func loadProfile(name, catalogue string, overrides ...string) (snarl.Profile, error) {

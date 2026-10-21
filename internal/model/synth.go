@@ -122,7 +122,6 @@ type Synth struct {
 	bankBuf      [MaxBanks][chunk]float32
 	delay        []float32
 	cylGain      []float32
-	cylDev       []float32
 	stepPerCycle float32
 	maxInc       float32
 	invRate120   float32
@@ -147,21 +146,17 @@ type Synth struct {
 	cycleVar, jitter            float32
 	redline, camRPM             float32
 	camGain                     float32
-	voiceGain, overlap          float32
+	voiceGain                   float32
 	limKind                     string
 	limRPM, limFall, limRise    float32
 	limCut                      int
-	limJitter                   float32
 	pumpLvl, notchLvl, barkLvl  float32
 	notchStep, kBark            float32
 	kRPM, kCtl, kMaster, kCam   float32
-	kLim, kHand                 float32
+	kHand                       float32
 	jit                         dsp.OnePole
-	idleRPM, ovLevel, ovIdle    float32
-	partLoad                    float32
-	shape                       float32
 	rpm, throttle, load, master float32
-	overrun, camMix             float32
+	camMix                      float32
 	camHigh                     bool
 	inc, step, amp              float32
 
@@ -252,14 +247,12 @@ func New(s *Spec, rate int) (*Synth, error) {
 		redline:    float32(s.RedlineRPM),
 		camRPM:     float32(s.CamSwitchRPM),
 		camGain:    float32(s.Pulse.CamGain),
-		overlap:    float32(s.Exhaust.Overlap),
 		voiceGain:  float32(s.Voice.Gain),
 		limKind:    s.LimiterKind,
 		limRPM:     float32(s.LimiterRPM),
 		limFall:    float32(s.LimiterFallRPMS * s.LimiterLoadScale / fs),
 		limRise:    float32(s.LimiterRiseRPMS * s.LimiterLoadScale / fs),
 		limCut:     int(s.LimiterMS * 1e-3 * fs),
-		limJitter:  float32(s.LimiterJitter),
 		fade:       1,
 		fadeRate:   float32(math.Pow(10, fadeDB/20/chunkHz)),
 		waver:      float32(s.FinalGearWaver),
@@ -275,14 +268,9 @@ func New(s *Spec, rate int) (*Synth, error) {
 		kCtl:       dsp.TimeCoef(0.025, chunkHz),
 		kMaster:    dsp.TimeCoef(0.02, chunkHz),
 		kCam:       dsp.TimeCoef(0.015, chunkHz),
-		kLim:       dsp.TimeCoef(0.002, chunkHz),
 		kHand:      1 - dsp.TimeCoef(handover, chunkHz),
 		kEng:       dsp.TimeCoef(engLevelSec, chunkHz),
 		jit:        dsp.OnePole{A: dsp.OnePoleCoef(2, chunkHz)},
-		idleRPM:    float32(s.IdleRPM),
-		ovLevel:    float32(math.Pow(10, s.Overrun.LevelDB/20)),
-		ovIdle:     float32(math.Pow(10, s.Overrun.IdleLevelDB/20)),
-		partLoad:   float32(math.Pow(10, s.Pulse.PartLoadDB/20)),
 		pops:       newPops(s, fs, float64(controlBlock)/fs),
 		out:        newOutput(s.Voice.LevellerDB, s.Voice.OutputDB, fs),
 	}
@@ -305,14 +293,12 @@ func (y *Synth) initCylinders(s *Spec, fs float64) {
 	y.act = make([]int, 0, voicesPerCyl*n)
 	y.delay = make([]float32, n)
 	y.cylGain = make([]float32, n)
-	y.cylDev = make([]float32, n)
 	offsets := make([]float32, n)
 	setup := dsp.NewNoise(uint32(s.Seed&math.MaxUint16) + 0x7a11)
 	for i, c := range s.Cylinders {
 		deg := c.CrankDeg + s.Pulse.TimingVariationDeg*float64(setup.Bipolar())
 		deg = math.Mod(deg+720, 720)
-		y.cylDev[i] = setup.Bipolar()
-		y.cylGain[i] = 1 + float32(s.Pulse.GainVariation)*y.cylDev[i]
+		y.cylGain[i] = 1 + float32(s.Pulse.GainVariation)*setup.Bipolar()
 		offsets[i] = float32(deg / 720)
 		for v := range voicesPerCyl {
 			y.voices[voicesPerCyl*i+v].bank = c.Bank
@@ -470,16 +456,6 @@ func b2f(b bool) float32 {
 	return 0
 }
 
-// loadLevel returns the pulse gain at load ld, relative to full load at
-// the same RPM. It rises with load along lvl+(1-lvl)*ld^k, from the
-// overrun level lvl at load 0 to 1 at load 1. The exponent k puts the gain
-// at load 0.5 on part. When lvl is not below part, k stops at its upper
-// bound, and the gain stays near lvl up to high load.
-func loadLevel(ld float64, lvl, part float32) float32 {
-	k := math.Log2(float64(1-lvl) / math.Max(float64(part-lvl), 1e-3))
-	return lvl + (1-lvl)*float32(math.Pow(ld, min(max(k, 0.2), 8)))
-}
-
 // control runs once per chunk of n samples.
 func (y *Synth) control(c *Control, n int) {
 	rpm := clampf(c.RPM, 0, maxRPM)
@@ -500,11 +476,6 @@ func (y *Synth) control(c *Control, n int) {
 	}
 	limiting := y.limit(rpm, thr, c.Gear, c.Final, n)
 	over := c.Overrun && thr < 0.05 && !limiting
-	k := y.kCtl
-	if limiting {
-		k = y.kLim
-	}
-	y.overrun += (b2f(over) - y.overrun) * k
 
 	if y.camRPM > 0 {
 		if !y.camHigh && y.rpm > y.camRPM {
@@ -520,16 +491,11 @@ func (y *Synth) control(c *Control, n int) {
 	speed := y.invRate120 * (1 + y.jitter*j) * y.idle.speed
 	y.inc = min(y.PitchRPM()*speed, y.maxInc)
 
-	ld := float64(y.load)
 	rr := min(y.rpm/y.redline, 1.2)
-	// The pulse gain follows the load curve. On overrun, it moves to the
-	// overrun level.
-	pos := min(1, max(0, (y.rpm-y.idleRPM)/(y.redline-y.idleRPM)))
-	lvl := y.ovIdle + (y.ovLevel-y.ovIdle)*pos
-	shape := loadLevel(ld, lvl, y.partLoad)
-	y.shape = shape + (lvl-shape)*y.overrun
-	y.amp = y.master * y.voiceGain * y.shape * (0.5 + 0.5*rr) *
-		(1 + y.camGain*y.camMix) * (1 + 2*y.jitter*j) * y.idle.rock
+	// The load does not change the pulse gain. As in engine-sim, the
+	// leveller sets the level of the part load and of the overrun.
+	y.amp = y.master * y.voiceGain * (0.5 + 0.5*rr) *
+		(1 + y.camGain*y.camMix) * (1 + 2*y.jitter*j)
 	// The limiter level ramps over the chunk. It starts at its first value.
 	g := (1 + y.bark) * y.fade
 	if y.cutting {
@@ -586,12 +552,7 @@ func (y *Synth) limit(rpm, thr float32, gear uint8, final bool, n int) bool {
 		y.bounce, y.climb, y.cut = false, false, 0
 	}
 	if !final && y.cut <= 0 && !y.climb && (at || y.limEvent) && y.limCut > 0 {
-		// The draw only runs with a jitter, so that a profile with none
-		// keeps its random sequence.
 		y.cutLen = y.limCut
-		if y.limJitter > 0 {
-			y.cutLen = int(float32(y.limCut) * (1 + y.limJitter*y.noise.Bipolar()))
-		}
 		y.cut = y.cutLen
 		y.bounce = at
 		y.lrpm = y.rpm - y.dip
@@ -698,21 +659,19 @@ func (y *Synth) controlPulse() {
 }
 
 // fire starts the pulse of one cylinder at sample at of the chunk. In a
-// limiter cut, the pulse is a pumping pulse, with no combustion variation
-// in gain or delay. The limiter levels act on the levelled engine, through
-// env.
+// limiter cut, the pulse is a pumping pulse, with no combustion variation.
+// The limiter levels act on the levelled engine, through env.
 func (y *Synth) fire(cyl, at int) {
-	g, late := float32(1), float32(0)
+	g := float32(1)
 	if y.cutting {
 		if y.bangAt >= 0 && y.cutLen-y.cut >= y.bangAt {
 			y.pops.bang(len(y.paths))
 			y.bangAt = -1
 		}
 	} else {
-		g, late = y.idle.firing()
 		// A spread above 1 clips at zero, so that no firing has a negative
 		// pressure.
-		g *= max(0, 1+(y.cycleVar+y.spreadG)*y.noise.Bipolar())
+		g = max(0, 1+(y.cycleVar+y.spreadG)*y.noise.Bipolar())
 	}
 	// The cylinder fires its voices in turn, so that a pulse that lasts
 	// longer than one engine cycle rings on under the next.
@@ -724,9 +683,9 @@ func (y *Synth) fire(cyl, at int) {
 		// The earlier pulse of the voice runs up to the new firing.
 		y.renderVoice(v, at)
 	}
-	v.gain = y.amp * (y.cylGain[cyl] + y.idle.imbalance*y.cylDev[cyl]) * g
+	v.gain = y.amp * y.cylGain[cyl] * g
 	v.tab = y.tab
-	v.pos = (y.crank.past-late)*y.stepPerCycle - y.delay[cyl]*y.step
+	v.pos = y.crank.past*y.stepPerCycle - y.delay[cyl]*y.step
 	if wholeSampleStart && y.step > 0 {
 		v.pos = -float32(math.Ceil(float64(-v.pos/y.step))) * y.step
 	}
@@ -804,12 +763,6 @@ func (y *Synth) process(dst []float32) {
 	}
 	y.renderVoices(n)
 	for i := range dst {
-		var bank [MaxBanks]float32
-		for b := range np {
-			v := y.bankBuf[b][i]
-			bank[b] = v + y.overlap*v*v
-		}
-
 		am := y.kNoise*y.amLP[1].Process(y.amLP[0].Process(y.noise.Bipolar())) + y.kFlat
 		pop := y.pops.tick()
 		if y.jitScale > 0 {
@@ -822,7 +775,7 @@ func (y *Synth) process(dst []float32) {
 		for p := range np {
 			var x float32
 			for b := range np {
-				x += y.cross[p][b] * bank[b]
+				x += y.cross[p][b] * y.bankBuf[b][i]
 			}
 			// From engine-sim: the low pass and the jitter of the
 			// synthesiser input, and the derivative plus the noise AM of

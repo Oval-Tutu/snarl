@@ -108,7 +108,7 @@ func BenchmarkPops(b *testing.B) {
 func popSpec() Spec {
 	s := DefaultSpec()
 	s.Name = "p"
-	s.Pulse.Table = "inline4"
+	s.Pulse.Table = "i4-vtec"
 	s.IdleRPM, s.RedlineRPM = 800, 6800
 	s.Cylinders = []CylinderSpec{{CrankDeg: 0, Bank: 0, PrimaryM: 0.4}}
 	s.Paths = []PathSpec{{CollectorM: 1.3, Reflection: -0.4, DampingHz: 3000, Gain: 1}}

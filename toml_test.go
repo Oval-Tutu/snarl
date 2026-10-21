@@ -78,7 +78,7 @@ func TestProfileErrors(t *testing.T) {
 idle_rpm = 800
 redline_rpm = 6000
 [pulse]
-table = "inline4"
+table = "i4-vtec"
 [[cylinder]]
 crank_deg = 0
 bank = 0
@@ -113,13 +113,12 @@ q = 0.7
 		"bad pump":      strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nlimiter_pump_db = 1", 1),
 		"bad notch":     strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nlimiter_notch_db = 0", 1),
 		"bad bark":      strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nlimiter_bark_db = -1", 1),
-		"bad jitter":    strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nlimiter_jitter = 0.6", 1),
 		"bad waver":     strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nfinal_gear_waver = 0.1", 1),
 		"bad crossing":  strings.Replace(good, "[[cylinder]]", "[exhaust]\ncrossover = \"some\"\n[[cylinder]]", 1),
 		"bad formant":   strings.Replace(good, `kind = "peak"`, `kind = "notch"`, 1),
-		"no table":      strings.Replace(good, `table = "inline4"`, "", 1),
-		"bad table":     strings.Replace(good, `table = "inline4"`, `table = "nonesuch"`, 1),
-		"path table":    strings.Replace(good, `table = "inline4"`, `table = "../v8"`, 1),
+		"no table":      strings.Replace(good, `table = "i4-vtec"`, "", 1),
+		"bad table":     strings.Replace(good, `table = "i4-vtec"`, `table = "nonesuch"`, 1),
+		"path table":    strings.Replace(good, `table = "i4-vtec"`, `table = "../v8-ls"`, 1),
 		"bad pop q":     strings.Replace(good, "q = 0.7", "q = 0", 1),
 		"bad gain db":   strings.Replace(good, "gain_db = 12", "gain_db = 60", 1),
 		"bad pop ms":    strings.Replace(good, "[[cylinder]]", "[exhaust]\npop_delay_ms = 30\n[[cylinder]]", 1),
@@ -127,7 +126,6 @@ q = 0.7
 		"bad am cut":    strings.Replace(good, "[[cylinder]]", "[noise]\nam_cutoff_hz = 9000\n[[cylinder]]", 1),
 		"bad am":        strings.Replace(good, "[[cylinder]]", "[noise]\nam = 1.5\n[[cylinder]]", 1),
 		"bad hf gain":   strings.Replace(good, "[[cylinder]]", "[noise]\nhf_gain = -0.1\n[[cylinder]]", 1),
-		"bad overrun":   strings.Replace(good, "[[cylinder]]", "[overrun]\nlevel_db = 10\n[[cylinder]]", 1),
 		"bad idle":      strings.Replace(good, "[[cylinder]]", "[idle]\nfade_rpm = 500\n[[cylinder]]", 1),
 		"bad hunt":      strings.Replace(good, "[[cylinder]]", "[idle]\nhunt = 0.5\n[[cylinder]]", 1),
 		"bad leveller":  strings.Replace(good, "[[cylinder]]", "[voice]\nleveller_db = 70\n[[cylinder]]", 1),
@@ -139,9 +137,15 @@ q = 0.7
 			t.Errorf("%s: no error", name)
 		}
 	}
-	// The removed keys are unknown keys, and the removed [mechanical] table
-	// is an unknown table.
+	// The removed keys are unknown keys, and the removed [mechanical] and
+	// [overrun] tables are unknown tables.
+	if _, err := parseProfile(strings.Replace(good, "redline_rpm = 6000", "redline_rpm = 6000\nlimiter_jitter = 0.1", 1)); err == nil ||
+		!strings.Contains(err.Error(), "unknown key") {
+		t.Errorf("limiter_jitter: got %v, want an unknown key error", err)
+	}
 	for _, kv := range []string{
+		"[exhaust]\noverlap = 1", "[overrun]\nlevel_db = -1", "[overrun]\nidle_level_db = -1", "part_load_db = -0.6",
+		"[idle]\nvariation = 0.1", "[idle]\ntiming_deg = 1", "[idle]\nimbalance = 0.2", "[idle]\nrock = 0.01",
 		"[noise]\nair = 0.03", "[noise]\nair_cutoff_hz = 1800", "[voice]\ntier1_db = 1", "[voice]\ntier1_idle_gain_db = 1",
 		"[noise]\nintake = 0.08", "[noise]\nintake_hz = 420", "[noise]\nintake_cam_gain = 1.2", "[noise]\nintake_cam_hz = 560",
 		"[mechanical]\ntick_gain = 0.01", "[mechanical]\ntick_hz = 3000", "[mechanical]\ntick_lp_hz = 9000",
@@ -151,7 +155,7 @@ q = 0.7
 		"[exhaust]\nlow_shelf_db = 0", "[exhaust]\nlow_shelf_hz = 250",
 	} {
 		_, err := parseProfile(strings.Replace(good, "[[cylinder]]", kv+"\n[[cylinder]]", 1))
-		if err == nil || !strings.Contains(err.Error(), "unknown key") && !strings.Contains(err.Error(), "unknown table mechanical") {
+		if err == nil || !strings.Contains(err.Error(), "unknown key") && !strings.Contains(err.Error(), "unknown table") {
 			t.Errorf("%q: got %v, want an unknown key error", kv, err)
 		}
 	}

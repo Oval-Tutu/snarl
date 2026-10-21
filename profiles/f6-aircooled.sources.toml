@@ -1,0 +1,295 @@
+# Sources of the keys of f6-aircooled.toml, written by just import-reference.
+# kind: upstream (copied from the upstream engine), measured (from its own
+# upstream reference render), snarl (a snarl default for a feature that
+# upstream does not have) or not-measured (the model default, because the
+# references cannot give it).
+
+[[source]]
+key = "name"
+kind = "snarl"
+from = "the id of the reference engine"
+
+[[source]]
+key = "description"
+kind = "snarl"
+from = "the description of 09_porsche_flat6_like.engine.yaml in tools/import, which names no maker or model"
+
+[[source]]
+key = "seed"
+kind = "snarl"
+from = "the FNV-1a hash of the name, as tools/import seeds every profile"
+
+[[source]]
+key = "idle_rpm"
+kind = "upstream"
+from = "engines/09_porsche_flat6_like.engine.yaml engine.idle_rpm"
+
+[[source]]
+key = "redline_rpm"
+kind = "upstream"
+from = "engines/09_porsche_flat6_like.engine.yaml engine.redline_rpm"
+
+[[source]]
+key = "limiter_rpm"
+kind = "upstream"
+from = "engines/09_porsche_flat6_like.engine.yaml engine.ignition.rev_limit_rpm"
+
+[[source]]
+key = "limiter_kind"
+kind = "upstream"
+from = "engines/09_porsche_flat6_like.engine.yaml engine.ignition.limiter_keeps_fuel is not set, so the limiter cuts the fuel"
+
+[[source]]
+key = "limiter_ms"
+kind = "upstream"
+from = "engines/09_porsche_flat6_like.engine.yaml engine.ignition.limiter_duration_s"
+
+[[source]]
+key = "limiter_fall_rpm_s"
+kind = "not-measured"
+from = "EngineLab reaches about 7240 rpm at full throttle with no load, below its rev limit, so no reference bounces off the limiter (reference/enginelab/README.md): model default"
+
+[[source]]
+key = "limiter_rise_rpm_s"
+kind = "not-measured"
+from = "EngineLab reaches about 7240 rpm at full throttle with no load, below its rev limit, so no reference bounces off the limiter (reference/enginelab/README.md): model default"
+
+[[source]]
+key = "limiter_load_scale"
+kind = "snarl"
+from = "the rates of the free run with no load from a gear: model default"
+
+[[source]]
+key = "limiter_pump_db"
+kind = "not-measured"
+from = "EngineLab reaches about 7240 rpm at full throttle with no load, below its rev limit, so no reference bounces off the limiter (reference/enginelab/README.md): model default"
+
+[[source]]
+key = "limiter_notch_db"
+kind = "not-measured"
+from = "EngineLab reaches about 7240 rpm at full throttle with no load, below its rev limit, so no reference bounces off the limiter (reference/enginelab/README.md): model default"
+
+[[source]]
+key = "limiter_bark_db"
+kind = "not-measured"
+from = "EngineLab reaches about 7240 rpm at full throttle with no load, below its rev limit, so no reference bounces off the limiter (reference/enginelab/README.md): model default"
+
+[[source]]
+key = "final_gear_waver"
+kind = "snarl"
+from = "the final gear hold, a snarl-only feature: model default"
+
+[[source]]
+key = "pulse.table"
+kind = "not-measured"
+from = "EngineLab writes no per-cylinder exhaust pressure (reference/enginelab/README.md), so no table is measured: the table of f4-ej25, the flat engine of the set, measured from unchanged upstream data"
+
+[[source]]
+key = "pulse.cycle_variation"
+kind = "upstream"
+from = "sqrt(3) times the cycle-to-cycle coefficient of variation that EngineLab sets for this engine, 0 (out/reference/enginelab/f6-aircooled/holds-t100/render-manifest.json audio_physics.authored_cycle_variation_cov)"
+
+[[source]]
+key = "pulse.measured_variation"
+kind = "not-measured"
+from = "the engine has no measured table of its own: model default"
+
+[[source]]
+key = "pulse.jitter"
+kind = "not-measured"
+from = "the dynamometer holds the RPM in the references, so they cannot show a slow RPM and gain wander under load: model default"
+
+[[source]]
+key = "pulse.gain_variation"
+kind = "upstream"
+from = "every cylinder of engines/09_porsche_flat6_like.engine.yaml has the cylinder_template and an even offset from engine.firing_order, so the cylinders do not differ"
+
+[[source]]
+key = "pulse.timing_variation_deg"
+kind = "upstream"
+from = "every cylinder of engines/09_porsche_flat6_like.engine.yaml has the cylinder_template and an even offset from engine.firing_order, so the cylinders do not differ"
+
+[[source]]
+key = "exhaust.speed_of_sound"
+kind = "not-measured"
+from = "EngineLab delays the exhaust in its finite-volume exhaust network, which gives no single speed of sound: model default"
+
+[[source]]
+key = "exhaust.crossover"
+kind = "upstream"
+from = "the exhaust paths of engines/09_porsche_flat6_like.engine.yaml have no crossover component"
+
+[[source]]
+key = "exhaust.formant_gain_db"
+kind = "not-measured"
+from = "EngineLab loads no impulse response for this engine (out/reference/enginelab/f6-aircooled/holds-t100/render-manifest.json impulse_responses loaded 0): its exhaust network, which snarl does not model, gives the colour, so there is no formant bank"
+
+[[source]]
+key = "exhaust.pop_formant_gain_db"
+kind = "snarl"
+from = "pops are a snarl-only feature: the pop bank fitted with the tools/fit --pop settings to the tools/import default pop stages (pipe and outlet radius 0.025 m, chamber 0.3 m at 7 times the pipe area, wall loss 2.5 dB at 2 kHz)"
+
+[[source]]
+key = "exhaust.pop_delay_ms"
+kind = "snarl"
+from = "pops are a snarl-only feature: the pop bank fitted with the tools/fit --pop settings to the tools/import default pop stages (pipe and outlet radius 0.025 m, chamber 0.3 m at 7 times the pipe area, wall loss 2.5 dB at 2 kHz)"
+
+[[source]]
+key = "noise.hf_gain"
+kind = "not-measured"
+from = "an engine-sim synthesiser setting, which EngineLab does not have: model default"
+
+[[source]]
+key = "noise.am"
+kind = "not-measured"
+from = "an engine-sim synthesiser setting, which EngineLab does not have: model default"
+
+[[source]]
+key = "noise.am_cutoff_hz"
+kind = "not-measured"
+from = "an engine-sim synthesiser setting, which EngineLab does not have: model default"
+
+[[source]]
+key = "noise.input_jitter"
+kind = "not-measured"
+from = "an engine-sim synthesiser setting, which EngineLab does not have: model default"
+
+[[source]]
+key = "pops.density"
+kind = "snarl"
+from = "pops are a snarl-only feature: the tools/import default for imported profiles, so that the own pops play (the model default 0 turns them off)"
+
+[[source]]
+key = "pops.character"
+kind = "snarl"
+from = "pops are a snarl-only feature: model default"
+
+[[source]]
+key = "pops.gain"
+kind = "snarl"
+from = "pops are a snarl-only feature: model default"
+
+[[source]]
+key = "pops.body_hz"
+kind = "snarl"
+from = "pops are a snarl-only feature: model default"
+
+[[source]]
+key = "pops.body_ms"
+kind = "snarl"
+from = "pops are a snarl-only feature: model default"
+
+[[source]]
+key = "pops.jump_ms"
+kind = "snarl"
+from = "pops are a snarl-only feature: model default"
+
+[[source]]
+key = "pops.crack"
+kind = "snarl"
+from = "pops are a snarl-only feature: model default"
+
+[[source]]
+key = "pops.crack_ms"
+kind = "snarl"
+from = "pops are a snarl-only feature: model default"
+
+[[source]]
+key = "pops.weight_pop"
+kind = "snarl"
+from = "pops are a snarl-only feature: model default"
+
+[[source]]
+key = "pops.weight_boom"
+kind = "snarl"
+from = "pops are a snarl-only feature: model default"
+
+[[source]]
+key = "pops.weight_crackle"
+kind = "snarl"
+from = "pops are a snarl-only feature: model default"
+
+[[source]]
+key = "pops.weight_burble"
+kind = "snarl"
+from = "pops are a snarl-only feature: model default"
+
+[[source]]
+key = "idle.fade_rpm"
+kind = "not-measured"
+from = "the free runs give the hunt at idle only: idle_rpm plus 1400 rpm, the tools/import rule"
+
+[[source]]
+key = "idle.hunt"
+kind = "measured"
+from = "the spread of the RPM averaged over one engine cycle over the mean RPM of the free run at throttle 0 of out/reference/enginelab/f6-aircooled/idle-free/engine-order-map.csv (24 RPM values per second) from 9.5 to 14.5 s, after the 8.5 s pre-roll of reference/enginelab/scenarios/idle-free.json, 1.8 over 775.2 rpm (1.8 rpm with no averaging), over 0.7036, the spread of the hunt modulation of the model per unit of hunt"
+
+[[source]]
+key = "idle.hunt_hz"
+kind = "measured"
+from = "the main wander frequency of the free run at throttle 0 of out/reference/enginelab/f6-aircooled/idle-free/engine-order-map.csv (24 RPM values per second) from 9.5 to 14.5 s, after the 8.5 s pre-roll of reference/enginelab/scenarios/idle-free.json, 0.234 Hz at 1.5 rpm"
+
+[[source]]
+key = "voice.gain"
+kind = "snarl"
+from = "model default"
+
+[[source]]
+key = "voice.leveller_db"
+kind = "snarl"
+from = "the tools/import calibration rule, by rendering the profile: the closed-throttle hold at idle 3 dB below the knee of the leveller"
+
+[[source]]
+key = "voice.output_db"
+kind = "snarl"
+from = "the tools/import calibration rule, by rendering the profile: the sweep-wot scenario at -16 LUFS"
+
+[[source]]
+key = "cylinder.crank_deg"
+kind = "upstream"
+from = "the position of the cylinder in engines/09_porsche_flat6_like.engine.yaml engine.firing_order times 720 degrees over the cylinder count, as EngineLab sets the crank offsets: firing order 1-6-2-4-3-5"
+
+[[source]]
+key = "cylinder.bank"
+kind = "upstream"
+from = "the exhaust path of the cylinder in engines/09_porsche_flat6_like.engine.yaml engine.exhaust_paths"
+
+[[source]]
+key = "cylinder.primary_m"
+kind = "upstream"
+from = "primary_length_mm of the exhaust preset that engines/09_porsche_flat6_like.engine.yaml names in uses.exhaust (parts/exhausts.yaml)"
+
+[[source]]
+key = "path.collector_m"
+kind = "upstream"
+from = "midpipe_length_mm of the exhaust preset that engines/09_porsche_flat6_like.engine.yaml names, at least 0.2 m, as tools/import maps a scalar exhaust. With reflection 0 the collector passes the sound unchanged"
+
+[[source]]
+key = "path.reflection"
+kind = "not-measured"
+from = "EngineLab reflects at the junctions of its finite-volume exhaust network, which gives no single reflection gain: model default"
+
+[[source]]
+key = "path.gain"
+kind = "upstream"
+from = "audio_volume of the exhaust path in engines/09_porsche_flat6_like.engine.yaml engine.exhaust_paths, relative to the loudest"
+
+[[source]]
+key = "pop_formant.kind"
+kind = "snarl"
+from = "pops are a snarl-only feature: the pop bank fitted with the tools/fit --pop settings to the tools/import default pop stages (pipe and outlet radius 0.025 m, chamber 0.3 m at 7 times the pipe area, wall loss 2.5 dB at 2 kHz)"
+
+[[source]]
+key = "pop_formant.hz"
+kind = "snarl"
+from = "pops are a snarl-only feature: the pop bank fitted with the tools/fit --pop settings to the tools/import default pop stages (pipe and outlet radius 0.025 m, chamber 0.3 m at 7 times the pipe area, wall loss 2.5 dB at 2 kHz)"
+
+[[source]]
+key = "pop_formant.q"
+kind = "snarl"
+from = "pops are a snarl-only feature: the pop bank fitted with the tools/fit --pop settings to the tools/import default pop stages (pipe and outlet radius 0.025 m, chamber 0.3 m at 7 times the pipe area, wall loss 2.5 dB at 2 kHz)"
+
+[[source]]
+key = "pop_formant.gain_db"
+kind = "snarl"
+from = "pops are a snarl-only feature: the pop bank fitted with the tools/fit --pop settings to the tools/import default pop stages (pipe and outlet radius 0.025 m, chamber 0.3 m at 7 times the pipe area, wall loss 2.5 dB at 2 kHz)"

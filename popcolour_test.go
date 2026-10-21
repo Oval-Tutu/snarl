@@ -2,8 +2,6 @@ package snarl
 
 import (
 	"math"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/oval-tutu/snarl/internal/analysis"
@@ -60,13 +58,31 @@ func bestCorrelation(a, b []float64, maxLag int) (float64, int) {
 	return best, at
 }
 
+// popStages returns the EngineLab path stages of the earlier model that
+// the pop bank of every embedded profile follows: the tools/import default
+// pop stages (pipe and outlet radius 0.025 m, chamber 0.3 m at 7 times the
+// pipe area, wall loss 2.5 dB at 2 kHz, outlet direct 0.4, low shelf at
+// 250 Hz, speed of sound 565 m/s), after the collector, gain and listener
+// distance of each path of the profile.
+func popStages(p Profile) (analysis.LegacyExhaust, []analysis.LegacyPath) {
+	e := analysis.LegacyExhaust{SpeedOfSound: 565, OutletDirect: 0.4, LowShelfHz: 250}
+	paths := make([]analysis.LegacyPath, len(p.spec.Paths))
+	for i, q := range p.spec.Paths {
+		paths[i] = analysis.LegacyPath{
+			CollectorM: q.CollectorM, Reflection: q.Reflection, DampingHz: q.DampingHz, Gain: q.Gain, ListenerM: q.ListenerM,
+			PipeRadiusM: 0.025, OutletM: 0.025, WallLossDB: 2.5, WallLossHz: 2000, ChamberM: 0.3, ChamberArea: 7,
+		}
+	}
+	return e, paths
+}
+
 // TestPopColour checks that the pop bank keeps the colour of the pops of
 // the EngineLab path stages that it replaces, for every kind on every path
-// of the tuned profiles: the pop with its crack correlates with the pop of
-// those stages, as testdata/legacy holds them at a73b874, by at least 0.98
-// at the best lag of up to 1 ms, and its RMS level at unit gain is within
-// 0.5 dB. The calibration sets the level of each kind over the engine from
-// the same pops, so the level over the engine stays too.
+// of the embedded profiles: the pop with its crack correlates with the pop
+// of those stages (popStages) by at least 0.98 at the best lag of up to
+// 1 ms, and its RMS level at unit gain is within 0.5 dB. The calibration
+// sets the level of each kind over the engine from the same pops, so the
+// level over the engine stays too.
 func TestPopColour(t *testing.T) {
 	t.Parallel()
 	kinds := []string{"pop", "boom", "crackle", "burble"}
@@ -77,18 +93,7 @@ func TestPopColour(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			f, err := os.Open(filepath.Join("testdata", "legacy", name+".toml"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			e, paths, err := analysis.ReadLegacyExhaust(f)
-			f.Close()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(paths) != len(p.spec.Paths) {
-				t.Fatalf("%d legacy paths, %d paths", len(paths), len(p.spec.Paths))
-			}
+			e, paths := popStages(p)
 			for i := range paths {
 				for k, kind := range kinds {
 					jump, crack, out := model.PopSignals(p.spec, i, k, 3, testRate, popColourSamples)

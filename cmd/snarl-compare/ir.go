@@ -12,8 +12,6 @@ import (
 )
 
 const (
-	// engineSimTaps is the most taps that engine-sim convolves with.
-	engineSimTaps = 10000
 	// irFitLo and irFitHi are the edges in hertz of the range of the RMS
 	// response differences, where the engine-sim output carries harmonic
 	// content.
@@ -48,7 +46,7 @@ func irs(w io.Writer, paths []string) error {
 			return err
 		}
 		raw, rate := audio.Mono(), audio.SampleRate
-		ir := analysis.IRTrim(raw, engineSimTaps)
+		ir := analysis.IRTrim(raw, analysis.EngineSimTaps)
 		if len(ir) == 0 {
 			return fmt.Errorf("%s: no sample above the engine-sim threshold", path)
 		}

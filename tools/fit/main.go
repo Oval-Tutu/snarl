@@ -48,7 +48,8 @@
 // spread of the means of the cylinders, and the residuals of the sums and
 // of the part that does not repeat from cycle to cycle. With --out, the
 // pulse file gets one spread line per row with the firing gain spread,
-// which the model takes with [pulse] measured_variation.
+// which the model takes with [pulse] measured_variation. With --json, it
+// also writes the measures of each hold as JSON, for tools/import.
 //
 // With --upstream-scenarios, it writes the scenarios of just ref-upstream
 // for the engine dump of --engine into --scenarios: holds at throttle 0,
@@ -62,9 +63,9 @@
 //
 // Usage:
 //
-//	go run ./tools/fit --ir IR.wav [--base ir] [--profile LEGACY.toml] [--out out/analysis/fit/v8.toml] > fit.md
-//	go run ./tools/fit --pop --profile LEGACY.toml [--out out/analysis/fit/v8-pop.toml] > fit.md
-//	go run ./tools/fit --pulse [--variation] --throttle 1 --engine engine.json --scenarios scenarios/v8 [--out internal/model/pulses/v8.txt] holds-t100.csv [holds-t050.csv] > pulse.md
+//	go run ./tools/fit --ir IR.wav [--base ir] [--profile LEGACY.toml] [--out out/analysis/fit/v8-ls.toml] > fit.md
+//	go run ./tools/fit --pop --profile LEGACY.toml [--out out/analysis/fit/v8-ls-pop.toml] > fit.md
+//	go run ./tools/fit --pulse [--variation] --throttle 1 --engine engine.json --scenarios scenarios/upstream/v8-ls --name v8-ls [--out internal/model/pulses/v8-ls.txt] [--json holds.json] holds-t100.csv [holds-t050.csv] > pulse.md
 //	go run ./tools/fit --upstream-scenarios --engine engine.json --scenarios scenarios/upstream/v8-ls --name v8-ls
 //	go run ./tools/fit --health --engine engine.json --scenarios scenarios/upstream/v8-ls --name v8-ls holds-t000.csv [idle-free.csv ...] > health.md
 package main
@@ -84,8 +85,6 @@ import (
 )
 
 const (
-	// engineSimTaps is the most taps that engine-sim convolves with.
-	engineSimTaps = 10000
 	// inputLowPassHz is the cut-off of the engine-sim input low pass.
 	inputLowPassHz = 1900
 	// gridPerOctave is the number of grid points per octave.
@@ -108,8 +107,10 @@ type config struct {
 	points            int
 	throttle, minRPM  float64
 	maxRPM            float64
-	// variation adds the cycle-to-cycle variation of each hold.
+	// variation adds the cycle-to-cycle variation of each hold, and json
+	// names the file for the measures of each hold.
 	variation bool
+	json      string
 	// upstream writes the just ref-upstream scenarios, and health checks
 	// the engine from its CSV files.
 	upstream, health bool
@@ -177,6 +178,7 @@ func run(args []string, w io.Writer) error {
 	fs.Float64Var(&cfg.minRPM, "min-rpm", 0, "lowest RPM of the holds that the --pulse table follows")
 	fs.Float64Var(&cfg.maxRPM, "max-rpm", 100000, "highest RPM of the holds that the --pulse table follows")
 	fs.BoolVar(&cfg.variation, "variation", false, "with --pulse, also fit a gain, a shift and a width to each firing and report their spreads")
+	fs.StringVar(&cfg.json, "json", "", "with --pulse, JSON `file` for the measures of each hold (none when empty)")
 	fs.BoolVar(&cfg.upstream, "upstream-scenarios", false, "write the just ref-upstream scenarios of the engine dump of --engine into --scenarios, in place of a bank fit")
 	fs.BoolVar(&cfg.health, "health", false, "check the firings and the free-run RPM of the engine of --engine from the per-step CSV files given as arguments, in place of a bank fit")
 	if err := fs.Parse(args); err != nil {
@@ -314,7 +316,7 @@ func loadTarget(cfg *config, paths []analysis.LegacyPath, e *analysis.LegacyExha
 		if err != nil {
 			return nil, 0, "", err
 		}
-		ir := analysis.IRTrim(audio.Mono(), engineSimTaps)
+		ir := analysis.IRTrim(audio.Mono(), analysis.EngineSimTaps)
 		if len(ir) == 0 {
 			return nil, 0, "", fmt.Errorf("%s: no sample above the engine-sim threshold", cfg.ir)
 		}
@@ -507,15 +509,12 @@ func writeFragment(path string, cfg *config, b *analysis.FormantBank, errDB floa
 		fmt.Fprintf(&s, "# engine-sim uses one impulse response for every exhaust system, so one\n")
 		fmt.Fprintf(&s, "# bank serves every path of the profile (%d).\n", paths)
 	}
-	fmt.Fprintf(&s, "\n[exhaust]\n%s = %.2f\n", key, b.GainDB)
+	fmt.Fprintf(&s, "\n[exhaust]\n%s = %s\n", key, analysis.TOMLNumber(b.GainDB, 2))
 	if cfg.pop {
-		fmt.Fprintf(&s, "pop_delay_ms = %.3f\n", delayMS)
+		fmt.Fprintf(&s, "pop_delay_ms = %s\n", analysis.TOMLNumber(delayMS, 3))
 	}
-	for _, f := range b.Formants {
-		fmt.Fprintf(&s, "\n[[%s]]\nkind = %q\nhz = %.1f\nq = %.3f\n", table, kindName(f.Kind), f.Hz, f.Q)
-		if f.Kind == analysis.KindPeak {
-			fmt.Fprintf(&s, "gain_db = %.2f\n", f.GainDB)
-		}
+	if err := analysis.WriteBankTOML(&s, table, b); err != nil {
+		return err
 	}
 	return os.WriteFile(path, []byte(s.String()), 0o644)
 }

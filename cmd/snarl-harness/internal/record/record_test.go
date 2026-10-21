@@ -109,7 +109,7 @@ func TestRecorderWritesLogAndAudio(t *testing.T) {
 		t.Error("a second recording overwrote the first")
 	}
 	s := snarl.Snapshot{RPM: 6000.5, Throttle: 1, Load: 0.25, Speed: 30, Gear: 1, Flags: snarl.FlagRunning, Limiter: 3}
-	r.Snapshot("v8", snarl.Tier1, s)
+	r.Snapshot("v8-ls", snarl.Tier1, s)
 	in := make([]float32, block)
 	const blocks = 50
 	for k := range blocks {
@@ -129,7 +129,7 @@ func TestRecorderWritesLogAndAudio(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(string(csv)), "\n")
-	if len(lines) != 3 || lines[0] != Header || !strings.HasSuffix(lines[1], ",v8,1,6000.5,1,0.25,30,1,1,0,0,3,0,0,0") ||
+	if len(lines) != 3 || lines[0] != Header || !strings.HasSuffix(lines[1], ",v8-ls,1,6000.5,1,0.25,30,1,1,0,0,3,0,0,0") ||
 		after(lines[2]) != after(lines[1]) {
 		t.Errorf("log:\n%s", csv)
 	}

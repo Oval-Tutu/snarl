@@ -31,7 +31,7 @@ func (t tee) Capture(mono []float32) {
 }
 
 // cylinderCounts returns the cylinder count of each profile of the list
-// that loadProfiles returns, from the profile files: the tuned profiles in
+// that loadProfiles returns, from the profile files: the embedded profiles in
 // the parent of the catalogue dir, and the catalogue profiles in dir. The
 // count is 0 when the file is missing.
 func cylinderCounts(ps []snarl.Profile, dir string) []int {

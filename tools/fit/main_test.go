@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -116,10 +118,11 @@ func TestPulseVariationMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := filepath.Join(dir, "pulse.txt")
+	js := filepath.Join(dir, "holds.json")
 	var w bytes.Buffer
 	err := run([]string{
 		"--pulse", "--variation", "--throttle", "1", "--points", "32", "--engine", filepath.Join(dir, "engine.json"),
-		"--scenarios", dir, "--out", out, path,
+		"--scenarios", dir, "--out", out, "--json", js, path,
 	}, &w)
 	if err != nil {
 		t.Fatal(err)
@@ -144,6 +147,23 @@ func TestPulseVariationMode(t *testing.T) {
 	g, err := strconv.ParseFloat(f[len(f)-1], 64)
 	if err != nil || len(f) != 3 || f[1] != "3000" || g < 0.06 || g > 0.08 {
 		t.Errorf("spread line %q, want spread 3000 and a gain spread of 0.071 within 0.01", spreads[0])
+	}
+	// The JSON has the same hold, in the table, with the same firing gain
+	// spread, and the means of the two cylinders are both 1.
+	data, err = os.ReadFile(js)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hj holdsJSON
+	if err := json.Unmarshal(data, &hj); err != nil {
+		t.Fatal(err)
+	}
+	if !hj.Variation || len(hj.Holds) != 1 {
+		t.Fatalf("JSON %s", data)
+	}
+	h := hj.Holds[0]
+	if !h.InTable || h.Throttle != 1 || math.Abs(h.RPM-3000) > 1 || math.Abs(h.GainSD-g) > 1e-3 || h.CylGainSD > 0.01 || h.PeakPa <= 0 {
+		t.Errorf("hold %+v, want 3000 RPM at throttle 1 in the table, gain spread %.4f and a cylinder gain spread near 0", h, g)
 	}
 }
 

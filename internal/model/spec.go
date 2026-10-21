@@ -30,10 +30,6 @@ type Spec struct {
 	LimiterKind string `toml:"limiter_kind"`
 	// LimiterMS is the length of one cut in milliseconds.
 	LimiterMS float64 `toml:"limiter_ms"`
-	// LimiterJitter is the random spread of the cut length. Each cut is
-	// LimiterMS times a random factor from 1-LimiterJitter to
-	// 1+LimiterJitter, drawn once per cut. Zero gives a regular bounce.
-	LimiterJitter float64 `toml:"limiter_jitter"`
 	// LimiterFallRPMS is the rate in RPM per second at which the engine
 	// slows down during a cut, from friction and pumping. The dip of one
 	// bounce is this rate times the cut length.
@@ -69,7 +65,6 @@ type Spec struct {
 	Exhaust   ExhaustSpec    `toml:"exhaust"`
 	Noise     NoiseSpec      `toml:"noise"`
 	Pops      PopSpec        `toml:"pops"`
-	Overrun   OverrunSpec    `toml:"overrun"`
 	Idle      IdleSpec       `toml:"idle"`
 	Voice     VoiceSpec      `toml:"voice"`
 	Cylinders []CylinderSpec `toml:"cylinder"`
@@ -108,10 +103,6 @@ type PulseSpec struct {
 	Table string `toml:"table"`
 	// CamGain is the extra pulse gain above the cam switch RPM.
 	CamGain float64 `toml:"cam_gain"`
-	// PartLoadDB is the pulse level at load 0.5 in decibels, relative to
-	// full load at the same RPM. The pulse level rises smoothly with load
-	// from the overrun level at load 0 to full load at load 1.
-	PartLoadDB float64 `toml:"part_load_db"`
 	// CycleVariation is the random per-firing gain spread: each firing has
 	// a gain from 1-CycleVariation to 1+CycleVariation, on top of the
 	// measured spread.
@@ -142,10 +133,6 @@ type ExhaustSpec struct {
 	// Coupling is the share of the other bank in each path for a partial
 	// crossover, from 0 to 0.5.
 	Coupling float64 `toml:"coupling"`
-	// Overlap is the gain of the quadratic pressure term in each bank
-	// collector, before the crossover. Overlapping pulses of one bank add
-	// a pressure peak, which keeps the per-bank firing pattern audible.
-	Overlap float64 `toml:"overlap"`
 	// FormantGainDB and PopFormantGainDB are the gains in decibels of the
 	// formant bank and of the pop bank.
 	FormantGainDB    float64 `toml:"formant_gain_db"`
@@ -223,41 +210,18 @@ type PopSpec struct {
 	WeightBurble  float64 `toml:"weight_burble"`
 }
 
-// OverrunSpec is the output level on closed throttle. The engine model
-// sets the pulse amplitude on overrun to this level.
-type OverrunSpec struct {
-	// LevelDB is the output level on closed throttle at the redline, in
-	// decibels relative to full throttle at the same RPM.
-	LevelDB float64 `toml:"level_db"`
-	// IdleLevelDB is the output level on closed throttle at idle, in
-	// decibels relative to full throttle at the same RPM. The level
-	// changes linearly with RPM from idle to the redline.
-	IdleLevelDB float64 `toml:"idle_level_db"`
-}
-
-// IdleSpec is the low-RPM character: combustion variation, cylinder
-// imbalance, a slow idle hunt and a slow rocking. Each effect has its full
-// depth at idle and falls along a smoothstep over RPM to zero at FadeRPM.
-// The variation, hunt and rocking also fall linearly with load to zero at
-// half load. Above FadeRPM, the output does not change with these
-// settings.
+// IdleSpec is the idle hunt: a slow RPM modulation at idle, as the free
+// run at idle of the reference measures it. It has its full depth at idle
+// and falls along a smoothstep over RPM to zero at FadeRPM. It also falls
+// linearly with load to zero at half load. Above FadeRPM, the output does
+// not change with these settings.
 type IdleSpec struct {
-	// FadeRPM is the RPM at which the effects reach zero.
+	// FadeRPM is the RPM at which the hunt reaches zero.
 	FadeRPM float64 `toml:"fade_rpm"`
-	// Variation is the extra random per-firing gain spread.
-	Variation float64 `toml:"variation"`
-	// TimingDeg is the extra random per-firing delay spread in crank
-	// degrees.
-	TimingDeg float64 `toml:"timing_deg"`
-	// Imbalance is the extra fixed per-cylinder gain spread. It scales the
-	// gain_variation pattern and adds half-order content.
-	Imbalance float64 `toml:"imbalance"`
 	// Hunt is the depth of the slow RPM modulation, as a fraction of RPM.
 	Hunt float64 `toml:"hunt"`
-	// Rock is the depth of the slow pulse amplitude modulation.
-	Rock float64 `toml:"rock"`
-	// HuntHz is the rate of the hunt and the rocking in hertz. A slow
-	// random wander makes the modulation irregular.
+	// HuntHz is the rate of the hunt in hertz. A slow random wander makes
+	// the modulation irregular.
 	HuntHz float64 `toml:"hunt_hz"`
 }
 
@@ -288,7 +252,6 @@ func DefaultSpec() Spec {
 		LimiterBarkDB:    1,
 		FinalGearWaver:   0.003,
 		Pulse: PulseSpec{
-			PartLoadDB:     -0.6,
 			CycleVariation: 0.08, Jitter: 0.003,
 			GainVariation: 0.06, TimingVariationDeg: 1.5,
 		},
@@ -300,9 +263,8 @@ func DefaultSpec() Spec {
 			// The kind mix of the muffler crackle pack.
 			WeightPop: 0.4, WeightBoom: 0.2, WeightCrackle: 0.3, WeightBurble: 0.1,
 		},
-		Overrun: OverrunSpec{LevelDB: -1.2, IdleLevelDB: -1.2},
-		Idle:    IdleSpec{FadeRPM: 2200, HuntHz: 1.2},
-		Voice:   VoiceSpec{Gain: 1},
+		Idle:  IdleSpec{FadeRPM: 2200, HuntHz: 1.2},
+		Voice: VoiceSpec{Gain: 1},
 	}
 }
 
@@ -352,10 +314,6 @@ func (s *Spec) validateEngine() error {
 	case math.Abs(s.Exhaust.FormantGainDB) > 60 || math.Abs(s.Exhaust.PopFormantGainDB) > 60 ||
 		s.Exhaust.PopDelayMS < 0 || s.Exhaust.PopDelayMS > 20:
 		return errors.New("exhaust formant_gain_db and pop_formant_gain_db must be from -60 to 60 and pop_delay_ms from 0 to 20")
-	case s.Overrun.LevelDB > 6 || s.Overrun.IdleLevelDB > 6 || s.Overrun.LevelDB < -40 || s.Overrun.IdleLevelDB < -40:
-		return errors.New("overrun level_db and idle_level_db must be from -40 to 6")
-	case s.Pulse.PartLoadDB >= 0 || s.Pulse.PartLoadDB < -20:
-		return errors.New("pulse part_load_db must be from -20 to below 0")
 	case s.Pulse.MeasuredVariation < 0 || s.Pulse.MeasuredVariation > 2:
 		return errors.New("pulse measured_variation must be from 0 to 2")
 	case s.Noise.AMCutoffHz < 100 || s.Noise.AMCutoffHz > 8000 || s.Noise.AM < 0 || s.Noise.AM > 1:
@@ -407,11 +365,10 @@ func (s *Spec) validateLimiter() error {
 		s.LimiterBarkDB < 0 || s.LimiterBarkDB > 12:
 		return errors.New("limiter_pump_db must be from -60 to 0, limiter_notch_db from -60 to limiter_pump_db and limiter_bark_db from 0 to 12")
 	case s.LimiterRPM < 0 || s.LimiterMS > 500 || s.LimiterFallRPMS < 0 || s.LimiterFallRPMS > 100000 ||
-		s.LimiterRiseRPMS <= 0 || s.LimiterRiseRPMS > 100000 || s.LimiterLoadScale < 0.1 || s.LimiterLoadScale > 10 ||
-		s.LimiterJitter < 0 || s.LimiterJitter > 0.5:
-		return errors.New("limiter_rpm must not be negative, limiter_ms from 0 to 500, limiter_fall_rpm_s from 0 to 100000, limiter_rise_rpm_s from above 0 to 100000, limiter_load_scale from 0.1 to 10 and limiter_jitter from 0 to 0.5")
-	case s.LimiterMS*(1+s.LimiterJitter)*1e-3*s.LimiterFallRPMS*s.LimiterLoadScale >= s.LimiterRPM && s.LimiterRPM > 0:
-		return errors.New("the longest limiter dip, limiter_ms times 1+limiter_jitter, limiter_fall_rpm_s and limiter_load_scale, must stay below limiter_rpm")
+		s.LimiterRiseRPMS <= 0 || s.LimiterRiseRPMS > 100000 || s.LimiterLoadScale < 0.1 || s.LimiterLoadScale > 10:
+		return errors.New("limiter_rpm must not be negative, limiter_ms from 0 to 500, limiter_fall_rpm_s from 0 to 100000, limiter_rise_rpm_s from above 0 to 100000 and limiter_load_scale from 0.1 to 10")
+	case s.LimiterMS*1e-3*s.LimiterFallRPMS*s.LimiterLoadScale >= s.LimiterRPM && s.LimiterRPM > 0:
+		return errors.New("the limiter dip, limiter_ms times limiter_fall_rpm_s and limiter_load_scale, must stay below limiter_rpm")
 	case s.FinalGearWaver < 0 || s.FinalGearWaver > 0.05:
 		return errors.New("final_gear_waver must be from 0 to 0.05")
 	}
@@ -423,9 +380,8 @@ func (s *Spec) validateIdle() error {
 	switch {
 	case d.FadeRPM <= s.IdleRPM || d.HuntHz <= 0 || d.HuntHz > 10:
 		return errors.New("idle fade_rpm must be above idle_rpm and hunt_hz from above 0 to 10")
-	case d.Variation < 0 || d.Variation > 1 || d.Imbalance < 0 || d.Imbalance > 1 ||
-		d.Hunt < 0 || d.Hunt > 0.2 || d.Rock < 0 || d.Rock > 1 || d.TimingDeg < 0 || d.TimingDeg > 90:
-		return errors.New("idle variation, imbalance and rock must be from 0 to 1, hunt from 0 to 0.2 and timing_deg from 0 to 90")
+	case d.Hunt < 0 || d.Hunt > 0.2:
+		return errors.New("idle hunt must be from 0 to 0.2")
 	}
 	return nil
 }

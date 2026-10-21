@@ -1,0 +1,4 @@
+# EngineLab Aircooled-like 3.6 Flat-6: full-throttle sweep from idle to
+# 7000 rpm over 8 s. The EngineLab render is
+# reference/enginelab/scenarios/sweep-wot.json without its 6.5 s pre-roll.
+sweep 780 7000 1 8

@@ -1,34 +1,16 @@
 # Scenarios
 
-Each profile directory holds the same six scenarios in the shared format (`docs/scenario-format.md`). `just ref-set [profile]` renders them with engine-sim into `out/reference/engine-sim/<profile>/<scenario>.wav`, with a CSV beside each WAV. `ref-set` skips `limiter.scn`, because a dynamometer hold at the limiter gives no bounce. `just ref-limiter [profile]` renders the engine-sim limiter reference instead (`reference/engine-sim/README.md`).
+The scenarios are in the shared format (`docs/scenario-format.md`):
 
-| Scenario | Content | Length |
-| --- | --- | --- |
-| `holds-t000.scn` | 3 s holds at idle and at steps of about 1000 rpm up to the top rpm, throttle 0. A 0.5 s sweep joins each pair of holds. | 20.5 to 31 s |
-| `holds-t050.scn` | The same holds at throttle 0.5. | 20.5 to 31 s |
-| `holds-t100.scn` | The same holds at throttle 1. | 20.5 to 31 s |
-| `sweep-wot.scn` | Full-throttle sweep from idle to the top rpm over 8 s. | 8 s |
-| `overrun.scn` | 2 s at the top rpm and throttle 1, then 2 s at throttle 0, then a 6 s sweep down to idle at throttle 0. | 10 s |
-| `limiter.scn` | Full-throttle sweep from 1500 rpm below the limiter rpm up to the limiter rpm over 2 s, then 4 s at the limiter rpm and throttle 1, then 1 s at throttle 0. | 7 s |
+- `upstream/<profile>/` holds the scenarios of the six embedded profiles (`profiles/README.md`). `tools/fit --upstream-scenarios` writes those of the five engine-sim engines from the engine dump, and `just ref-upstream` renders them with engine-sim into `out/reference/upstream/<profile>/`. The `f6-aircooled` scenarios match the EngineLab scenarios of `just ref-enginelab`. `upstream/README.md` describes them.
+- `catalogue/<id>/` holds the scenarios of the profile catalogue, which `just import-profiles` writes (`profiles/catalogue/README.md`). `just ref-set` renders those of the engine-sim engines into `out/reference/engine-sim/catalogue/<id>/`.
 
-Hold steps per profile:
+| Scenario | Content |
+| --- | --- |
+| `holds-t000.scn` | 3 s holds at idle and at steps of about 1000 rpm up to the top rpm, throttle 0. A 0.5 s sweep joins each pair of holds. |
+| `holds-t050.scn` | The same holds at throttle 0.5. |
+| `holds-t100.scn` | The same holds at throttle 1. |
+| `sweep-wot.scn` | Full-throttle sweep from idle to the top rpm over 8 s. |
+| `overrun.scn` | Full throttle at the top rpm, then closed throttle held, then a closed-throttle sweep down to idle. |
 
-| Profile | Idle | Holds (rpm) | Top rpm | Reason for the top rpm |
-| --- | --- | --- | --- | --- |
-| `flat12` | 1000 | 1000, 2000, 3000, 4000, 5000, 6000, 6800 | 6800 | Redline. Script rev limit 7000 |
-| `inline4` | 800 | 800, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 8400 | 8400 | Redline. Fuel cut 8500 |
-| `flat6` | 800 | 800, 2000, 3000, 4000, 5000, 6000, 6600 | 6600 | Below the 6700 governor, which the script uses as its rev limit |
-| `v8` | 675 | 675, 2000, 3000, 4000, 5000, 6000 | 6000 | Redline. Fuel cut 6250 |
-
-The top rpm stays below each rev limit, so the limiter does not cut the holds.
-
-The limiter rpm in `limiter.scn` is the snarl profile `limiter_rpm`:
-
-| Profile | Sweep (rpm) | Limiter rpm |
-| --- | --- | --- |
-| `flat12` | 5500 to 7000 | 7000 |
-| `inline4` | 7000 to 8500 | 8500 |
-| `flat6` | 5200 to 6700 | 6700 |
-| `v8` | 4750 to 6250 | 6250 |
-
-In a hold file, the hold at index `i` (0 for idle) starts at `i * 3.5` seconds.
+The top rpm is the redline, or 100 rpm below the limiter when the limiter cuts at or below the redline, so the limiter does not cut the holds. In a hold file, the hold at index `i` (0 for idle) starts at `i * 3.5` seconds.

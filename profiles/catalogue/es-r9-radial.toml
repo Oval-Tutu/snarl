@@ -10,8 +10,7 @@ limiter_kind = "fuel"
 limiter_ms = 200
 
 [pulse]
-table = "v8"
-part_load_db = -0.8
+table = "v8-ls"
 cycle_variation = 0.04
 jitter = 0.003
 gain_variation = 0.12
@@ -21,7 +20,6 @@ timing_variation_deg = 2
 speed_of_sound = 565
 crossover = "none"
 coupling = 0
-overlap = 1
 formant_gain_db = -28.67
 pop_formant_gain_db = -8.31
 pop_delay_ms = 0.531
@@ -46,23 +44,15 @@ weight_boom = 0.2
 weight_crackle = 0.3
 weight_burble = 0.1
 
-[overrun]
-level_db = -1.2
-idle_level_db = -1.2
-
 [idle]
 fade_rpm = 2000
-variation = 0.15
-timing_deg = 1
-imbalance = 0.25
 hunt = 0.004
-rock = 0.01
 hunt_hz = 1.2
 
 [voice]
 gain = 1
-leveller_db = 6.7
-output_db = -0.36
+leveller_db = 9.2
+output_db = -0.37
 
 [[cylinder]] # 1
 crank_deg = 0

@@ -1,5 +1,0 @@
-# inline4: full throttle at the top rpm, then closed throttle held, then a
-# closed-throttle sweep down to idle.
-hold 8400 1 2
-hold 8400 0 2
-sweep 8400 800 0 6

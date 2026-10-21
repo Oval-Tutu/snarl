@@ -2,7 +2,7 @@
 
 A scenario drives an engine through a timeline of RPM and throttle. The same scenario file drives the engine-sim reference renderer and `snarl-render`, so that the two renders are comparable. `snarl-compare` reads it too, to know the RPM at each moment.
 
-Scenario files live in `scenarios/<profile>/<name>.scn`. The profile directory names match the snarl profile names: `flat12`, `inline4`, `flat6`, `v8`.
+Scenario files live in `scenarios/upstream/<profile>/<name>.scn` for the embedded profiles and in `scenarios/catalogue/<id>/<name>.scn` for the profile catalogue (`scenarios/README.md`). The directory names match the snarl profile names, for example `v8-ls`.
 
 ## Syntax
 

@@ -52,7 +52,7 @@ func quietProfile(t *testing.T, name string) Profile {
 // names a requested pop of the kinds of the strength band.
 func TestPopReportMatchesRender(t *testing.T) {
 	t.Parallel()
-	p := quietProfile(t, "v8")
+	p := quietProfile(t, "v8-ls")
 	times := []float64{0.5, 0.52, 1.5, 2.5}
 	bands := [][2]PopKind{{KindPop, KindBurble}, {KindPop, KindBoom}, {KindBoom, KindCrackle}, {KindBoom, KindCrackle}}
 	base := held(4000, 0.4)
@@ -85,11 +85,11 @@ func TestPopReportMatchesRender(t *testing.T) {
 }
 
 // TestPopRequestBusy checks that every request plays and appears in the
-// report while own pops play: 40 requests on a race flat12 that lifts off
+// report while own pops play: 40 requests on a race i4-vtec that lifts off
 // and coasts at a high density. The model tests cover four busy slots.
 func TestPopRequestBusy(t *testing.T) {
 	t.Parallel()
-	p, err := LoadProfileWith("flat12", "pops.density=4", `pops.character="race"`)
+	p, err := LoadProfileWith("i4-vtec", "pops.density=4", `pops.character="race"`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestPopRequestBusy(t *testing.T) {
 // over the profile makes own pops where the stock character makes fewer.
 func TestFlagNoPops(t *testing.T) {
 	t.Parallel()
-	p, err := LoadProfileWith("flat12", "pops.density=4")
+	p, err := LoadProfileWith("i4-vtec", "pops.density=4")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestFlagNoPops(t *testing.T) {
 // TestPopsConcurrent reads the report on another goroutine while Render
 // runs with requests. Run it with -race. The count never falls.
 func TestPopsConcurrent(t *testing.T) {
-	e := newTestEngine(t, "v8")
+	e := newTestEngine(t, "v8-ls")
 	var wg sync.WaitGroup
 	done := make(chan struct{})
 	wg.Go(func() {

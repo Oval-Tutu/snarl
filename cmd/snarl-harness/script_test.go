@@ -11,7 +11,7 @@ import (
 )
 
 func TestScriptLog(t *testing.T) {
-	ps, i, _, err := loadProfiles("v8", "")
+	ps, i, _, err := loadProfiles("v8-ls", "")
 	if err != nil {
 		t.Fatal(err)
 	}

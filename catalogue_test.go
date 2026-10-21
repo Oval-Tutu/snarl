@@ -12,11 +12,11 @@ import (
 )
 
 // The catalogue tests run the structural checks on every imported profile
-// in profiles/catalogue (profiles/catalogue/README.md). The by-ear tests of
-// the tuned profiles do not apply to the catalogue: the overrun level
-// windows, the limiter against engine-sim and the pop level bands check
-// values that were tuned by ear, and the catalogue profiles have default
-// values for them.
+// in profiles/catalogue (profiles/catalogue/README.md). The reference tests
+// of the embedded profiles do not apply to the catalogue: the levels
+// against the upstream references, the limiter against its measured bounce
+// and the pop level bands. The catalogue profiles have default values for
+// the limiter and the pops, and no measured references.
 
 // catalogueSkips are the checks that a catalogue profile cannot pass, with
 // the reason. profiles/catalogue/README.md records them.

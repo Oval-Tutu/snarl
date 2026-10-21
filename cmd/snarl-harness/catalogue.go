@@ -64,9 +64,9 @@ func loadCatalogue(dir string) ([]snarl.Profile, error) {
 	return ps, nil
 }
 
-// loadProfiles returns the tuned profiles, then the catalogue profiles in
-// dir, and the index of the named one. When dir is "" or has no profiles,
-// the list has the tuned profiles only, and the note says so.
+// loadProfiles returns the embedded profiles, then the catalogue profiles
+// in dir, and the index of the named one. When dir is "" or has no
+// profiles, the list has the embedded profiles only, and the note says so.
 func loadProfiles(name, dir string) ([]snarl.Profile, int, string, error) {
 	var ps []snarl.Profile
 	for _, n := range snarl.Profiles() {
@@ -76,12 +76,12 @@ func loadProfiles(name, dir string) ([]snarl.Profile, int, string, error) {
 		}
 		ps = append(ps, p)
 	}
-	note := "No profile catalogue found: tuned profiles only (-catalogue DIR)"
+	note := "No profile catalogue found: embedded profiles only (-catalogue DIR)"
 	if dir != "" {
 		cat, err := loadCatalogue(dir)
 		switch {
 		case errors.Is(err, errNoCatalogue):
-			note = "No profile catalogue in " + dir + ": tuned profiles only"
+			note = "No profile catalogue in " + dir + ": embedded profiles only"
 		case err != nil:
 			return nil, 0, "", err
 		default:
@@ -101,7 +101,7 @@ func loadProfiles(name, dir string) ([]snarl.Profile, int, string, error) {
 func profileSource(ps []snarl.Profile, i int) string {
 	switch {
 	case i < len(snarl.Profiles()):
-		return "tuned"
+		return "embedded"
 	case strings.HasPrefix(ps[i].Name, "es-"):
 		return "engine-sim"
 	case strings.HasPrefix(ps[i].Name, "el-"):

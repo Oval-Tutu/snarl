@@ -37,30 +37,6 @@ func TestCrankFiringOrder(t *testing.T) {
 	}
 }
 
-// TestLoadLevel checks that the pulse gain rises with load from the
-// overrun level to full load, through the part-load level at load 0.5.
-func TestLoadLevel(t *testing.T) {
-	for _, c := range []struct{ lvl, part float32 }{{0.5, 0.7}, {0.2, 0.8}, {0.95, 0.7}, {0.7, 0.7}} {
-		prev := float32(-1)
-		for i := range 101 {
-			g := loadLevel(float64(i)/100, c.lvl, c.part)
-			if g < prev || g < c.lvl || g > 1 {
-				t.Fatalf("lvl %v, part %v: gain %v at load %v after %v", c.lvl, c.part, g, float64(i)/100, prev)
-			}
-			prev = g
-		}
-		if g := loadLevel(0, c.lvl, c.part); g != c.lvl {
-			t.Errorf("lvl %v: gain %v at load 0", c.lvl, g)
-		}
-		if g := loadLevel(1, c.lvl, c.part); g != 1 {
-			t.Errorf("lvl %v: gain %v at load 1", c.lvl, g)
-		}
-		if g := loadLevel(0.5, c.lvl, c.part); c.lvl < c.part && math.Abs(float64(g-c.part)) > 1e-4 {
-			t.Errorf("lvl %v: gain %v at load 0.5, want %v", c.lvl, g, c.part)
-		}
-	}
-}
-
 // TestIgnitionOff checks that the master gain and the firing gain reach
 // zero after the ignition goes off while the crank still turns, so that no
 // subnormal gain reaches the voices and the filters after them.
@@ -85,18 +61,18 @@ func TestIgnitionOff(t *testing.T) {
 }
 
 // TestFiringGainSign checks that no firing gain is negative with the
-// largest measured variation on the flat12 table at idle, where the
-// measured spread is widest, and a cycle variation on top.
+// largest measured variation on the v12-412 table at its lowest row, where
+// the measured spread is widest (0.43), and a cycle variation on top.
 func TestFiringGainSign(t *testing.T) {
 	s := limiterSpec("fuel")
-	s.Pulse.Table = "flat12"
+	s.Pulse.Table = "v12-412"
 	s.Pulse.MeasuredVariation, s.Pulse.CycleVariation = 2, 0.2
 	y, err := New(&s, rate)
 	if err != nil {
 		t.Fatal(err)
 	}
 	buf := make([]float32, 64)
-	c := Control{RPM: 900, Running: true, Gear: 3}
+	c := Control{RPM: 3810, Running: true, Gear: 3}
 	fired := 0
 	for range 10 * rate / 64 {
 		y.Render(buf, c)
@@ -115,7 +91,7 @@ func TestFiringGainSign(t *testing.T) {
 func limiterSpec(kind string) Spec {
 	s := DefaultSpec()
 	s.Name = "lim"
-	s.Pulse.Table = "inline4"
+	s.Pulse.Table = "i4-vtec"
 	s.IdleRPM, s.RedlineRPM, s.LimiterRPM = 800, 6800, 7000
 	s.LimiterKind = kind
 	s.Cylinders = []CylinderSpec{{CrankDeg: 0, PrimaryM: 0.4}, {CrankDeg: 180, PrimaryM: 0.4}, {CrankDeg: 360, PrimaryM: 0.4}, {CrankDeg: 540, PrimaryM: 0.4}}
@@ -128,37 +104,32 @@ func limiterSpec(kind string) Spec {
 // TestLimiterCuts checks the internal rev limiter. At the limiter RPM with
 // the throttle open, each cut lowers the internal RPM by the fall rate
 // times the cut length, and the climb back at the rise rate sets the cut
-// rate. The load scale scales the dip and keeps the rate. A limiter jitter
-// spreads the cut intervals and keeps the mean rate and dip. No overrun
-// effect plays, even with the overrun flag set. Below the limiter, or with
-// the throttle at 0.1, no cut starts. A closed throttle or a gear change
-// ends the bounce, and the pitch returns to the smoothed RPM in small
-// steps. A limiter event starts one cut on overrun, which stops the
-// overrun effects within a few milliseconds.
+// rate. The load scale scales the dip and keeps the rate. No own pop is
+// pending, even with the overrun flag set. Below the limiter, or with the
+// throttle at 0.1, no cut starts. A closed throttle or a gear change ends
+// the bounce, and the pitch returns to the smoothed RPM in small steps. A
+// limiter event starts one cut on overrun, which stops the own pops of the
+// overrun.
 func TestLimiterCuts(t *testing.T) {
 	for _, kind := range []string{"fuel", "ignition"} {
 		for _, scale := range []float64{1, 2} {
-			for _, jitter := range []float64{0, 0.15} {
-				s := limiterSpec(kind)
-				s.LimiterLoadScale = scale
-				s.LimiterJitter = jitter
-				y, err := New(&s, rate)
-				if err != nil {
-					t.Fatal(err)
-				}
-				name := fmt.Sprintf("%s/scale %v/jitter %v", kind, scale, jitter)
-				checkBounce(t, name, &s, y)
-				checkHandover(t, name, &s, y)
-				checkEvent(t, name, y)
+			s := limiterSpec(kind)
+			s.LimiterLoadScale = scale
+			y, err := New(&s, rate)
+			if err != nil {
+				t.Fatal(err)
 			}
+			name := fmt.Sprintf("%s/scale %v", kind, scale)
+			checkBounce(t, name, &s, y)
+			checkHandover(t, name, &s, y)
+			checkEvent(t, name, y)
 		}
 	}
 }
 
 // checkBounce holds the limiter RPM with the throttle open for 2 s and
 // checks the cut rate and the mean dip against the profile values. The
-// coefficient of variation of the intervals between cuts is at most 0.03
-// with no jitter, and from 0.5 to 1.5 times jitter/sqrt(3) with a jitter.
+// coefficient of variation of the intervals between cuts is at most 0.03.
 func checkBounce(t *testing.T, name string, s *Spec, y *Synth) {
 	t.Helper()
 	buf := make([]float32, chunk)
@@ -171,8 +142,8 @@ func checkBounce(t *testing.T, name string, s *Spec, y *Synth) {
 			n, rot = y.limRot, y.limRot
 		}
 		y.Render(buf, c)
-		if i > 0 && (y.overrun > 1e-6 || y.pops.armed()) {
-			t.Fatalf("%s: overrun effect at the limiter: overrun %v, own pop pending %t", name, y.overrun, y.pops.armed())
+		if i > 0 && y.pops.armed() {
+			t.Fatalf("%s: own pop pending at the limiter", name)
 		}
 		if i >= rate/5/chunk {
 			if y.limRot != rot {
@@ -197,8 +168,8 @@ func checkBounce(t *testing.T, name string, s *Spec, y *Synth) {
 	if math.Abs(got-wantRate) > 0.2*wantRate || math.Abs(meanDip-wantDip) > 0.2*wantDip {
 		t.Errorf("%s: %.1f cuts per second with a mean dip of %.0f RPM, want %.1f and %.0f", name, got, meanDip, wantRate, wantDip)
 	}
-	if j := s.LimiterJitter; j == 0 && cv > 0.03 || j > 0 && (cv < 0.5*j/math.Sqrt(3) || cv > 1.5*j/math.Sqrt(3)) {
-		t.Errorf("%s: cut interval variation %.3f, want about %.3f", name, cv, j/math.Sqrt(3))
+	if cv > 0.03 {
+		t.Errorf("%s: cut interval variation %.3f, want at most 0.03", name, cv)
 	}
 	for _, c := range []Control{
 		{RPM: float32(s.LimiterRPM) - 100, Throttle: 1, Load: 1, Running: true, Gear: 1},
@@ -274,9 +245,6 @@ func checkEvent(t *testing.T, name string, y *Synth) {
 	for range rate / len(buf) {
 		y.Render(buf, over)
 	}
-	if y.overrun < 0.99 {
-		t.Fatalf("%s: overrun %v before the limiter event", name, y.overrun)
-	}
 	n := y.limRot
 	over.LimiterEvents = 1
 	y.Render(buf, over)
@@ -287,20 +255,20 @@ func checkEvent(t *testing.T, name string, y *Synth) {
 	for range y.cutLen/len(buf) - 1 {
 		y.Render(buf, over)
 	}
-	if y.overrun > 0.01 || !y.cutting {
-		t.Errorf("%s: in a limiter event cut on overrun: overrun %v, cutting %t", name, y.overrun, y.cutting)
+	if !y.cutting || y.pops.armed() {
+		t.Errorf("%s: in a limiter event cut on overrun: cutting %t, own pop pending %t", name, y.cutting, y.pops.armed())
 	}
 	for range rate / 5 / len(buf) {
 		y.Render(buf, over)
 	}
-	if y.limRot != n+1 || y.dip != 0 || y.overrun < 0.9 {
-		t.Errorf("%s: 200 ms after a limiter event cut: cuts %d, dip %.0f RPM, overrun %v", name, y.limRot-n, y.dip, y.overrun)
+	if y.limRot != n+1 || y.dip != 0 {
+		t.Errorf("%s: 200 ms after a limiter event cut: cuts %d, dip %.0f RPM", name, y.limRot-n, y.dip)
 	}
 }
 
 // TestFinalGear checks the final gear at the limiter. At and above the
 // limiter RPM with the throttle open, the overrun flag set and a limiter
-// event in every block, no cut starts, no overrun effect plays, and the
+// event in every block, no cut starts, no own pop is pending, and the
 // pitch stays from the limiter RPM times 1-FinalGearWaver to the limiter
 // RPM. The final gear ends a bounce mid-cut at once, with no bark. The
 // firing gain then rises from the pump level to 1 by at most fadeDB per
@@ -325,8 +293,8 @@ func TestFinalGear(t *testing.T) {
 				if y.limRot != n || y.cutting || y.climb {
 					t.Fatalf("%s: cut in the final gear at %.0f RPM", name, rpm)
 				}
-				if y.overrun > 1e-6 || y.pops.armed() {
-					t.Fatalf("%s: overrun effect in the final gear: overrun %v, own pop pending %t", name, y.overrun, y.pops.armed())
+				if y.pops.armed() {
+					t.Fatalf("%s: own pop pending in the final gear", name)
 				}
 				if p := y.PitchRPM(); i > rate/5/chunk && (p < lo-1 || p > lim) {
 					t.Fatalf("%s: pitch %.1f RPM in the final gear, want from %.1f to %.0f", name, p, lo, lim)

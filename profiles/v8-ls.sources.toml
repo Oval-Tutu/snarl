@@ -1,0 +1,315 @@
+# Sources of the keys of v8-ls.toml, written by just import-reference.
+# kind: upstream (copied from the upstream engine), measured (from its own
+# upstream reference render), snarl (a snarl default for a feature that
+# upstream does not have) or not-measured (the model default, because the
+# references cannot give it).
+
+[[source]]
+key = "name"
+kind = "snarl"
+from = "the id of the reference engine"
+
+[[source]]
+key = "description"
+kind = "snarl"
+from = "the description of atg-video-2/07_gm_ls.mr in tools/import, which names no maker or model"
+
+[[source]]
+key = "seed"
+kind = "snarl"
+from = "the FNV-1a hash of the name, as tools/import seeds every profile"
+
+[[source]]
+key = "idle_rpm"
+kind = "upstream"
+from = "out/reference/upstream/v8-ls/engine.json idle.measured_rpm, 692.6 rpm (engine-sim-render: an 8 s free run at speed control 0), rounded to 10 rpm"
+
+[[source]]
+key = "redline_rpm"
+kind = "upstream"
+from = "out/reference/upstream/v8-ls/engine.json redline_rpm"
+
+[[source]]
+key = "limiter_rpm"
+kind = "upstream"
+from = "out/reference/upstream/v8-ls/engine.json rev_limit_rpm"
+
+[[source]]
+key = "limiter_kind"
+kind = "upstream"
+from = "the engine-sim ignition module cuts the spark of every cylinder with no afterfire (src/ignition_module.cpp), which is the snarl fuel cut"
+
+[[source]]
+key = "limiter_ms"
+kind = "measured"
+from = "the median cut, from a peak of the RPM to the next trough where the lines through the climbs and the falls meet, of the 11 bounces of the free run at full throttle of out/reference/upstream/v8-ls/limiter-free.csv from 1.5 to 5.5 s, with the RPM averaged over one engine cycle at the rev limit (tools/import measureBounce): 206.8 ms (the dump limiter_duration_s is 0.2 s)"
+
+[[source]]
+key = "limiter_fall_rpm_s"
+kind = "measured"
+from = "the median fall rate in the cuts, the slope of a straight line through the RPM from half a cycle after a peak to half a cycle before the trough, of the 11 bounces of the free run at full throttle of out/reference/upstream/v8-ls/limiter-free.csv from 1.5 to 5.5 s, with the RPM averaged over one engine cycle at the rev limit (tools/import measureBounce), with median peaks and troughs of 6818 and 6053 rpm"
+
+[[source]]
+key = "limiter_rise_rpm_s"
+kind = "measured"
+from = "the median climb rate, the slope of a straight line through the RPM from half a cycle after a trough to half a cycle before the next peak, of the 11 bounces of the free run at full throttle of out/reference/upstream/v8-ls/limiter-free.csv from 1.5 to 5.5 s, with the RPM averaged over one engine cycle at the rev limit (tools/import measureBounce)"
+
+[[source]]
+key = "limiter_load_scale"
+kind = "snarl"
+from = "the rates of the free run with no load from a gear: model default"
+
+[[source]]
+key = "limiter_pump_db"
+kind = "not-measured"
+from = "no reviewed tool measures it from the limiter reference: model default"
+
+[[source]]
+key = "limiter_notch_db"
+kind = "not-measured"
+from = "no reviewed tool measures it from the limiter reference: model default"
+
+[[source]]
+key = "limiter_bark_db"
+kind = "not-measured"
+from = "no reviewed tool measures it from the limiter reference: model default"
+
+[[source]]
+key = "final_gear_waver"
+kind = "snarl"
+from = "the final gear hold, a snarl-only feature: model default"
+
+[[source]]
+key = "pulse.table"
+kind = "measured"
+from = "tools/fit --pulse --variation --throttle 1 --engine out/reference/upstream/v8-ls/engine.json --scenarios scenarios/upstream/v8-ls on out/reference/upstream/v8-ls/holds-t100.csv: one row per hold from 690 to 6500 rpm, in internal/model/pulses/v8-ls.txt"
+
+[[source]]
+key = "pulse.cycle_variation"
+kind = "measured"
+from = "measured_variation 1 takes the measured firing gain spread of the table, so there is no extra uniform spread"
+
+[[source]]
+key = "pulse.measured_variation"
+kind = "measured"
+from = "the firing gain spread of the spread lines of the table (tools/fit --pulse --variation of the table, over its 7 holds)"
+
+[[source]]
+key = "pulse.jitter"
+kind = "not-measured"
+from = "the dynamometer holds the RPM in the references, so they cannot show a slow RPM and gain wander under load: model default"
+
+[[source]]
+key = "pulse.gain_variation"
+kind = "measured"
+from = "sqrt(3) times the median spread of the cylinder mean gains (tools/fit --pulse --variation of the table, over its 7 holds), 0.0573"
+
+[[source]]
+key = "pulse.timing_variation_deg"
+kind = "measured"
+from = "sqrt(3) times the median spread of the cylinder mean onsets (tools/fit --pulse --variation of the table, over its 7 holds), 1.700 degrees"
+
+[[source]]
+key = "exhaust.speed_of_sound"
+kind = "upstream"
+from = "engine-sim delays the flow of each cylinder by its header primary plus the exhaust length at 343 m/s in a delay filter set for 10000 steps per second, which runs once per simulation step (src/piston_engine_simulator.cpp): 343 times out/reference/upstream/v8-ls/engine.json simulation_frequency_hz 10000 over 10000"
+
+[[source]]
+key = "exhaust.crossover"
+kind = "upstream"
+from = "engine-sim exhaust systems do not mix"
+
+[[source]]
+key = "exhaust.formant_gain_db"
+kind = "measured"
+from = "the formant bank fitted to the impulse response smooth_39.wav that out/reference/upstream/v8-ls/engine.json names, with the tools/import fit (fitIR: tools/fit --base ir --hi 16000, with the -60 dB floor when the -40 dB fit is more than 3 dB off from 6 to 10 kHz)"
+
+[[source]]
+key = "exhaust.pop_formant_gain_db"
+kind = "snarl"
+from = "pops are a snarl-only feature: the pop bank fitted with the tools/fit --pop settings to the tools/import default pop stages (pipe and outlet radius 0.025 m, chamber 0.3 m at 7 times the pipe area, wall loss 2.5 dB at 2 kHz)"
+
+[[source]]
+key = "exhaust.pop_delay_ms"
+kind = "snarl"
+from = "pops are a snarl-only feature: the pop bank fitted with the tools/fit --pop settings to the tools/import default pop stages (pipe and outlet radius 0.025 m, chamber 0.3 m at 7 times the pipe area, wall loss 2.5 dB at 2 kHz)"
+
+[[source]]
+key = "noise.hf_gain"
+kind = "upstream"
+from = "out/reference/upstream/v8-ls/engine.json hf_gain"
+
+[[source]]
+key = "noise.am"
+kind = "upstream"
+from = "out/reference/upstream/v8-ls/engine.json noise"
+
+[[source]]
+key = "noise.am_cutoff_hz"
+kind = "upstream"
+from = "engine-sim Synthesizer::AudioParameters airNoiseFrequencyCutoff (include/synthesizer.h)"
+
+[[source]]
+key = "noise.input_jitter"
+kind = "upstream"
+from = "out/reference/upstream/v8-ls/engine.json jitter"
+
+[[source]]
+key = "pops.density"
+kind = "snarl"
+from = "pops are a snarl-only feature: the tools/import default for imported profiles, so that the own pops play (the model default 0 turns them off)"
+
+[[source]]
+key = "pops.character"
+kind = "snarl"
+from = "pops are a snarl-only feature: model default"
+
+[[source]]
+key = "pops.gain"
+kind = "snarl"
+from = "pops are a snarl-only feature: model default"
+
+[[source]]
+key = "pops.body_hz"
+kind = "snarl"
+from = "pops are a snarl-only feature: model default"
+
+[[source]]
+key = "pops.body_ms"
+kind = "snarl"
+from = "pops are a snarl-only feature: model default"
+
+[[source]]
+key = "pops.jump_ms"
+kind = "snarl"
+from = "pops are a snarl-only feature: model default"
+
+[[source]]
+key = "pops.crack"
+kind = "snarl"
+from = "pops are a snarl-only feature: model default"
+
+[[source]]
+key = "pops.crack_ms"
+kind = "snarl"
+from = "pops are a snarl-only feature: model default"
+
+[[source]]
+key = "pops.weight_pop"
+kind = "snarl"
+from = "pops are a snarl-only feature: model default"
+
+[[source]]
+key = "pops.weight_boom"
+kind = "snarl"
+from = "pops are a snarl-only feature: model default"
+
+[[source]]
+key = "pops.weight_crackle"
+kind = "snarl"
+from = "pops are a snarl-only feature: model default"
+
+[[source]]
+key = "pops.weight_burble"
+kind = "snarl"
+from = "pops are a snarl-only feature: model default"
+
+[[source]]
+key = "idle.fade_rpm"
+kind = "not-measured"
+from = "the free runs give the hunt at idle only: idle_rpm plus 1400 rpm, the tools/import rule"
+
+[[source]]
+key = "idle.hunt"
+kind = "measured"
+from = "the spread of the RPM averaged over one engine cycle over the mean RPM of the free run at throttle 0 of out/reference/upstream/v8-ls/idle-free.csv from 2 to 11 s, 8.6 over 696.2 rpm (9.3 rpm with no averaging), over 0.7036, the spread of the hunt modulation of the model per unit of hunt"
+
+[[source]]
+key = "idle.hunt_hz"
+kind = "measured"
+from = "the main wander frequency of the free run at throttle 0 of out/reference/upstream/v8-ls/idle-free.csv from 2 to 11 s, 0.220 Hz at 5.4 rpm"
+
+[[source]]
+key = "voice.gain"
+kind = "snarl"
+from = "model default"
+
+[[source]]
+key = "voice.leveller_db"
+kind = "snarl"
+from = "the tools/import calibration rule, by rendering the profile: the closed-throttle hold at idle 3 dB below the knee of the leveller"
+
+[[source]]
+key = "voice.output_db"
+kind = "snarl"
+from = "the tools/import calibration rule, by rendering the profile: the sweep-wot scenario at -16 LUFS"
+
+[[source]]
+key = "cylinder.crank_deg"
+kind = "upstream"
+from = "out/reference/upstream/v8-ls/engine.json spark_deg of each cylinder minus that of cylinder 1, in the 720 degree cycle: firing order 1-8-4-5-7-3-6-2"
+
+[[source]]
+key = "cylinder.bank"
+kind = "upstream"
+from = "out/reference/upstream/v8-ls/engine.json exhaust_system of each cylinder, one bank per exhaust system in the order of first use"
+
+[[source]]
+key = "cylinder.primary_m"
+kind = "upstream"
+from = "out/reference/upstream/v8-ls/engine.json header_primary_length_m of the cylinder plus length_m of its exhaust system, the length that engine-sim delays (src/piston_engine_simulator.cpp)"
+
+[[source]]
+key = "path.collector_m"
+kind = "upstream"
+from = "out/reference/upstream/v8-ls/engine.json length_m of the exhaust system. With reflection 0 the collector passes the sound unchanged"
+
+[[source]]
+key = "path.reflection"
+kind = "upstream"
+from = "engine-sim feeds the delayed exhaust flow to the synthesiser with no reflection (src/piston_engine_simulator.cpp)"
+
+[[source]]
+key = "path.gain"
+kind = "upstream"
+from = "out/reference/upstream/v8-ls/engine.json audio_volume of the exhaust system times the mean over its cylinders of sound_attenuation over the square of header_primary_length_m plus length_m, relative to the loudest system, as engine-sim weights the exhaust flow (src/piston_engine_simulator.cpp)"
+
+[[source]]
+key = "formant.kind"
+kind = "measured"
+from = "the formant bank fitted to the impulse response smooth_39.wav that out/reference/upstream/v8-ls/engine.json names, with the tools/import fit (fitIR: tools/fit --base ir --hi 16000, with the -60 dB floor when the -40 dB fit is more than 3 dB off from 6 to 10 kHz)"
+
+[[source]]
+key = "formant.hz"
+kind = "measured"
+from = "the formant bank fitted to the impulse response smooth_39.wav that out/reference/upstream/v8-ls/engine.json names, with the tools/import fit (fitIR: tools/fit --base ir --hi 16000, with the -60 dB floor when the -40 dB fit is more than 3 dB off from 6 to 10 kHz)"
+
+[[source]]
+key = "formant.q"
+kind = "measured"
+from = "the formant bank fitted to the impulse response smooth_39.wav that out/reference/upstream/v8-ls/engine.json names, with the tools/import fit (fitIR: tools/fit --base ir --hi 16000, with the -60 dB floor when the -40 dB fit is more than 3 dB off from 6 to 10 kHz)"
+
+[[source]]
+key = "formant.gain_db"
+kind = "measured"
+from = "the formant bank fitted to the impulse response smooth_39.wav that out/reference/upstream/v8-ls/engine.json names, with the tools/import fit (fitIR: tools/fit --base ir --hi 16000, with the -60 dB floor when the -40 dB fit is more than 3 dB off from 6 to 10 kHz)"
+
+[[source]]
+key = "pop_formant.kind"
+kind = "snarl"
+from = "pops are a snarl-only feature: the pop bank fitted with the tools/fit --pop settings to the tools/import default pop stages (pipe and outlet radius 0.025 m, chamber 0.3 m at 7 times the pipe area, wall loss 2.5 dB at 2 kHz)"
+
+[[source]]
+key = "pop_formant.hz"
+kind = "snarl"
+from = "pops are a snarl-only feature: the pop bank fitted with the tools/fit --pop settings to the tools/import default pop stages (pipe and outlet radius 0.025 m, chamber 0.3 m at 7 times the pipe area, wall loss 2.5 dB at 2 kHz)"
+
+[[source]]
+key = "pop_formant.q"
+kind = "snarl"
+from = "pops are a snarl-only feature: the pop bank fitted with the tools/fit --pop settings to the tools/import default pop stages (pipe and outlet radius 0.025 m, chamber 0.3 m at 7 times the pipe area, wall loss 2.5 dB at 2 kHz)"
+
+[[source]]
+key = "pop_formant.gain_db"
+kind = "snarl"
+from = "pops are a snarl-only feature: the pop bank fitted with the tools/fit --pop settings to the tools/import default pop stages (pipe and outlet radius 0.025 m, chamber 0.3 m at 7 times the pipe area, wall loss 2.5 dB at 2 kHz)"

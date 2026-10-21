@@ -161,7 +161,60 @@ func runPulse(cfg *config, csvs []string, w io.Writer) error {
 		}
 		fmt.Fprintf(w, "Wrote `%s`.\n\n", cfg.out)
 	}
+	if cfg.json != "" {
+		if err := writeHoldsJSON(cfg.json, cfg.variation, holds, picked); err != nil {
+			return err
+		}
+		fmt.Fprintf(w, "Wrote `%s`.\n\n", cfg.json)
+	}
 	return nil
+}
+
+// holdsJSON is the file that --json writes: the measures of each hold,
+// and whether they hold the cycle-to-cycle variation.
+type holdsJSON struct {
+	Variation bool       `json:"variation"`
+	Holds     []holdJSON `json:"holds"`
+}
+
+// holdJSON is the measures of one hold: its mean RPM, the peak of its
+// pulse, whether the table follows it, and with --variation the spreads of
+// the variation table.
+type holdJSON struct {
+	Label          string  `json:"label"`
+	RPM            float64 `json:"rpm"`
+	Throttle       float64 `json:"throttle"`
+	Firings        int     `json:"firings"`
+	PeakPa         float64 `json:"peak_pa"`
+	InTable        bool    `json:"in_table"`
+	GainSD         float64 `json:"gain_sd"`
+	TimingSDDeg    float64 `json:"timing_sd_deg"`
+	CylGainSD      float64 `json:"cylinder_gain_sd"`
+	CylTimingSDDeg float64 `json:"cylinder_timing_sd_deg"`
+}
+
+// writeHoldsJSON writes the measures of the holds. picked are the holds
+// that the table follows.
+func writeHoldsJSON(path string, variation bool, holds []pulseHold, picked []int) error {
+	out := holdsJSON{Variation: variation, Holds: make([]holdJSON, len(holds))}
+	for i := range holds {
+		h := &holds[i]
+		out.Holds[i] = holdJSON{
+			Label: h.label, RPM: h.m.RPM, Throttle: h.throttle, Firings: h.m.Firings, PeakPa: h.m.Shape().Peak,
+			GainSD: h.v.GainSD, TimingSDDeg: h.v.TimingSDDeg, CylGainSD: h.v.CylGainSD, CylTimingSDDeg: h.v.CylTimingSDDeg,
+		}
+	}
+	for _, i := range picked {
+		out.Holds[i].InTable = true
+	}
+	data, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(data, '\n'), 0o644)
 }
 
 // variationTable writes the cycle-to-cycle variation of each hold.

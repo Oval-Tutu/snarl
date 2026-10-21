@@ -51,17 +51,16 @@ func loudness(p snarl.Profile, text string, from float64) (float64, error) {
 	return analysis.IntegratedLoudness([][]float64{x[int(from*rate):]}, rate), nil
 }
 
-func parse(e *engine) (snarl.Profile, error) {
-	return snarl.ParseProfile([]byte(profileTOML(e)))
-}
-
 // calibrate sets leveller_db so that the closed-throttle hold at idle is
 // kneeMargin dB below the knee of the leveller, and then output_db so that
 // the sweep-wot scenario is at -16 LUFS, as TestOutputCalibration checks.
 // Below the knee, the level of the hold follows leveller_db, and far above
 // it, the level stays at the level of the knee. The knee is where the two
-// meet.
-func calibrate(e *engine) error {
+// meet. text returns the profile file of e.
+func calibrate(e *engine, text func(*engine) string) error {
+	parse := func(e *engine) (snarl.Profile, error) {
+		return snarl.ParseProfile([]byte(text(e)))
+	}
 	e.OutputDB = 0
 	idle := func(levDB float64) (float64, error) {
 		e.LevellerDB = levDB

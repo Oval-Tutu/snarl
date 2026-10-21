@@ -11,12 +11,16 @@ import (
 	"github.com/oval-tutu/snarl/internal/model"
 )
 
-//go:embed profiles/*.toml
+// The embedded profiles are the reference set of profiles/README.md. The
+// sources files beside them are not embedded.
+//
+//go:embed profiles/i4-vtec.toml profiles/v8-ls.toml profiles/f4-ej25.toml
+//go:embed profiles/v12-412.toml profiles/v12-merlin.toml profiles/f6-aircooled.toml
 var profileFiles embed.FS
 
 // Profile is a parsed engine profile.
 type Profile struct {
-	// Name is the profile identifier, for example "flat12".
+	// Name is the profile identifier, for example "v8-ls".
 	Name string
 	// Description names the engine type.
 	Description string
@@ -30,9 +34,11 @@ type Profile struct {
 // ErrUnknownProfile is returned when no embedded profile has the name.
 var ErrUnknownProfile = errors.New("unknown engine profile")
 
-// Profiles returns the names of the embedded engine profiles.
+// Profiles returns the names of the embedded engine profiles: five
+// engine-sim engines and one EngineLab engine, each converted from its
+// upstream engine (profiles/README.md).
 func Profiles() []string {
-	return []string{"flat12", "inline4", "flat6", "v8"}
+	return []string{"i4-vtec", "v8-ls", "f4-ej25", "v12-412", "v12-merlin", "f6-aircooled"}
 }
 
 // LoadProfile returns the embedded engine profile with the given name.

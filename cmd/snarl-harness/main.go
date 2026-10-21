@@ -9,7 +9,7 @@
 //	snarl-harness [-profile NAME] [-catalogue DIR] [-record DIR]
 //	snarl-harness [-profile NAME] [-catalogue DIR] -script LOG.csv
 //
-// The profile list is the tuned profiles, then the catalogue profiles in
+// The profile list is the six embedded profiles, then the catalogue profiles in
 // DIR sorted by id. By default, DIR is profiles/catalogue in the working
 // directory or the nearest parent up to the repository root.
 package main
@@ -68,10 +68,16 @@ const (
 	padDown     = ebiten.StandardGamepadButtonLeftBottom
 	padSelect   = ebiten.StandardGamepadButtonCenterLeft
 	padStart    = ebiten.StandardGamepadButtonCenterRight
-	legend      = "Throttle RT/Up/W  Shift RB,A/E up  LB,X/Q down  Profile D-pad L,R/Left,Right (all), 1-4 (tuned)  Gears Back/G\n" +
+	legend      = "Throttle RT/Up/W  Shift RB,A/E up  LB,X/Q down  Profile D-pad L,R/Left,Right (all), 1-6 (embedded)  Gears Back/G\n" +
 		"Ignition Start/Space  Buffer D-pad U,D/PgUp,PgDn  Record R  Own pops N  Pop character C  Meter and spectrum S"
 	keyboardName = "keyboard"
 )
+
+// profileKeys select the embedded profiles, in the order of snarl.Profiles.
+var profileKeys = []ebiten.Key{
+	ebiten.KeyDigit1, ebiten.KeyDigit2, ebiten.KeyDigit3,
+	ebiten.KeyDigit4, ebiten.KeyDigit5, ebiten.KeyDigit6,
+}
 
 type harness struct {
 	pads  *pads.Reader
@@ -341,7 +347,7 @@ func (h *harness) updateSwitches() {
 	if p.JustPressed(padRight) || keyJust(ebiten.KeyArrowRight) {
 		profile = stepProfile(profile, 1, n)
 	}
-	for i, k := range []ebiten.Key{ebiten.KeyDigit1, ebiten.KeyDigit2, ebiten.KeyDigit3, ebiten.KeyDigit4} {
+	for i, k := range profileKeys {
 		if i < n && keyJust(k) {
 			profile = i
 		}
@@ -574,7 +580,7 @@ func flags(s snarl.Snapshot, cut bool) string {
 func (h *harness) Layout(int, int) (int, int) { return screenW, screenH }
 
 func main() {
-	profile := flag.String("profile", snarl.Profiles()[0], "start `profile`: a tuned profile or a catalogue id")
+	profile := flag.String("profile", snarl.Profiles()[0], "start `profile`: an embedded profile or a catalogue id")
 	catalogue := flag.String("catalogue", "", "catalogue profile `dir` (default profiles/catalogue in the working directory or a parent)")
 	recDir := flag.String("record", "", "record from the start into `dir`; R starts and stops recordings in dir (default "+
 		filepath.Join(os.TempDir(), "snarl-record")+")")

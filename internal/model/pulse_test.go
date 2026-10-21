@@ -27,8 +27,9 @@ func pulseTrace(y *Synth, pos float32) []float32 {
 	return out
 }
 
-// TestPulseTable checks the pulse of each tuned table at 800, 3000 and
-// 6000 RPM at 48 kHz. A pulse that starts the fraction f of a sample after
+// TestPulseTable checks the pulse of each measured table at the RPM of its
+// first, middle and last row at 48 kHz. A pulse that starts the fraction f
+// of a sample after
 // a sample follows the table at its exact position, by linear
 // interpolation, so that the fraction is not lost: every sample is the
 // row of the chunk at its position within 1e-4 (-80 dB of the peak), the
@@ -37,15 +38,20 @@ func pulseTrace(y *Synth, pos float32) []float32 {
 // last value is zero, and the peak magnitude is within 0.5 dB of 1. The
 // pulse lasts the blended row length within one sample.
 func TestPulseTable(t *testing.T) {
-	for _, name := range []string{"flat12", "flat6", "inline4", "v8"} {
+	for _, name := range []string{"i4-vtec", "v8-ls", "f4-ej25", "v12-412", "v12-merlin"} {
+		pt, err := loadPulse(name)
+		if err != nil {
+			t.Fatal(err)
+		}
 		s := DefaultSpec()
 		s.Name = name
 		s.Pulse.Table = name
-		s.IdleRPM, s.RedlineRPM = 800, 7000
+		s.IdleRPM, s.RedlineRPM = 500, 20000
 		s.Pulse.Jitter, s.Pulse.CycleVariation = 0, 0
 		s.Cylinders = []CylinderSpec{{CrankDeg: 0}}
 		s.Paths = []PathSpec{{CollectorM: 0.5, Gain: 1}}
-		for _, rpm := range []float32{800, 3000, 6000} {
+		n := len(pt.rpm)
+		for _, rpm := range []float32{float32(pt.rpm[0]), float32(pt.rpm[n/2]), float32(pt.rpm[n-1])} {
 			y, err := New(&s, rate)
 			if err != nil {
 				t.Fatal(err)
@@ -89,7 +95,9 @@ func TestPulseTable(t *testing.T) {
 				if first := math.Abs(float64(tr[0])); first > 1.01*math.Abs(float64(tab[1]))+1e-9 {
 					t.Errorf("%s %.0f RPM, start %.1f: first sample %.3f, want at most the first table step %.3f", name, rpm, f, first, tab[1])
 				}
-				if math.Abs(20*math.Log10(peak)) > 0.5 {
+				// The samples of a pulse shorter than 1 ms miss its peak: the
+				// i4-vtec row at 5000 RPM is 0.2 ms long, about 10 samples.
+				if rowLen >= rate/1000 && math.Abs(20*math.Log10(peak)) > 0.5 {
 					t.Errorf("%s %.0f RPM, start %.1f: peak %+.2f dB, want within 0.5 dB of 0", name, rpm, f, 20*math.Log10(peak))
 				}
 			}
@@ -105,14 +113,14 @@ func TestPulseTable(t *testing.T) {
 // their mean, a blend that a firing took does not change, and the cam
 // switch sets the weight between the two rows around it.
 func TestPulseRows(t *testing.T) {
-	p, err := loadPulse("inline4")
+	p, err := loadPulse("i4-vtec")
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := DefaultSpec()
 	s.Name = "rows"
-	s.Pulse.Table = "inline4"
-	s.IdleRPM, s.RedlineRPM = 800, 8400
+	s.Pulse.Table = "i4-vtec"
+	s.IdleRPM, s.RedlineRPM = 770, 8400
 	s.Pulse.Jitter = 0
 	s.Cylinders = []CylinderSpec{{CrankDeg: 0}}
 	s.Paths = []PathSpec{{CollectorM: 0.5, Gain: 1}}
@@ -172,17 +180,17 @@ func TestPulseRows(t *testing.T) {
 // between them, with 0.5 half of that, and with 0 none. The firing gains
 // of the voices then have the standard deviation of the row.
 func TestPulseSpread(t *testing.T) {
-	p, err := loadPulse("v8")
+	p, err := loadPulse("v8-ls")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if p.gainSD[0] <= 0 {
-		t.Fatal("the v8 table has no spread")
+		t.Fatal("the v8-ls table has no spread")
 	}
 	s := DefaultSpec()
 	s.Name = "spread"
-	s.Pulse.Table = "v8"
-	s.IdleRPM, s.RedlineRPM = 675, 6000
+	s.Pulse.Table = "v8-ls"
+	s.IdleRPM, s.RedlineRPM = 690, 6500
 	s.Pulse.Jitter, s.Pulse.CycleVariation = 0, 0
 	s.Cylinders = []CylinderSpec{{CrankDeg: 0}}
 	s.Paths = []PathSpec{{CollectorM: 0.5, Gain: 1}}
@@ -267,7 +275,7 @@ func TestPulseFile(t *testing.T) {
 			t.Errorf("%s: no error", what)
 		}
 	}
-	if _, err := loadPulse("../flat6"); err == nil {
+	if _, err := loadPulse("../f4-ej25"); err == nil {
 		t.Error("a table name with a path gave no error")
 	}
 }

@@ -1,8 +1,11 @@
 package model_test
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"math"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -13,9 +16,9 @@ import (
 )
 
 // The static tests support docs/research/static-analysis.md. They render
-// the silent engine, a tuned profile with every random and noise layer
-// off, at constant holds, and measure the residual: the part of the output
-// that does not repeat from one engine cycle to the next.
+// the silent engine, an embedded profile with every random and noise
+// layer off, at constant holds, and measure the residual: the part of the
+// output that does not repeat from one engine cycle to the next.
 
 // silentEngine are the overrides that turn off every random and noise
 // layer and the pops. The leveller gain puts the engine far below the
@@ -25,8 +28,7 @@ import (
 var silentEngine = []string{
 	"noise.am=0", "noise.input_jitter=0",
 	"pulse.cycle_variation=0", "pulse.measured_variation=0", "pulse.jitter=0",
-	"idle.variation=0", "idle.timing_deg=0", "idle.hunt=0", "idle.rock=0", "idle.imbalance=0",
-	"pops.density=0", "voice.leveller_db=-40",
+	"idle.hunt=0", "pops.density=0", "voice.leveller_db=-40",
 }
 
 // staticRate is the sample rate of the static tests.
@@ -54,19 +56,25 @@ func staticHold(t *testing.T, p snarl.Profile, rpm, throttle float64) []float64 
 }
 
 // staticHolds are the holds of the static tests: idle, 3000 RPM and 80 per
-// cent of the redline, at throttle 1.
+// cent of the redline, at throttle 1. When 3000 RPM is not between the
+// other two, the middle hold is half way between them.
 func staticHolds(p snarl.Profile) []float64 {
-	return []float64{float64(p.IdleRPM), 3000, math.Round(0.8 * float64(p.RedlineRPM))}
+	lo, hi := float64(p.IdleRPM), math.Round(0.8*float64(p.RedlineRPM))
+	mid := 3000.0
+	if mid <= lo || mid >= hi {
+		mid = math.Round((lo + hi) / 2)
+	}
+	return []float64{lo, mid, hi}
 }
 
 // TestStaticControlBlock measures the residual of the silent engine of
-// each tuned profile with the control period at 32, 8 and 1 samples. A
+// each embedded profile with the control period at 32, 8 and 1 samples. A
 // change of the residual with the period is stepping noise of the
 // block-rate controls. The test hook leaves the output bit-identical at
 // the default period of 32 samples.
 func TestStaticControlBlock(t *testing.T) {
 	if testing.Short() {
-		t.Skip("renders 36 holds")
+		t.Skip("renders 54 holds")
 	}
 	for _, name := range snarl.Profiles() {
 		p, err := snarl.LoadProfileWith(name, silentEngine...)
@@ -99,7 +107,7 @@ func TestStaticControlBlock(t *testing.T) {
 }
 
 // TestStaticIntegerPeriod measures the residual of the silent engine of
-// each tuned profile at 2812.5 and 5625 RPM, where the cycle is 2048 and
+// each embedded profile at 2812.5 and 5625 RPM, where the cycle is 2048 and
 // 1024 samples long at 48 kHz, and at 2850 and 5600 RPM, where it is not a
 // whole number of samples. With a whole number of samples per cycle, every
 // cycle starts its pulses at the same sample positions, so any error of
@@ -108,7 +116,7 @@ func TestStaticControlBlock(t *testing.T) {
 // adds to the residual. TestStaticFractionalStart bounds that error.
 func TestStaticIntegerPeriod(t *testing.T) {
 	if testing.Short() {
-		t.Skip("renders 16 holds")
+		t.Skip("renders 24 holds")
 	}
 	for _, name := range snarl.Profiles() {
 		p, err := snarl.LoadProfileWith(name, silentEngine...)
@@ -128,7 +136,7 @@ func TestStaticIntegerPeriod(t *testing.T) {
 }
 
 // TestStaticFractionalStart checks the residual of the silent engine of
-// each tuned profile at idle, 3000 RPM and 80 per cent of the redline, at
+// each embedded profile at the holds of staticHolds, at
 // throttle 1 and 0.5. Each pulse starts at its fractional sample position
 // in the table, which starts and ends at zero, so that the pulses repeat
 // from cycle to cycle as in the integer-period holds of
@@ -137,7 +145,7 @@ func TestStaticIntegerPeriod(t *testing.T) {
 // band.
 func TestStaticFractionalStart(t *testing.T) {
 	if testing.Short() {
-		t.Skip("renders 24 holds")
+		t.Skip("renders 36 holds")
 	}
 	for _, name := range snarl.Profiles() {
 		p, err := snarl.LoadProfileWith(name, silentEngine...)
@@ -192,12 +200,13 @@ func staticScenario(t *testing.T, p snarl.Profile, sc *scenario.Scenario) []floa
 }
 
 // TestStaticWholeSampleLevel checks that the fractional pulse start keeps
-// the level of each tuned profile with every layer on. On the holds-t000,
-// holds-t100 and sweep-wot scenarios, the integrated loudness and the RMS
-// level stay within 0.2 dB of the pulses that start on the whole sample.
+// the level of each embedded profile with every layer on. On the
+// holds-t000, holds-t100 and sweep-wot scenarios of scenarios/upstream, the
+// integrated loudness and the RMS level stay within 0.2 dB of the pulses
+// that start on the whole sample. f6-aircooled has no holds-t000 scenario.
 func TestStaticWholeSampleLevel(t *testing.T) {
 	if testing.Short() {
-		t.Skip("renders 24 scenarios")
+		t.Skip("renders 17 scenarios")
 	}
 	for _, name := range snarl.Profiles() {
 		p, err := snarl.LoadProfile(name)
@@ -205,7 +214,11 @@ func TestStaticWholeSampleLevel(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, scn := range []string{"holds-t000", "holds-t100", "sweep-wot"} {
-			sc, err := scenario.ParseFile(filepath.Join("..", "..", "scenarios", name, scn+".scn"))
+			path := filepath.Join("..", "..", "scenarios", "upstream", name, scn+".scn")
+			if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			sc, err := scenario.ParseFile(path)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -286,13 +299,13 @@ func staticPops(t *testing.T, p snarl.Profile, request bool) []float64 {
 }
 
 // TestStaticWholeSamplePops checks that the fractional pulse start leaves
-// the pops alone. On each tuned profile, the requested pops at full
+// the pops alone. On each embedded profile, the requested pops at full
 // throttle and the own pops of a lift-off keep their level within 0.2 dB
 // and their wave, with a correlation of at least 0.999, against the pulses
 // that start on the whole sample.
 func TestStaticWholeSamplePops(t *testing.T) {
 	if testing.Short() {
-		t.Skip("renders 32 runs of 10 s")
+		t.Skip("renders 48 runs of 10 s")
 	}
 	for _, name := range snarl.Profiles() {
 		p, err := snarl.LoadProfileWith(name, "pops.density=4")
@@ -324,9 +337,9 @@ func TestStaticWholeSamplePops(t *testing.T) {
 // engine that TestStaticFractionalStart accepts. With
 // each pulse on the whole sample before it, the residual was -25 to -51
 // dB. The table pulse reads its 128 values by linear interpolation at a
-// fraction that differs from cycle to cycle, which leaves -72.7 to -85.5
-// dB (flat12 at 5440 RPM is the highest), against -75 dB and below with
-// the computed envelope, so the bound is -70 dB.
+// fraction that differs from cycle to cycle, which leaves -73.9 to -103.3
+// dB for the embedded profiles (v12-412 at 9105 and 14400 RPM is the
+// highest), so the bound is -70 dB.
 const staticFractionalBound = -70.0
 
 // residualLine formats the residual and its bands for the log.

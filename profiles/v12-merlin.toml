@@ -1,0 +1,220 @@
+# Reference profile v12-merlin, written by just import-reference from engine-sim atg-video-2/11_merlin_v12.mr at 85f7c3b.
+# Do not edit: change tools/import and run the recipe again. v12-merlin.sources.toml
+# gives the source of every key.
+name = "v12-merlin"
+description = "60 degree V12 aero engine"
+seed = 58850
+idle_rpm = 880
+redline_rpm = 3000
+limiter_rpm = 3500
+limiter_kind = "fuel"
+limiter_ms = 59.2
+limiter_fall_rpm_s = 914
+limiter_rise_rpm_s = 1523
+limiter_load_scale = 1
+limiter_pump_db = -1
+limiter_notch_db = -3
+limiter_bark_db = 1
+final_gear_waver = 0.003
+
+[pulse]
+table = "v12-merlin"
+cycle_variation = 0
+measured_variation = 1
+jitter = 0.003
+gain_variation = 0.208
+timing_variation_deg = 1.206
+
+[exhaust]
+speed_of_sound = 240.1
+crossover = "none"
+formant_gain_db = -5.61
+pop_formant_gain_db = -8.35
+pop_delay_ms = 0.531
+
+[noise]
+hf_gain = 0.004
+am = 0.35
+am_cutoff_hz = 2000
+input_jitter = 0.229
+
+[pops]
+density = 0.15
+character = "sport"
+gain = 1
+body_hz = 200
+body_ms = 35
+jump_ms = 3
+crack = 2.5
+crack_ms = 16
+weight_pop = 0.4
+weight_boom = 0.2
+weight_crackle = 0.3
+weight_burble = 0.1
+
+[idle]
+fade_rpm = 2280
+hunt = 0.0445
+hunt_hz = 0.22
+
+[voice]
+gain = 1
+leveller_db = 17.1
+output_db = 1.1
+
+[[cylinder]]
+crank_deg = 0
+bank = 0
+primary_m = 2.6924
+
+[[cylinder]]
+crank_deg = 240
+bank = 0
+primary_m = 2.54
+
+[[cylinder]]
+crank_deg = 480
+bank = 0
+primary_m = 2.3876
+
+[[cylinder]]
+crank_deg = 120
+bank = 0
+primary_m = 2.2352
+
+[[cylinder]]
+crank_deg = 600
+bank = 0
+primary_m = 2.0828
+
+[[cylinder]]
+crank_deg = 360
+bank = 0
+primary_m = 1.9304
+
+[[cylinder]]
+crank_deg = 420
+bank = 1
+primary_m = 1.6764
+
+[[cylinder]]
+crank_deg = 660
+bank = 1
+primary_m = 1.524
+
+[[cylinder]]
+crank_deg = 180
+bank = 1
+primary_m = 1.3716
+
+[[cylinder]]
+crank_deg = 540
+bank = 1
+primary_m = 1.2192
+
+[[cylinder]]
+crank_deg = 300
+bank = 1
+primary_m = 1.0668
+
+[[cylinder]]
+crank_deg = 60
+bank = 1
+primary_m = 0.9144
+
+[[path]]
+collector_m = 1.778
+reflection = 0
+gain = 0.3032
+
+[[path]]
+collector_m = 0.762
+reflection = 0
+gain = 1
+
+[[formant]]
+kind = "highpass"
+hz = 119.9
+q = 1.098
+
+[[formant]]
+kind = "peak"
+hz = 191.3
+q = 6.441
+gain_db = -7.89
+
+[[formant]]
+kind = "peak"
+hz = 256.5
+q = 12.179
+gain_db = -7.74
+
+[[formant]]
+kind = "peak"
+hz = 321.5
+q = 0.3
+gain_db = 6.4
+
+[[formant]]
+kind = "peak"
+hz = 580.2
+q = 12.121
+gain_db = -8.83
+
+[[formant]]
+kind = "peak"
+hz = 837
+q = 2.284
+gain_db = -25.64
+
+[[formant]]
+kind = "peak"
+hz = 885.4
+q = 3.583
+gain_db = 17.59
+
+[[formant]]
+kind = "lowpass"
+hz = 5771.4
+q = 0.587
+
+[[formant]]
+kind = "peak"
+hz = 10524.3
+q = 3.893
+gain_db = -3.37
+
+[[pop_formant]]
+kind = "peak"
+hz = 600
+q = 0.3
+gain_db = -11.15
+
+[[pop_formant]]
+kind = "peak"
+hz = 936.3
+q = 2.678
+gain_db = 12.61
+
+[[pop_formant]]
+kind = "peak"
+hz = 1906.8
+q = 7.062
+gain_db = 10.11
+
+[[pop_formant]]
+kind = "peak"
+hz = 2867.1
+q = 9.207
+gain_db = 7.95
+
+[[pop_formant]]
+kind = "lowpass"
+hz = 5892.6
+q = 1.851
+
+[[pop_formant]]
+kind = "peak"
+hz = 15472.9
+q = 1.08
+gain_db = -16.23

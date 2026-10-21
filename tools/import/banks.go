@@ -15,8 +15,6 @@ import (
 )
 
 const (
-	// engineSimTaps is the most taps that engine-sim convolves with.
-	engineSimTaps = 10000
 	// legacyTaps is the length of the impulse response of the pop stages.
 	legacyTaps = 1 << 16
 	// defaultIR is the impulse response of the EngineLab profiles: the
@@ -105,7 +103,7 @@ func fitIR(path string) (analysis.FormantBank, error) {
 	if err != nil {
 		return analysis.FormantBank{}, err
 	}
-	ir := analysis.IRTrim(audio.Mono(), engineSimTaps)
+	ir := analysis.IRTrim(audio.Mono(), analysis.EngineSimTaps)
 	if len(ir) == 0 {
 		return analysis.FormantBank{}, fmt.Errorf("%s: no sample above the engine-sim threshold", path)
 	}
@@ -244,18 +242,4 @@ func fitBanks(all []engine, lib string) error {
 		e.PopBank, e.PopDelayMS = pops[keys[i]].bank, pops[keys[i]].delay
 	}
 	return nil
-}
-
-// bankTOML writes the sections of the bank as [[table]] entries.
-func bankTOML(b *strings.Builder, table string, bank *analysis.FormantBank) {
-	for _, f := range bank.Formants {
-		kind := f.Kind
-		if kind == analysis.KindPeak {
-			kind = "peak"
-		}
-		fmt.Fprintf(b, "\n[[%s]]\nkind = %q\nhz = %s\nq = %s\n", table, kind, num(round(f.Hz, 1)), num(round(f.Q, 3)))
-		if f.Kind == analysis.KindPeak {
-			fmt.Fprintf(b, "gain_db = %s\n", num(round(f.GainDB, 2)))
-		}
-	}
 }

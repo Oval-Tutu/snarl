@@ -1,0 +1,188 @@
+# Reference profile i4-vtec, written by just import-reference from engine-sim atg-video-1/05_honda_vtec.mr at 85f7c3b.
+# Do not edit: change tools/import and run the recipe again. i4-vtec.sources.toml
+# gives the source of every key.
+name = "i4-vtec"
+description = "Inline-4, DOHC with a cam profile switch"
+seed = 35394
+idle_rpm = 770
+redline_rpm = 8400
+limiter_rpm = 9400
+limiter_kind = "fuel"
+limiter_ms = 55.8
+limiter_fall_rpm_s = 8509
+limiter_rise_rpm_s = 11609
+limiter_load_scale = 1
+limiter_pump_db = -1
+limiter_notch_db = -3
+limiter_bark_db = 1
+final_gear_waver = 0.003
+cam_switch_rpm = 5800
+
+[pulse]
+table = "i4-vtec"
+cam_gain = 0
+cycle_variation = 0
+measured_variation = 1
+jitter = 0.003
+gain_variation = 0.0069
+timing_variation_deg = 0.074
+
+[exhaust]
+speed_of_sound = 686
+crossover = "none"
+formant_gain_db = -28.74
+pop_formant_gain_db = -8.35
+pop_delay_ms = 0.531
+
+[noise]
+hf_gain = 0.002
+am = 0.253
+am_cutoff_hz = 2000
+input_jitter = 0.195
+
+[pops]
+density = 0.15
+character = "sport"
+gain = 1
+body_hz = 200
+body_ms = 35
+jump_ms = 3
+crack = 2.5
+crack_ms = 16
+weight_pop = 0.4
+weight_boom = 0.2
+weight_crackle = 0.3
+weight_burble = 0.1
+
+[idle]
+fade_rpm = 2170
+hunt = 0.032
+hunt_hz = 0.59
+
+[voice]
+gain = 1
+leveller_db = 13.2
+output_db = 1.08
+
+[[cylinder]]
+crank_deg = 0
+bank = 0
+primary_m = 12.3345
+
+[[cylinder]]
+crank_deg = 540
+bank = 1
+primary_m = 12.3345
+
+[[cylinder]]
+crank_deg = 180
+bank = 0
+primary_m = 12.3345
+
+[[cylinder]]
+crank_deg = 360
+bank = 1
+primary_m = 12.3345
+
+[[path]]
+collector_m = 12.3345
+reflection = 0
+gain = 0.6375
+
+[[path]]
+collector_m = 12.3345
+reflection = 0
+gain = 1
+
+[[formant]]
+kind = "highpass"
+hz = 42.2
+q = 2.837
+
+[[formant]]
+kind = "peak"
+hz = 153.7
+q = 0.634
+gain_db = 32.56
+
+[[formant]]
+kind = "peak"
+hz = 259.2
+q = 1.472
+gain_db = -14.68
+
+[[formant]]
+kind = "peak"
+hz = 410.8
+q = 4.324
+gain_db = 5.19
+
+[[formant]]
+kind = "peak"
+hz = 747.7
+q = 19.19
+gain_db = -6.77
+
+[[formant]]
+kind = "peak"
+hz = 976.5
+q = 20
+gain_db = -6.57
+
+[[formant]]
+kind = "peak"
+hz = 4003.2
+q = 1.049
+gain_db = -12.67
+
+[[formant]]
+kind = "lowpass"
+hz = 5395.6
+q = 0.821
+
+[[formant]]
+kind = "peak"
+hz = 7710.4
+q = 2.883
+gain_db = -9.18
+
+[[formant]]
+kind = "peak"
+hz = 11309.8
+q = 4.761
+gain_db = -7.55
+
+[[pop_formant]]
+kind = "peak"
+hz = 600
+q = 0.3
+gain_db = -11.15
+
+[[pop_formant]]
+kind = "peak"
+hz = 936.3
+q = 2.678
+gain_db = 12.61
+
+[[pop_formant]]
+kind = "peak"
+hz = 1906.8
+q = 7.062
+gain_db = 10.11
+
+[[pop_formant]]
+kind = "peak"
+hz = 2867.1
+q = 9.207
+gain_db = 7.95
+
+[[pop_formant]]
+kind = "lowpass"
+hz = 5892.6
+q = 1.851
+
+[[pop_formant]]
+kind = "peak"
+hz = 15472.9
+q = 1.08
+gain_db = -16.23

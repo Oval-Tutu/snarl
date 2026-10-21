@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+
+	"github.com/oval-tutu/snarl/internal/analysis"
 )
 
 // The defaults for the snarl values that neither source has. README.md
@@ -19,8 +21,8 @@ const (
 	defaultChamberArea = 7.0
 	// kneeMargin is the calibration target of leveller_db: the
 	// closed-throttle hold at the idle RPM is this many dB below the knee
-	// of the leveller, near the four tuned profiles, so that the leveller
-	// leaves the idle character alone.
+	// of the leveller, so that the leveller leaves the idle character
+	// alone.
 	kneeMargin = 3.0
 )
 
@@ -29,7 +31,6 @@ const (
 // after them.
 const sections = `[pulse]
 table = "%s"
-part_load_db = -0.8
 cycle_variation = 0.04
 jitter = 0.003
 gain_variation = 0.12
@@ -39,7 +40,6 @@ timing_variation_deg = 2
 speed_of_sound = 565
 crossover = "%s"
 coupling = %s
-overlap = %s
 formant_gain_db = %s
 pop_formant_gain_db = %s
 pop_delay_ms = %s
@@ -64,17 +64,9 @@ weight_boom = 0.2
 weight_crackle = 0.3
 weight_burble = 0.1
 
-[overrun]
-level_db = -1.2
-idle_level_db = -1.2
-
 [idle]
 fade_rpm = %s
-variation = 0.15
-timing_deg = 1
-imbalance = 0.25
 hunt = 0.004
-rock = 0.01
 hunt_hz = 1.2
 
 [voice]
@@ -88,22 +80,20 @@ const pathDefaults = `reflection = -0.4
 damping_hz = 2500
 `
 
-// pulseFor returns the pulse table and the collector overlap of the tuned
-// profile closest in layout to an engine of n cylinders: inline4 up to 5
-// cylinders, flat6 for 6 and 7, v8 for 8 and 9, and flat12 from 10. The
-// engine-sim catalogue references of just ref-set have a CSV row per 100
-// steps, which cannot resolve a pulse, so every catalogue profile takes a
-// tuned table.
-func pulseFor(n int) (table string, overlap float64) {
+// pulseFor returns the pulse table of the reference engine closest in
+// cylinder count to an engine of n cylinders: i4-vtec up to 5 cylinders,
+// v8-ls from 6 to 9, and v12-412 from 10, whose table spans 3810 to 18000
+// rpm. A catalogue engine has no reference with a CSV row per step, which
+// the pulse measurement needs, so every catalogue profile takes the table
+// of a reference engine.
+func pulseFor(n int) string {
 	switch {
 	case n <= 5:
-		return "inline4", 0
-	case n <= 7:
-		return "flat6", 1
+		return "i4-vtec"
 	case n <= 9:
-		return "v8", 1
+		return "v8-ls"
 	}
-	return "flat12", 1
+	return "v12-412"
 }
 
 func num(x float64) string {
@@ -126,7 +116,7 @@ func profileTOML(e *engine) string {
 	fmt.Fprintf(&b, "seed = %d\n", seed(e.ID))
 	fmt.Fprintf(&b, "idle_rpm = %s\nredline_rpm = %s\n", num(e.IdleRPM), num(e.RedlineRPM))
 	fmt.Fprintf(&b, "limiter_rpm = %s\nlimiter_kind = %q\nlimiter_ms = %s\n\n", num(e.LimiterRPM), e.LimiterKind, num(e.LimiterMS))
-	fmt.Fprintf(&b, sections, e.PulseTable, e.Crossover, num(e.Coupling), num(e.Overlap),
+	fmt.Fprintf(&b, sections, e.PulseTable, e.Crossover, num(e.Coupling),
 		num(round(e.Bank.GainDB, 2)), num(round(e.PopBank.GainDB, 2)), num(round(e.PopDelayMS, 3)),
 		num(e.HFGain), num(e.AM), num(e.InputJitter),
 		num(e.IdleRPM+1400), num(e.LevellerDB), num(e.OutputDB))
@@ -137,9 +127,10 @@ func profileTOML(e *engine) string {
 		fmt.Fprintf(&b, "\n[[path]]\ncollector_m = %s\n%sgain = %s\n", num(p.CollectorM), pathDefaults, num(p.Gain))
 	}
 	fmt.Fprintf(&b, "\n# Formant bank fitted to the engine-sim impulse response %s.\n", e.ImpulseResponse)
-	bankTOML(&b, "formant", &e.Bank)
+	// A strings.Builder never returns a write error.
+	_ = analysis.WriteBankTOML(&b, "formant", &e.Bank)
 	b.WriteString("\n# Pop bank fitted to the EngineLab pop stages of the earlier model.\n")
-	bankTOML(&b, "pop_formant", &e.PopBank)
+	_ = analysis.WriteBankTOML(&b, "pop_formant", &e.PopBank)
 	return b.String()
 }
 

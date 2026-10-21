@@ -126,7 +126,7 @@ func TestNoAllocations(t *testing.T) {
 }
 
 func TestReadWithScopeDoesNotAllocate(t *testing.T) {
-	p, err := snarl.LoadProfile("v8")
+	p, err := snarl.LoadProfile("v8-ls")
 	if err != nil {
 		t.Fatal(err)
 	}

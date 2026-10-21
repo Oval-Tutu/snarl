@@ -100,6 +100,33 @@ func TestEngineSimDump(t *testing.T) {
 	}
 }
 
+// TestEngineSimReversed checks the firing order of an inline-4 whose
+// starter turns the crank the other way, as the engine-sim VTEC script
+// does: the spark angles 0, 180, 540 and 360 give 1-2-4-3 for a positive
+// starter speed and 1-3-4-2 for a negative one.
+func TestEngineSimReversed(t *testing.T) {
+	const src = `{"redline_rpm": 8400, "rev_limit_rpm": 9400, "idle": {"measured_rpm": 771}, "starter_speed_rpm": %d,
+	"banks": [{"angle_deg": 0}], "exhaust_systems": [{"length_m": 1, "audio_volume": 1, "impulse_response": "a.wav"}],
+	"cylinders": [
+		{"spark_deg": 0, "spark_enabled": true}, {"spark_deg": 180, "spark_enabled": true},
+		{"spark_deg": 540, "spark_enabled": true}, {"spark_deg": 360, "spark_enabled": true}]}`
+	for starter, want := range map[int][]float64{500: {0, 180, 540, 360}, -500: {0, 540, 180, 360}} {
+		var d esDump
+		if err := json.Unmarshal(fmt.Appendf(nil, src, starter), &d); err != nil {
+			t.Fatal(err)
+		}
+		e, err := fromEngineSim("test.mr", &d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, c := range e.Cylinders {
+			if c.CrankDeg != want[i] {
+				t.Errorf("starter %d rpm: cylinder %d at %v degrees, want %v", starter, i+1, c.CrankDeg, want[i])
+			}
+		}
+	}
+}
+
 // TestPopKey checks that the pop bank follows the pop stages of the first
 // path, that paths with the same stages share them, and that other stages
 // give a note.
@@ -142,13 +169,12 @@ func TestFitBanksMissingIR(t *testing.T) {
 	}
 }
 
-// TestPulseFor checks that every cylinder count takes the pulse table and
-// the collector overlap of the tuned profile closest in layout.
+// TestPulseFor checks that every cylinder count takes the pulse table of
+// the reference engine closest in cylinder count.
 func TestPulseFor(t *testing.T) {
-	for n, want := range map[int]string{1: "inline4", 4: "inline4", 5: "inline4", 6: "flat6", 8: "v8", 9: "v8", 10: "flat12", 16: "flat12"} {
-		table, overlap := pulseFor(n)
-		if table != want || (table == "inline4") != (overlap == 0) {
-			t.Errorf("%d cylinders: table %s and overlap %g, want %s with the overlap of that profile", n, table, overlap, want)
+	for n, want := range map[int]string{1: "i4-vtec", 4: "i4-vtec", 5: "i4-vtec", 6: "v8-ls", 8: "v8-ls", 9: "v8-ls", 10: "v12-412", 16: "v12-412"} {
+		if table := pulseFor(n); table != want {
+			t.Errorf("%d cylinders: table %s, want %s", n, table, want)
 		}
 	}
 }

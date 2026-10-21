@@ -1,0 +1,6 @@
+# EngineLab Aircooled-like 3.6 Flat-6: the engine runs free at throttle 0
+# for 6 s, under its own idle control. The EngineLab render is
+# reference/enginelab/scenarios/idle-free.json without its 8.5 s pre-roll (crank,
+# then 7 s of idle for the after-start flare to decay). The free segment is
+# not part of docs/scenario-format.md (scenarios/upstream/README.md).
+free 0 6

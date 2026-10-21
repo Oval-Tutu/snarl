@@ -3,30 +3,23 @@ package snarl
 import (
 	"fmt"
 	"math"
-	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
-
-	"github.com/oval-tutu/snarl/internal/analysis"
-	"github.com/oval-tutu/snarl/internal/scenario"
-	"github.com/oval-tutu/snarl/internal/wav"
 )
 
 // The static tests support docs/research/static-analysis.md. They turn the
-// noise layers on one at a time from the silent engine, a tuned profile
-// with every random and noise layer off, and measure the noise floor
-// between the harmonics with the hiss method (hissMeasure). A slow random
-// pitch or gain wander puts its power in sidebands within a few hertz of
-// each harmonic, and noise fills the gaps between them, so the floor tells
-// static from wander.
+// noise layers on one at a time from the silent engine, an embedded
+// profile with every random and noise layer off, and measure the noise
+// floor between the harmonics with the hiss method (hissMeasure). A slow
+// random pitch or gain wander puts its power in sidebands within a few
+// hertz of each harmonic, and noise fills the gaps between them, so the
+// floor tells static from wander.
 
 // staticSilent are the overrides of the silent engine.
 var staticSilent = []string{
 	"noise.am=0", "noise.input_jitter=0",
 	"pulse.cycle_variation=0", "pulse.measured_variation=0", "pulse.jitter=0",
-	"idle.variation=0", "idle.timing_deg=0", "idle.hunt=0", "idle.rock=0", "idle.imbalance=0",
-	"pops.density=0",
+	"idle.hunt=0", "pops.density=0",
 }
 
 // staticLayers are the layers, each named by the keys that it turns back on.
@@ -57,11 +50,11 @@ func staticOverrides(keys string) []string {
 
 // TestStaticLayerFloor logs the noise floor between the harmonics and the 4
 // to 12 kHz level of each layer at idle, 3000 RPM and 80 per cent of the
-// redline at full throttle, for each tuned profile. Each hold renders for
-// 3 s and the measures use 0.8 s to 2.6 s.
+// redline at full throttle, for each embedded profile. Each hold renders
+// for 3 s and the measures use 0.8 s to 2.6 s.
 func TestStaticLayerFloor(t *testing.T) {
 	if testing.Short() {
-		t.Skip("renders 96 holds")
+		t.Skip("renders 108 holds")
 	}
 	t.Parallel()
 	for _, name := range Profiles() {
@@ -95,61 +88,57 @@ func TestStaticLayerFloor(t *testing.T) {
 	}
 }
 
-// staticFixFloor is the highest floor in dB that TestStaticFixFloor
-// accepts at the idle and the 3000 RPM holds of holds-t100. With the
-// engine-sim noise AM, derivative mix, input jitter, measured pulse and
-// measured firing gain spread, the floor is -4.9 and -7.0 dB (flat12),
-// -17.9 and -27.6 dB (flat6), -29.0 and -31.9 dB (inline4) and -19.2 and
-// -28.3 dB (v8), against -4.9 and -8.6 dB, -16.4 and -29.2 dB, -24.9 and
-// -29.1 dB and -16.5 and -26.6 dB in the engine-sim references. The
-// bounds are about 1 dB above the snarl floors. The measured firing gain
-// spread of engine-sim (0.58 at 1000 RPM and 0.32 at 3000 RPM for flat12)
-// raises the flat12 floor from -24.3 and -21.1 dB to that of engine-sim.
-var staticFixFloor = map[string][2]float64{
-	"flat12":  {-4, -6},
-	"flat6":   {-17, -26.5},
-	"inline4": {-28, -30.5},
-	"v8":      {-18, -27},
+// staticFloors returns the floor of the first hold and of the hold
+// nearest 3000 RPM after it, of the holds-t100 measures.
+func staticFloors(h []hissHold) []float64 {
+	mid := 1
+	for i := 2; i < len(h); i++ {
+		if math.Abs(h[i].rpm-3000) < math.Abs(h[mid].rpm-3000) {
+			mid = i
+		}
+	}
+	return []float64{h[0].floor, h[mid].floor}
 }
+
+// staticFloorRefs are staticFloors of the reference render of holds-t100,
+// in decibels.
+var staticFloorRefs = map[string][2]float64{
+	"i4-vtec":      {-23.57, -31.05},
+	"v8-ls":        {-18.20, -25.94},
+	"f4-ej25":      {-25.82, -28.47},
+	"v12-412":      {-6.74, -6.55},
+	"v12-merlin":   {-9.05, -18.91},
+	"f6-aircooled": {-6.61, -7.14},
+}
+
+// staticFloorTol is the most in decibels that TestStaticFixFloor accepts
+// above the floor of the reference.
+const staticFloorTol = 3.0
 
 // TestStaticFixFloor measures the noise floor between the harmonics and
 // the 4 to 12 kHz level of each hold of holds-t100, with the profile
-// values, with no noise AM, and for the engine-sim reference in
-// out/reference/engine-sim when it is present, resampled to the test rate.
-// At the idle and the 3000 RPM holds of each tuned profile, the floor is
-// at most staticFixFloor.
+// values and with no noise AM. At the first hold and at the hold nearest
+// 3000 RPM, the floor is at most staticFloorTol above the floor of the
+// reference (staticFloorRefs).
 func TestStaticFixFloor(t *testing.T) {
 	if testing.Short() {
-		t.Skip("renders 24 scenarios")
+		t.Skip("renders 12 scenarios")
 	}
 	t.Parallel()
-	for name := range hissBounds {
+	for _, name := range Profiles() {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			p, dir := hissProfile(t, name)
-			final := hissHolds(t, p, dir)
+			final := hissHolds(t, hissProfile(t, name))
 			t.Log(staticFixLine(name, "final", final))
-			q, _ := hissProfile(t, name, noAM...)
-			t.Log(staticFixLine(name, "no AM", hissHolds(t, q, dir)))
-			ref := filepath.Join("out", "reference", "engine-sim", strings.TrimPrefix(dir, "scenarios"+string(filepath.Separator)), "holds-t100.wav")
-			if a, err := wav.ReadFile(ref); err != nil {
-				t.Logf("%s: no reference", ref)
-			} else {
-				sc, err := scenario.ParseFile(filepath.Join(dir, "holds-t100.scn"))
-				if err != nil {
-					t.Fatal(err)
-				}
-				x := analysis.Resample(a.Mono(), a.SampleRate, testRate)
-				t.Log(staticFixLine(name, "engine-sim", hissScenarioHolds(sc, func(i int) float64 { return x[min(i, len(x)-1)] })))
+			t.Log(staticFixLine(name, "no AM", hissHolds(t, hissProfile(t, name, noAM...))))
+			ref := staticFloorRefs[name]
+			if r, ok := hissRefHolds(t, name); ok {
+				t.Log(staticFixLine(name, "reference", r))
+				checkRecorded(t, "floors", staticFloors(r), ref[:])
 			}
-			b, ok := staticFixFloor[name]
-			if !ok {
-				return
-			}
-			for _, h := range final {
-				j := slices.Index([]float64{final[0].rpm, 3000}, h.rpm)
-				if j >= 0 && h.floor > b[j] {
-					t.Errorf("%.0f RPM: floor %.1f dB, want at most %.1f dB", h.rpm, h.floor, b[j])
+			for i, f := range staticFloors(final) {
+				if f > ref[i]+staticFloorTol {
+					t.Errorf("hold %d: floor %.1f dB, want at most %.1f dB, %.0f dB above the reference", i+1, f, ref[i]+staticFloorTol, staticFloorTol)
 				}
 			}
 		})

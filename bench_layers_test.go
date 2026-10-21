@@ -15,17 +15,24 @@ type benchState struct {
 	snap func(p Profile) Snapshot
 }
 
-// benchStates are the states of BenchmarkStates: full throttle at 4000
-// RPM, idle, overrun with pops, and held at the rev limiter.
+// wotRPM is the RPM of the full-throttle benchmarks: 4000 RPM, or 90 per
+// cent of the redline when that is lower.
+func wotRPM(p Profile) float32 {
+	return min(4000, 0.9*p.RedlineRPM)
+}
+
+// benchStates are the states of BenchmarkStates: full throttle at wotRPM,
+// idle, overrun with pops at 5000 RPM or the redline when that is lower,
+// and held at the rev limiter.
 var benchStates = []benchState{
-	{"wot4000", func(Profile) Snapshot {
-		return Snapshot{RPM: 4000, Throttle: 1, Load: 1, Gear: 3, Flags: FlagRunning}
+	{"wot", func(p Profile) Snapshot {
+		return Snapshot{RPM: wotRPM(p), Throttle: 1, Load: 1, Gear: 3, Flags: FlagRunning}
 	}},
 	{"idle", func(p Profile) Snapshot {
 		return Snapshot{RPM: p.IdleRPM, Flags: FlagRunning}
 	}},
-	{"overrun", func(Profile) Snapshot {
-		return Snapshot{RPM: 5000, Gear: 3, Flags: FlagRunning | FlagOverrun}
+	{"overrun", func(p Profile) Snapshot {
+		return Snapshot{RPM: min(5000, p.RedlineRPM), Gear: 3, Flags: FlagRunning | FlagOverrun}
 	}},
 	{"limiter", func(p Profile) Snapshot {
 		return Snapshot{RPM: p.LimiterRPM, Throttle: 1, Load: 1, Gear: 3, Flags: FlagRunning | FlagRedZone}

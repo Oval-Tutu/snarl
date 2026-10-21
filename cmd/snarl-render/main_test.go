@@ -23,7 +23,7 @@ func TestRenderWritesWAV(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := filepath.Join(dir, "a", "short.wav")
-	args := []string{"--out", out, "--rate", "8000", "--block", "64", "--settle", "0.01", "flat12", scn}
+	args := []string{"--out", out, "--rate", "8000", "--block", "64", "--settle", "0.01", "i4-vtec", scn}
 	if err := run(args, io.Discard); err != nil {
 		t.Fatal(err)
 	}
@@ -52,16 +52,16 @@ func TestRunErrors(t *testing.T) {
 	}
 	out := filepath.Join(dir, "o.wav")
 	for _, args := range [][]string{
-		{"flat12"},
+		{"i4-vtec"},
 		{"--out", out, "nope", scn},
-		{"--out", out, "--tier", "0", "flat12", scn},
-		{"--out", out, "--tier", "3", "flat12", scn},
-		{"--out", out, "--format", "s24", "flat12", scn},
-		{"--out", out, "--block", "0", "flat12", scn},
-		{"--out", out, "flat12", filepath.Join(dir, "missing.scn")},
-		{"--out", out, "--set", "noise.bogus=1", "flat12", scn},
+		{"--out", out, "--tier", "0", "i4-vtec", scn},
+		{"--out", out, "--tier", "3", "i4-vtec", scn},
+		{"--out", out, "--format", "s24", "i4-vtec", scn},
+		{"--out", out, "--block", "0", "i4-vtec", scn},
+		{"--out", out, "i4-vtec", filepath.Join(dir, "missing.scn")},
+		{"--out", out, "--set", "noise.bogus=1", "i4-vtec", scn},
 		{"--out", out, "--replay", filepath.Join(dir, "missing.csv")},
-		{"--out", out, "--replay", scn, "flat12", scn},
+		{"--out", out, "--replay", scn, "i4-vtec", scn},
 	} {
 		if err := run(args, io.Discard); err == nil {
 			t.Errorf("run(%q) did not fail", args)
@@ -119,7 +119,7 @@ func TestReplayMatchesScenario(t *testing.T) {
 	if err := os.WriteFile(scnPath, []byte(text), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(logPath, []byte(logText(scn, "v8", 8000, 64)), 0o600); err != nil {
+	if err := os.WriteFile(logPath, []byte(logText(scn, "v8-ls", 8000, 64)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	read := func(args ...string) []byte {
@@ -135,7 +135,7 @@ func TestReplayMatchesScenario(t *testing.T) {
 		}
 		return b
 	}
-	want := read("v8", scnPath)
+	want := read("v8-ls", scnPath)
 	first := read("--replay", logPath)
 	if !bytes.Equal(first, want) {
 		t.Error("the replay of the scenario log differs from the scenario render")
@@ -151,9 +151,9 @@ func TestReplayMatchesScenario(t *testing.T) {
 
 func TestReplayProfileChange(t *testing.T) {
 	r := &replayer{rate: 8000, rows: []logRow{
-		{t: 0, profile: "v8", tier: 1, snap: snarl.Snapshot{RPM: 3000, Flags: snarl.FlagRunning}},
-		{t: 0.1, profile: "v8", tier: 1, snap: snarl.Snapshot{RPM: 3100, Flags: snarl.FlagRunning}},
-		{t: 0.2, profile: "flat6", tier: 2, snap: snarl.Snapshot{RPM: 3200, Flags: snarl.FlagRunning}},
+		{t: 0, profile: "v8-ls", tier: 1, snap: snarl.Snapshot{RPM: 3000, Flags: snarl.FlagRunning}},
+		{t: 0.1, profile: "v8-ls", tier: 1, snap: snarl.Snapshot{RPM: 3100, Flags: snarl.FlagRunning}},
+		{t: 0.2, profile: "f6-aircooled", tier: 2, snap: snarl.Snapshot{RPM: 3200, Flags: snarl.FlagRunning}},
 	}}
 	e0, _, _ := r.at(0)
 	e1, s1, _ := r.at(0.15)
@@ -169,27 +169,27 @@ func TestReplayProfileChange(t *testing.T) {
 }
 
 func TestParseLogErrors(t *testing.T) {
-	const row = "0,v8,1,3000,1,1,10,1,1,0,0,0,2,0.5,3\n"
+	const row = "0,v8-ls,1,3000,1,1,10,1,1,0,0,0,2,0.5,3\n"
 	for name, text := range map[string]string{
-		"short pop row": logHeader + "\n0,v8,1,3000,1,1,10,1,1,0,0,0\n",
-		"bad character": logHeader + "\n0,v8,1,3000,1,1,10,1,1,0,0,0,2,0.5,256\n",
+		"short pop row": logHeader + "\n0,v8-ls,1,3000,1,1,10,1,1,0,0,0\n",
+		"bad character": logHeader + "\n0,v8-ls,1,3000,1,1,10,1,1,0,0,0,2,0.5,256\n",
 		"empty":         "",
 		"bad header":    "t,profile\n" + row,
 		"no rows":       logHeader + "\n",
-		"falling":       logHeader + "\n0.5,v8,1,3000,1,1,10,1,1,0,0,0,0,0,0\n" + row,
-		"tier 0":        logHeader + "\n0,v8,0,3000,1,1,10,1,1,0,0,0,0,0,0\n",
-		"bad tier":      logHeader + "\n0,v8,3,3000,1,1,10,1,1,0,0,0,0,0,0\n",
-		"bad number":    logHeader + "\n0,v8,1,fast,1,1,10,1,1,0,0,0,0,0,0\n",
-		"bad byte":      logHeader + "\n0,v8,1,3000,1,1,10,1.5,1,0,0,0,0,0,0\n",
-		"short row":     logHeader + "\n0,v8,1\n",
-		"negative t":    logHeader + "\n-1,v8,1,3000,1,1,10,1,1,0,0,0,0,0,0\n",
+		"falling":       logHeader + "\n0.5,v8-ls,1,3000,1,1,10,1,1,0,0,0,0,0,0\n" + row,
+		"tier 0":        logHeader + "\n0,v8-ls,0,3000,1,1,10,1,1,0,0,0,0,0,0\n",
+		"bad tier":      logHeader + "\n0,v8-ls,3,3000,1,1,10,1,1,0,0,0,0,0,0\n",
+		"bad number":    logHeader + "\n0,v8-ls,1,fast,1,1,10,1,1,0,0,0,0,0,0\n",
+		"bad byte":      logHeader + "\n0,v8-ls,1,3000,1,1,10,1.5,1,0,0,0,0,0,0\n",
+		"short row":     logHeader + "\n0,v8-ls,1\n",
+		"negative t":    logHeader + "\n-1,v8-ls,1,3000,1,1,10,1,1,0,0,0,0,0,0\n",
 	} {
 		if _, err := parseLog(strings.NewReader(text)); err == nil {
 			t.Errorf("%s: no error", name)
 		}
 	}
 	rows, err := parseLog(strings.NewReader(logHeader + "\n" + row))
-	want := logRow{t: 0, profile: "v8", tier: 1, snap: snarl.Snapshot{
+	want := logRow{t: 0, profile: "v8-ls", tier: 1, snap: snarl.Snapshot{
 		RPM: 3000, Throttle: 1, Load: 1, Speed: 10, Gear: 1, Flags: snarl.FlagRunning,
 		PopRequest: 2, PopStrength: 0.5, PopCharacter: snarl.CharacterRace,
 	}}
@@ -197,7 +197,7 @@ func TestParseLogErrors(t *testing.T) {
 		t.Errorf("parseLog = %+v, %v", rows, err)
 	}
 	// A log from before the pop columns has no pop requests.
-	rows, err = parseLog(strings.NewReader(legacyHeader + "\n0,v8,1,3000,1,1,10,1,1,0,0,0\n"))
+	rows, err = parseLog(strings.NewReader(legacyHeader + "\n0,v8-ls,1,3000,1,1,10,1,1,0,0,0\n"))
 	want.snap.PopRequest, want.snap.PopStrength, want.snap.PopCharacter = 0, 0, 0
 	if err != nil || len(rows) != 1 || rows[0] != want {
 		t.Errorf("parseLog of a legacy log = %+v, %v", rows, err)

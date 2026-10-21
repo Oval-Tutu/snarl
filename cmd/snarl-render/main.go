@@ -6,8 +6,9 @@
 //	snarl-render [flags] PROFILE SCENARIO
 //	snarl-render [flags] --replay LOG.csv
 //
-// PROFILE, and each profile of a log, is a tuned profile or the id of a
-// profile in the catalogue directory, for example es-v10-72.
+// PROFILE, and each profile of a log, is an embedded profile, for example
+// v8-ls, or the id of a profile in the catalogue directory, for example
+// es-v10-72.
 package main
 
 import (

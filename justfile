@@ -78,24 +78,19 @@ ref-engine-sim script out *args:
     mkdir -p "$(dirname "{{ out }}")"
     "${r}/bin/engine-sim-render" --script "${script}" --out "{{ out }}" {{ args }}
 
-# Render every scenario in scenarios/<profile> with engine-sim, for one
-# profile or for all profiles when none is given. Writes
-# out/reference/engine-sim/<profile>/<scenario>.wav with a CSV beside it.
-# The profile catalogue/<id> renders a catalogue engine from engine-sim,
-# and catalogue renders all of them (scenarios/catalogue/engine-sim-scripts.txt).
-ref-set profile="":
+# Render every scenario of the profile catalogue with engine-sim, for one
+# engine-sim engine of the catalogue (catalogue/<id>) or for all of them
+# when none is given (scenarios/catalogue/engine-sim-scripts.txt). Writes
+# out/reference/engine-sim/catalogue/<id>/<scenario>.wav with a CSV beside
+# it. just ref-upstream renders the references of the embedded profiles.
+ref-set profile="catalogue":
     #!/usr/bin/env bash
     set -euo pipefail
     r="$(nix build -f reference/engine-sim --print-out-paths --no-link)"
     tmp="$(mktemp -d)"
     trap 'rm -rf "${tmp}"' EXIT
-    declare -A scripts=(
-        [flat12]="${PWD}/reference/engine-sim/engines/flat12.mr"
-        [inline4]="${r}/share/engine-sim/engines/atg-video-1/05_honda_vtec.mr"
-        [flat6]="${PWD}/reference/engine-sim/engines/flat6.mr"
-        [v8]="${PWD}/reference/engine-sim/engines/v8.mr"
-    )
-    profiles=({{ if profile == "" { "flat12 inline4 flat6 v8" } else { profile } }})
+    declare -A scripts=()
+    profiles=({{ profile }})
     catalogue=scenarios/catalogue/engine-sim-scripts.txt
     if [[ "${profiles[*]}" == catalogue ]]; then
         mapfile -t profiles < <(sed -e 's/#.*//' "${catalogue}" | awk 'NF { print "catalogue/" $1 }')
@@ -108,16 +103,13 @@ ref-set profile="":
             fi
         fi
         if [[ -z "${scripts[${p}]:-}" ]]; then
-            echo "Error: unknown profile '${p}'. Use flat12, inline4, flat6, v8, catalogue or catalogue/<id> of an engine-sim engine." >&2
+            echo "Error: unknown profile '${p}'. Use catalogue or catalogue/<id> of an engine-sim engine." >&2
             exit 1
         fi
         out="out/reference/engine-sim/${p}"
         mkdir -p "${out}"
         for scn in scenarios/"${p}"/*.scn; do
             name="$(basename "${scn}" .scn)"
-            # A dynamometer hold at the limiter gives no bounce: ref-limiter
-            # renders this reference with the engine running free.
-            [[ "${name}" == limiter ]] && continue
             segments=()
             while read -r kind a b c d extra; do
                 case "${kind}" in
@@ -131,50 +123,6 @@ ref-set profile="":
             "${r}/bin/engine-sim-render" --script "${scripts[${p}]}" "${segments[@]}" \
                 --volume 0.5 --out "${out}/${name}.wav" --csv "${out}/${name}.csv" --csv-every 100
         done
-    done
-
-# Render the engine-sim limiter reference for one profile, or for all
-# profiles when none is given. The first sweep in scenarios/<profile>/limiter.scn
-# gives the start and limiter rpm. The dynamometer holds the start rpm at full
-# throttle for 0.5 s, then the engine runs free at full throttle for 5 s and
-# bounces off its limiter. The inline4 run uses a copy of the upstream script
-# with the rev limit changed from 9400 to the 8500 rpm of the snarl profile.
-# Writes out/reference/engine-sim/<profile>/limiter.wav with a CSV beside it.
-ref-limiter profile="":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    r="$(nix build .#engine-sim-render --print-out-paths --no-link)"
-    tmp="$(mktemp -d)"
-    trap 'rm -rf "${tmp}"' EXIT
-    honda="${r}/share/engine-sim/engines/atg-video-1/05_honda_vtec.mr"
-    sed -e 's/rev_limit: 9400 \* units.rpm/rev_limit: 8500 * units.rpm/' "${honda}" > "${tmp}/inline4.mr"
-    if ! grep -q 'rev_limit: 8500 \* units.rpm' "${tmp}/inline4.mr"; then
-        echo "Error: no 9400 rpm rev limit in ${honda}." >&2
-        exit 1
-    fi
-    declare -A scripts=(
-        [flat12]="${PWD}/reference/engine-sim/engines/flat12.mr"
-        [inline4]="${tmp}/inline4.mr"
-        [flat6]="${PWD}/reference/engine-sim/engines/flat6.mr"
-        [v8]="${PWD}/reference/engine-sim/engines/v8.mr"
-    )
-    profiles=({{ if profile == "" { "flat12 inline4 flat6 v8" } else { profile } }})
-    for p in "${profiles[@]}"; do
-        if [[ -z "${scripts[${p}]:-}" ]]; then
-            echo "Error: unknown profile '${p}'. Use flat12, inline4, flat6 or v8." >&2
-            exit 1
-        fi
-        scn="scenarios/${p}/limiter.scn"
-        read -r kind start limit _ < <(sed -e 's/#.*//' "${scn}" | grep -v '^[[:space:]]*$' | head -n 1)
-        if [[ "${kind}" != sweep ]]; then
-            echo "Error: ${scn}: the first segment is not a sweep." >&2
-            exit 1
-        fi
-        out="out/reference/engine-sim/${p}"
-        mkdir -p "${out}"
-        echo "${p}: free run from ${start} rpm into the ${limit} rpm limiter"
-        "${r}/bin/engine-sim-render" --script "${scripts[${p}]}" --hold "${start}:1:0.5" --free 1:5 \
-            --volume 0.5 --out "${out}/limiter.wav" --csv "${out}/limiter.csv" --csv-every 10
     done
 
 # Render the references of five upstream engine-sim engines, unchanged, for
@@ -270,7 +218,7 @@ ref-upstream engine="":
 # (master, stems, engine order map and manifest) to
 # out/reference/enginelab/f6-aircooled/<scenario>/ at 48 kHz, 32-bit float
 # and --volume 0.5, and <scenario>.wav beside it: the master without the
-# pre-roll stages.
+# pre-roll stages, so that it matches scenarios/upstream/f6-aircooled.
 ref-enginelab:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -293,24 +241,34 @@ ref-enginelab:
         echo "Wrote ${out}/${name}.wav (${preroll} s pre-roll removed)"
     done
 
-# Build listening files in out/listen from existing snarl and engine-sim
-# renders: each snarl render followed by its engine-sim reference, and blind
-# sets of the snarl sweep-wot, overrun and limiter renders in a new random
-# order with the answer in key.txt. All parts are loudness-normalised with
-# loudnorm.
+# Build listening files in out/listen from existing snarl renders and the
+# upstream references of the six embedded profiles: each snarl render
+# out/snarl/<profile>/<scenario>.wav followed by its reference, and blind
+# sets of the snarl sweep-wot and overrun renders in a new random order with
+# the answer in key.txt. The references are out/reference/upstream/<profile>
+# of just ref-upstream, and out/reference/enginelab/f6-aircooled of just
+# ref-enginelab. All parts are loudness-normalised with loudnorm.
 listen:
     #!/usr/bin/env bash
     set -euo pipefail
-    profiles=(flat12 inline4 flat6 v8)
-    scenarios=(sweep-wot overrun holds-t100 limiter)
+    profiles=(i4-vtec v8-ls f4-ej25 v12-412 v12-merlin f6-aircooled)
+    scenarios=(sweep-wot overrun holds-t100)
     if ! command -v ffmpeg >/dev/null; then
         echo "Error: ffmpeg is not on PATH. Run this recipe in nix develop." >&2
         exit 1
     fi
+    # Prints the reference of profile $1 and scenario $2.
+    ref() {
+        if [[ "$1" == f6-aircooled ]]; then
+            echo "out/reference/enginelab/$1/$2.wav"
+        else
+            echo "out/reference/upstream/$1/$2.wav"
+        fi
+    }
     missing=()
     for p in "${profiles[@]}"; do
         for s in "${scenarios[@]}"; do
-            for f in "out/snarl/${p}/${s}.wav" "out/reference/engine-sim/${p}/${s}.wav"; do
+            for f in "out/snarl/${p}/${s}.wav" "$(ref "${p}" "${s}")"; do
                 [[ -f "${f}" ]] || missing+=("${f}")
             done
         done
@@ -318,23 +276,23 @@ listen:
     if (( ${#missing[@]} > 0 )); then
         echo "Error: missing renders, so out/listen is unchanged:" >&2
         printf '  %s\n' "${missing[@]}" >&2
-        echo "Render them with just render, just ref-set and just ref-limiter." >&2
+        echo "Render them with just render, just ref-upstream and just ref-enginelab." >&2
         exit 1
     fi
     norm="loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000"
     ff=(ffmpeg -nostdin -hide_banner -loglevel error -y)
     rm -rf out/listen
-    mkdir -p out/listen/blind out/listen/blind-overrun out/listen/blind-limiter
+    mkdir -p out/listen/blind out/listen/blind-overrun
     for p in "${profiles[@]}"; do
         for s in "${scenarios[@]}"; do
-            out="out/listen/${p}-${s}-snarl-then-enginesim.wav"
-            "${ff[@]}" -i "out/snarl/${p}/${s}.wav" -i "out/reference/engine-sim/${p}/${s}.wav" \
+            out="out/listen/${p}-${s}-snarl-then-reference.wav"
+            "${ff[@]}" -i "out/snarl/${p}/${s}.wav" -i "$(ref "${p}" "${s}")" \
                 -filter_complex "[0:a]${norm}[a];[1:a]${norm}[b];[a][b]concat=n=2:v=0:a=1" \
                 -c:a pcm_s16le "${out}"
             echo "Wrote ${out}"
         done
     done
-    for set in blind:sweep-wot blind-overrun:overrun blind-limiter:limiter; do
+    for set in blind:sweep-wot blind-overrun:overrun; do
         dir="out/listen/${set%%:*}"
         s="${set#*:}"
         n=0
@@ -346,16 +304,16 @@ listen:
         echo "Wrote ${n} blind files and key.txt to ${dir}"
     done
 
-# Build out/listen-overnight/<profile>.wav for the four tuned profiles: the
+# Build out/listen-overnight/<profile>.wav for the six embedded profiles: the
 # sweep-wot render of the snarl-render binary at the path before, the tier 1
-# render of the current tree, and the engine-sim reference, in that order with
-# 1 s of silence between them. A plain gain takes each part from its measured
-# integrated loudness to -16 LUFS. Writes a spectrogram <profile>.png beside
-# each file, and README.txt with the start time and the measured loudness of
-# each part.
-listen-overnight before: (_listen-overnight before "flat12") (_listen-overnight before "inline4") (_listen-overnight before "flat6") (_listen-overnight before "v8")
-    cat out/listen-overnight/flat12.line out/listen-overnight/inline4.line out/listen-overnight/flat6.line out/listen-overnight/v8.line > out/listen-overnight/README.txt
-    rm out/listen-overnight/flat12.line out/listen-overnight/inline4.line out/listen-overnight/flat6.line out/listen-overnight/v8.line
+# render of the current tree, and the upstream reference, in that order with
+# 1 s of silence between them. The binary before must know the six profiles.
+# A plain gain takes each part from its measured integrated loudness to
+# -16 LUFS. Writes a spectrogram <profile>.png beside each file, and
+# README.txt with the start time and the measured loudness of each part.
+listen-overnight before: (_listen-overnight before "i4-vtec") (_listen-overnight before "v8-ls") (_listen-overnight before "f4-ej25") (_listen-overnight before "v12-412") (_listen-overnight before "v12-merlin") (_listen-overnight before "f6-aircooled")
+    cd out/listen-overnight && cat i4-vtec.line v8-ls.line f4-ej25.line v12-412.line v12-merlin.line f6-aircooled.line > README.txt
+    cd out/listen-overnight && rm i4-vtec.line v8-ls.line f4-ej25.line v12-412.line v12-merlin.line f6-aircooled.line
     @echo "Wrote out/listen-overnight"
 
 _listen-overnight before profile: (_command "snarl-render")
@@ -369,8 +327,11 @@ _listen-overnight before profile: (_command "snarl-render")
     work="$(mktemp -d)"
     trap 'rm -rf "${work}"' EXIT
     mkdir -p "${out}"
-    scn="scenarios/{{ profile }}/sweep-wot.scn"
-    ref="out/reference/engine-sim/{{ profile }}/sweep-wot.wav"
+    scn="scenarios/upstream/{{ profile }}/sweep-wot.scn"
+    ref="out/reference/upstream/{{ profile }}/sweep-wot.wav"
+    if [[ "{{ profile }}" == f6-aircooled ]]; then
+        ref="out/reference/enginelab/{{ profile }}/sweep-wot.wav"
+    fi
     "{{ before }}" -rate 48000 -format f32 -tier 1 -out "${work}/before.wav" "{{ profile }}" "${scn}"
     go run ./cmd/snarl-render -rate 48000 -format f32 -tier 1 -out "${work}/after.wav" "{{ profile }}" "${scn}"
     lb="$(ffmpeg -nostdin -hide_banner -i "${work}/before.wav" -af ebur128=framelog=quiet -f null - 2>&1 | grep -E '^ +I:')"
@@ -391,7 +352,7 @@ _listen-overnight before profile: (_command "snarl-render")
     ffmpeg -nostdin -hide_banner -loglevel error -y -i "${out}/{{ profile }}.wav" -lavfi "showspectrumpic=s=1600x600:scale=log:fscale=log:legend=1" "${out}/{{ profile }}.png"
     ta=$(( (nb + 48000) * 1000 / 48000 ))
     te=$(( (nb + na + 96000) * 1000 / 48000 ))
-    printf '{{ profile }}.wav: before at 0.000 s (%s LUFS), after at %d.%03d s (%s LUFS), engine-sim at %d.%03d s (%s LUFS)\n' \
+    printf '{{ profile }}.wav: before at 0.000 s (%s LUFS), after at %d.%03d s (%s LUFS), reference at %d.%03d s (%s LUFS)\n' \
         "${lb}" $(( ta / 1000 )) $(( ta % 1000 )) "${la}" $(( te / 1000 )) $(( te % 1000 )) "${le}" > "${out}/{{ profile }}.line"
     echo "Wrote ${out}/{{ profile }}.wav"
 
@@ -438,3 +399,54 @@ import-profiles:
     "${yq}" -o json "${lab}/parts/exhausts.yaml" > out/import/enginelab/exhausts.json
     go run ./tools/import --engine-sim out/import/engine-sim --enginelab out/import/enginelab \
         --profiles profiles/catalogue --scenarios scenarios/catalogue
+
+# Rebuild the embedded profiles in profiles (profiles/README.md) from the
+# references of just ref-upstream and just ref-enginelab: i4-vtec, v8-ls,
+# f4-ej25, v12-412, v12-merlin and f6-aircooled. For each engine-sim engine,
+# tools/fit --pulse --variation writes the pulse table to
+# internal/model/pulses/<id>.txt and the hold measures to
+# out/import/reference/<id>. Then tools/import --reference writes each
+# profile with its sources file, and the README. Give id=DIR to use other
+# reference renders for an engine, for example v12-412=out/reference/v12-412-10k.
+import-reference *refs:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    lab="$(nix build -f tools/import/enginelab.nix --print-out-paths --no-link)"
+    yq="$(nix build --inputs-from . nixpkgs#yq-go --print-out-paths --no-link)/bin/yq"
+    declare -A ref=(
+        [i4-vtec]=out/reference/upstream/i4-vtec
+        [v8-ls]=out/reference/upstream/v8-ls
+        [f4-ej25]=out/reference/upstream/f4-ej25
+        [v12-412]=out/reference/upstream/v12-412
+        [v12-merlin]=out/reference/upstream/v12-merlin
+        [f6-aircooled]=out/reference/enginelab/f6-aircooled
+    )
+    flags=()
+    for r in {{ refs }}; do
+        id="${r%%=*}"
+        if [[ "${r}" != *=?* || -z "${ref[${id}]:-}" ]]; then
+            echo "Error: '${r}' is not id=DIR of i4-vtec, v8-ls, f4-ej25, v12-412, v12-merlin or f6-aircooled." >&2
+            exit 1
+        fi
+        ref[${id}]="${r#*=}"
+        flags+=(--ref "${r}")
+    done
+    work=out/import/reference
+    rm -rf "${work}"
+    mkdir -p "${work}/enginelab/engines"
+    "${yq}" -o json "${lab}/engines/09_porsche_flat6_like.engine.yaml" > "${work}/enginelab/engines/09_porsche_flat6_like.json"
+    "${yq}" -o json "${lab}/parts/exhausts.yaml" > "${work}/enginelab/exhausts.json"
+    go build -o "${work}/fit" ./tools/fit
+    pids=()
+    for id in i4-vtec v8-ls f4-ej25 v12-412 v12-merlin; do
+        mkdir -p "${work}/${id}"
+        "${work}/fit" --pulse --variation --throttle 1 --engine "${ref[${id}]}/engine.json" \
+            --scenarios "scenarios/upstream/${id}" --name "${id}" --out "internal/model/pulses/${id}.txt" \
+            --json "${work}/${id}/pulse.json" "${ref[${id}]}/holds-t100.csv" > "${work}/${id}/pulse.md" &
+        pids+=($!)
+    done
+    for pid in "${pids[@]}"; do
+        wait "${pid}"
+    done
+    go run ./tools/import --reference profiles --enginelab "${work}/enginelab" \
+        --scenarios scenarios/upstream --work "${work}" "${flags[@]}"

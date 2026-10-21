@@ -1,0 +1,9 @@
+# EngineLab Aircooled-like 3.6 Flat-6: 2 s at 7000 rpm and throttle 1, then
+# closed throttle with the engine running free. The EngineLab dynamometer
+# can only brake, so the engine coasts down at its own rate: about 4 s from
+# 7000 rpm to idle, then idle. The sweep and the last hold approximate that
+# coast. The EngineLab render is reference/enginelab/scenarios/overrun.json
+# without its 11 s pre-roll.
+hold 7000 1 2
+sweep 7000 780 0 4
+hold 780 0 2

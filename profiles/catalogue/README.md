@@ -1,6 +1,6 @@
 # Profile catalogue
 
-This directory holds every engine profile of the two upstream projects, [engine-sim](https://github.com/ange-yaghi/engine-sim) and [EngineLab](https://github.com/zolaski333/EngineLab), converted to snarl profiles. The tests in `catalogue_test.go` load them from disk. They are not embedded in the library and do not ship to the game. The four tuned profiles in `profiles/*.toml` are separate and do not change with this catalogue.
+This directory holds every engine profile of the two upstream projects, [engine-sim](https://github.com/ange-yaghi/engine-sim) and [EngineLab](https://github.com/zolaski333/EngineLab), converted to snarl profiles. The tests in `catalogue_test.go` load them from disk. They are not embedded in the library and do not ship to the game. The six reference profiles in `profiles/*.toml` are separate and do not change with this catalogue.
 
 To listen to a catalogue engine, run `just run-harness -profile es-v10-72`, then step through every profile with the Left and Right arrows or D-pad left and right. `snarl-render` takes a catalogue id as PROFILE and in `--replay` logs.
 
@@ -26,7 +26,7 @@ Files are relative to `assets/engines/` of engine-sim.
 | `es-v2-90-industrial` | `atg-video-1/02_kohler_ch750.mr` | V2, 90 degree | 2 | 1 | 1590 | 3600 | 5000 | 500 |  |
 | `es-v2-45-big-twin` | `atg-video-1/03_harley_davidson_shovelhead.mr` | V2, 45 degree | 2 | 2 | 820 | 5000 | 5500 | 500 |  |
 | `es-i4-moto-litre` | `atg-video-1/04_hayabusa.mr` | inline-4 | 4 | 2 | 1410 | 11000 | 11500 | 50 |  |
-| `es-i4-dohc-cam-switch` | `atg-video-1/05_honda_vtec.mr` | inline-4 | 4 | 2 | 770 | 8400 | 9400 | 50 |  |
+| `es-i4-dohc-cam-switch` | `atg-video-1/05_honda_vtec.mr` | inline-4 | 4 | 2 | 770 | 8400 | 9400 | 50 | The starter speed is -500 rpm, so the crank turns the other way and the cylinders fire in falling spark angle. |
 | `es-f4-boxer` | `atg-video-1/06_subaru_ej25.mr` | flat-4 | 4 | 2 | 830 | 6500 | 6500 | 80 |  |
 | `es-i5-23` | `atg-video-1/07_audi_i5.mr` | inline-5 | 5 | 2 | 960 | 6000 | 6500 | 100 |  |
 | `es-r5-radial` | `atg-video-1/08_radial_5.mr` | radial-5 | 5 | 2 | 840 | 3000 | 3500 | 200 |  |
@@ -78,7 +78,7 @@ Files are relative to `engines/` of EngineLab.
 
 | snarl value | Source in the dump |
 | --- | --- |
-| `cylinder.crank_deg` | Spark plug angle of the cylinder (`connect_wire`), minus the angle of the first cylinder, in the 720 degree cycle. The timing advance is the same for every cylinder, so it does not change the intervals. |
+| `cylinder.crank_deg` | Spark plug angle of the cylinder (`connect_wire`), minus the angle of the first cylinder, in the 720 degree cycle. The timing advance is the same for every cylinder, so it does not change the intervals. engine-sim turns the crank in the direction of `starter_speed_rpm`, so for a negative starter speed the import negates the spark angles first: the cylinders fire in falling spark angle. |
 | `cylinder.bank` | Exhaust system of the cylinder. Each exhaust system that a cylinder uses is one snarl bank, in the order of first use. |
 | `cylinder.primary_m` | `primary_length` of the cylinder plus `primary_tube_length` of its exhaust system. |
 | `path.collector_m` | `length` of the exhaust system, the pipe length that engine-sim delays the pulse by. |
@@ -90,7 +90,7 @@ Files are relative to `engines/` of EngineLab.
 | `idle_rpm` | Mean rpm over the last 2 s of the free run at speed control 0, rounded to 10 rpm. An engine that stalls gets a fifth of the redline, rounded to 50 rpm and at least 500 rpm. |
 | `redline_rpm` | `redline` of the engine node. |
 | `limiter_rpm`, `limiter_ms` | `rev_limit` and `limiter_duration` of the ignition module, the cut capped at 500 ms. |
-| `limiter_kind` | `fuel`: engine-sim cuts every cylinder, as the tuned profiles read it. |
+| `limiter_kind` | `fuel`: engine-sim cuts the spark of every cylinder with no afterfire, as the reference profiles read it. |
 
 The dump also holds bank angles, crank throws and journal angles, bore, stroke, rod length, compression ratio, intake and exhaust runner sizes, sound attenuation and the simulation frequency. snarl has no values for them, so the import does not use them.
 
@@ -103,7 +103,7 @@ The dump also holds bank angles, crank throws and journal angles, bore, stroke, 
 | `cylinder.primary_m` | Graph: the pipes from the cylinder to its first junction. A single-cylinder path has no junction, so its first pipe is the primary. Scalar exhaust: `primary_length_mm`, or `exhaust_primary_length_mm` of the cylinder. |
 | `path.collector_m` | Graph: the components from the junction to the outlet, without the silencer. Scalar exhaust: `midpipe_length_mm`. At least 0.2 m. |
 | `path.gain` | `audio_volume` of the path over the loudest path. |
-| `[[formant]]`, `exhaust.formant_gain_db` | EngineLab has no impulse response, so every EngineLab profile has the formant bank of the engine-sim default impulse response, `smooth_39.wav` (`default_0` of the engine-sim impulse response library), fitted as for the engine-sim profiles. The tuned v8 profile has the same response. |
+| `[[formant]]`, `exhaust.formant_gain_db` | EngineLab has no impulse response, so every EngineLab profile has the formant bank of the engine-sim default impulse response, `smooth_39.wav` (`default_0` of the engine-sim impulse response library), fitted as for the engine-sim profiles. The reference `v8-ls` profile has the same response. |
 | `noise.hf_gain`, `noise.am`, `noise.input_jitter` | The engine-sim defaults 0.01, 1.0 and 0.5. |
 | `[[pop_formant]]`, `exhaust.pop_formant_gain_db`, `exhaust.pop_delay_ms` | The pop bank fitted to the EngineLab pop stages that the profile had before the formant bank, as `tools/fit --pop` fits it, from the pipe, the outlet and the silencer of the first path. Pipe radius: graph, the diameter of the first component after the junction, scalar exhaust, `collector_diameter_mm`. Outlet radius: `outlet_diameter_mm`, or the diameter of the `outlet` component. Silencer: its length, and its area over the pipe area, from `volume_l` over `length_mm` of the `muffler` of a graph or `muffler_chamber_diameter_mm` over `collector_diameter_mm`, squared, of a scalar exhaust, and no silencer when the ratio is 1 or less. |
 | `exhaust.crossover`, `exhaust.coupling` | `partial` with `crossover_coupling` (at most 0.5) for a `crossover` component. `full` when two banks reach the same merge. `none` otherwise. |
@@ -115,22 +115,21 @@ The exhaust preset is the `uses.exhaust` part of `parts/exhausts.yaml`, or the `
 
 ### Defaults
 
-Neither source has these values, so every profile has the same ones. They are near the middle of the four tuned profiles.
+Neither source has these values, so every profile has the same ones.
 
 | Section | Values |
 | --- | --- |
-| `[pulse]` | `part_load_db` -0.8, `cycle_variation` 0.04, `jitter` 0.003, `gain_variation` 0.12, `timing_variation_deg` 2 |
+| `[pulse]` | `cycle_variation` 0.04, `jitter` 0.003, `gain_variation` 0.12, `timing_variation_deg` 2 |
 | `[exhaust]` | `speed_of_sound` 565 |
-
-The pulse table and the collector overlap are those of the tuned profile closest in layout: `inline4` (overlap 0) up to 5 cylinders, `flat6` for 6 and 7, `v8` for 8 and 9, and `flat12` from 10 (overlap 1). The pulse tables are from engine-sim (measured) by `tools/fit --pulse` on the runner pressure of the tuned profile scripts. A catalogue engine has no table of its own, because `just ref-set` writes one CSV row per 100 steps, and the pulse measurement needs one row per step.
 | `[noise]` | `am_cutoff_hz` 2000 |
 | `[pops]` | `density` 0.15, `character` sport, `gain` 1, `body_hz` 200, `body_ms` 35, `jump_ms` 3, `crack` 2.5, `crack_ms` 16, weights pop 0.4, boom 0.2, crackle 0.3, burble 0.1 |
-| `[overrun]` | `level_db` -1.2, `idle_level_db` -1.2 |
-| `[idle]` | `fade_rpm` idle + 1400, `variation` 0.15, `timing_deg` 1, `imbalance` 0.25, `hunt` 0.004, `rock` 0.01, `hunt_hz` 1.2 |
+| `[idle]` | `fade_rpm` idle + 1400, `hunt` 0.004, `hunt_hz` 1.2 |
 | `[voice]` | `gain` 1 |
 | `[[path]]` | `reflection` -0.4, `damping_hz` 2500 |
 | Pop stages that the pop bank follows | Wall loss 2.5 dB at 2 kHz, low shelf 0 dB at 250 Hz, outlet direct 0.4. engine-sim paths: a chamber of 0.3 m with an area ratio of 7 |
 | Engine | `seed` from a hash of the id, `cam_switch_rpm` 0, the limiter rates and levels of the model defaults |
+
+The pulse table is that of the reference profile closest in cylinder count: `i4-vtec` up to 5 cylinders, `v8-ls` from 6 to 9, and `v12-412` from 10, whose table spans 3810 to 18000 rpm. The pulse tables are from engine-sim (measured) by `tools/fit --pulse` on the runner pressure of the unchanged upstream engines (`profiles/README.md`). A catalogue engine has no table of its own, because `just ref-set` writes one CSV row per 100 steps, and the pulse measurement needs one row per step.
 
 ### Calibration
 
@@ -155,7 +154,7 @@ The import renders each profile with the snapshots of `snarl-render`:
 - At a half-throttle hold, the strongest component from 20 Hz to 1.75 times the firing frequency is at the firing frequency within 2 Hz. This check is for even profiles only.
 - The `sweep-wot` scenario is within 1 LU of -16 LUFS.
 
-The test does not apply the by-ear tests of the tuned profiles: the overrun level windows, the limiter against engine-sim and the pop level bands. Those check values that were tuned by ear, and the catalogue has default values for them.
+The test does not apply the reference tests of the profiles in `profiles/*.toml`: the levels against their upstream references, the limiter against its measured bounce and the pop level bands. The catalogue has default values for the limiter and the pops, and no measured references.
 
 A profile is even when its cylinders fire at equal intervals, the primary pipe delays keep the arrivals at the outlet within 15 degrees of equal at the test rpm, and no path is below half the gain of the loudest. The test treats these profiles as uneven. For them, it checks that the strongest component is on an engine order, a multiple of half the crank frequency, within 2 Hz:
 
