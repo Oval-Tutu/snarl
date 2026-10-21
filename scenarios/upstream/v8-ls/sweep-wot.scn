@@ -1,0 +1,3 @@
+# v8-ls (GM LS): written by tools/fit --upstream-scenarios from the engine dump.
+# Full-throttle sweep from idle to the top rpm.
+sweep 690 6500 1 8

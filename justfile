@@ -177,6 +177,93 @@ ref-limiter profile="":
             --volume 0.5 --out "${out}/limiter.wav" --csv "${out}/limiter.csv" --csv-every 10
     done
 
+# Render the references of five upstream engine-sim engines, unchanged, for
+# one engine or for all when none is given. The engine names map to the
+# upstream scripts in the pinned package (scenarios/upstream/README.md):
+# i4-vtec atg-video-1/05_honda_vtec.mr, v8-ls atg-video-2/07_gm_ls.mr,
+# f4-ej25 atg-video-1/06_subaru_ej25.mr, v12-412
+# atg-video-2/12_ferrari_412_t2.mr and v12-merlin atg-video-2/11_merlin_v12.mr.
+# For each engine it writes to out/reference/upstream/<engine>: the engine
+# dump engine.json, the scenarios that tools/fit --upstream-scenarios
+# writes from it into scenarios/upstream/<engine>, a WAV and a CSV of each
+# scenario at --volume 0.5 (every step for the holds and the free runs,
+# every 10th step for sweep-wot and overrun), and health.md from tools/fit
+# --health. The simulation-rate check renders the simrate hold again from a
+# temporary copy of the script with only the simulation frequency doubled,
+# as simrate-2x, and compares the two in simrate-compare with snarl-compare.
+ref-upstream engine="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    r="$(nix build -f reference/engine-sim --print-out-paths --no-link)"
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "${tmp}"' EXIT
+    declare -A scripts=(
+        [i4-vtec]=atg-video-1/05_honda_vtec.mr
+        [v8-ls]=atg-video-2/07_gm_ls.mr
+        [f4-ej25]=atg-video-1/06_subaru_ej25.mr
+        [v12-412]=atg-video-2/12_ferrari_412_t2.mr
+        [v12-merlin]=atg-video-2/11_merlin_v12.mr
+    )
+    # Sets segments to the renderer flags of the scenario file $1.
+    parse() {
+        segments=()
+        while IFS= read -r line; do
+            read -r kind a b c d extra <<< "${line%%#*}" || true
+            case "${kind:-}" in
+                "") continue ;;
+                hold) [[ -n "${c}" && -z "${d}" ]] && segments+=(--hold "${a}:${b}:${c}") && continue ;;
+                sweep) [[ -n "${d}" && -z "${extra}" ]] && segments+=(--sweep "${a}:${b}:${c}:${d}") && continue ;;
+                free) [[ -n "${b}" && -z "${c}" ]] && segments+=(--free "${a}:${b}") && continue ;;
+            esac
+            echo "Error: $1: bad segment '${line}'" >&2
+            exit 1
+        done < "$1"
+    }
+    engines=({{ if engine == "" { "i4-vtec v8-ls f4-ej25 v12-412 v12-merlin" } else { engine } }})
+    for e in "${engines[@]}"; do
+        if [[ -z "${scripts[${e}]:-}" ]]; then
+            echo "Error: unknown engine '${e}'. Use i4-vtec, v8-ls, f4-ej25, v12-412 or v12-merlin." >&2
+            exit 1
+        fi
+        # A script with a main node is used as it is. A script without one
+        # gets a wrapper that only adds main.
+        script="$(tools/import/engine-sim-main.sh "${r}/share/engine-sim/engines/${scripts[${e}]}" "${tmp}")"
+        out="out/reference/upstream/${e}"
+        scn="scenarios/upstream/${e}"
+        mkdir -p "${out}"
+        echo "${e}: ${scripts[${e}]} (${script})"
+        "${r}/bin/engine-sim-render" --script "${script}" --dump-json "${out}/engine.json"
+        go run ./tools/fit --upstream-scenarios --engine "${out}/engine.json" --scenarios "${scn}" --name "${e}"
+        for f in "${scn}"/*.scn; do
+            name="$(basename "${f}" .scn)"
+            [[ "${name}" == simrate-2x ]] && continue
+            every=1
+            [[ "${name}" == sweep-wot || "${name}" == overrun ]] && every=10
+            parse "${f}"
+            "${r}/bin/engine-sim-render" --script "${script}" "${segments[@]}" \
+                --volume 0.5 --out "${out}/${name}.wav" --csv "${out}/${name}.csv" --csv-every "${every}"
+        done
+        # The simulation-rate check: a copy of the script with only the
+        # simulation frequency literal doubled.
+        hz="$(grep -o '"simulation_frequency_hz": [0-9]*' "${out}/engine.json")"
+        hz="${hz##* }"
+        if [[ "$(grep -cE "simulation_frequency: ${hz}([^0-9.]|$)" "${script}")" != 1 ]]; then
+            echo "Error: ${script} does not set simulation_frequency: ${hz} once." >&2
+            exit 1
+        fi
+        text="$(< "${script}")"
+        printf '%s\n' "${text/"simulation_frequency: ${hz}"/"simulation_frequency: $((hz * 2))"}" > "${tmp}/${e}-2x.mr"
+        parse "${scn}/simrate-2x.scn"
+        "${r}/bin/engine-sim-render" --script "${tmp}/${e}-2x.mr" "${segments[@]}" \
+            --volume 0.5 --out "${out}/simrate-2x.wav" --csv "${out}/simrate-2x.csv"
+        go run ./tools/fit --health --engine "${out}/engine.json" --scenarios "${scn}" --name "${e}" \
+            "${out}"/holds-t000.csv "${out}"/holds-t050.csv "${out}"/holds-t100.csv "${out}"/idle-free.csv \
+            "${out}"/limiter-free.csv "${out}"/simrate.csv "${out}"/simrate-2x.csv > "${out}/health.md"
+        go run ./cmd/snarl-compare --scenario "${scn}/simrate.scn" --out "${out}/simrate-compare" \
+            "${out}/simrate.wav" "${out}/simrate-2x.wav"
+        echo "Wrote ${out}"
+    done
+
 # Render the EngineLab references of the Aircooled-like 3.6 Flat-6 with the
 # EngineLab offline audio exporter (reference/enginelab/README.md). For each
 # scenario in reference/enginelab/scenarios it writes the exporter output

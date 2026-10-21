@@ -1,0 +1,3 @@
+# v12-412 (Ferrari 412 T2 [V12]): written by tools/fit --upstream-scenarios from the engine dump.
+# Full-throttle sweep from idle to the top rpm.
+sweep 3810 18000 1 8

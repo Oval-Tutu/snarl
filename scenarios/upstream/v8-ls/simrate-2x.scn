@@ -1,0 +1,4 @@
+# v8-ls (GM LS): written by tools/fit --upstream-scenarios from the engine dump.
+# Simulation-rate check: the simrate hold, rendered with the simulation
+# frequency doubled to 20000 Hz.
+hold 5000 1 3

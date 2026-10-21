@@ -1,0 +1,5 @@
+# v12-merlin (Merlin V-1650-9 [V12] (NA)): written by tools/fit --upstream-scenarios from the engine dump.
+# The engine stalls at speed control 0 (0 rpm in the dump), so idle is the fallback 600 rpm.
+# Simulation-rate check: the simrate hold, rendered with the simulation
+# frequency doubled to 14000 Hz.
+hold 2000 1 3

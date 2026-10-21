@@ -1,0 +1,3 @@
+# i4-vtec (Honda B18C5 [VTEC, I4]): written by tools/fit --upstream-scenarios from the engine dump.
+# Full-throttle sweep from idle to the top rpm.
+sweep 770 8400 1 8

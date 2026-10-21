@@ -1,0 +1,4 @@
+# v8-ls (GM LS): written by tools/fit --upstream-scenarios from the engine dump.
+# Simulation-rate check: a 3 s full-throttle hold, rendered at the
+# simulation frequency of the engine (10000 Hz).
+hold 5000 1 3

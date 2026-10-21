@@ -1,0 +1,7 @@
+# v12-merlin (Merlin V-1650-9 [V12] (NA)): written by tools/fit --upstream-scenarios from the engine dump.
+# The engine stalls at speed control 0 (0 rpm in the dump), so idle is the fallback 600 rpm.
+# Full throttle at the top rpm, then closed throttle held, then a
+# closed-throttle sweep down to idle.
+hold 3000 1 2
+hold 3000 0 2
+sweep 3000 600 0 6

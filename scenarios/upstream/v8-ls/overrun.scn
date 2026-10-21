@@ -1,0 +1,6 @@
+# v8-ls (GM LS): written by tools/fit --upstream-scenarios from the engine dump.
+# Full throttle at the top rpm, then closed throttle held, then a
+# closed-throttle sweep down to idle.
+hold 6500 1 2
+hold 6500 0 2
+sweep 6500 690 0 6

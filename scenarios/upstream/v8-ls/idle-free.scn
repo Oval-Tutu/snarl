@@ -1,0 +1,5 @@
+# v8-ls (GM LS): written by tools/fit --upstream-scenarios from the engine dump.
+# engine-sim only: the dynamometer holds idle at throttle 0 for 1 s, then
+# the engine runs free at throttle 0 for 10 s.
+hold 690 0 1
+free 0 10

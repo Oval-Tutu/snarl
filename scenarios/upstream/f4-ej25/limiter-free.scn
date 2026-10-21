@@ -1,0 +1,6 @@
+# f4-ej25 (Subaru EJ25): written by tools/fit --upstream-scenarios from the engine dump.
+# engine-sim only: the dynamometer holds 5400 rpm at full throttle for
+# 0.5 s, then the engine runs free at full throttle for 5 s into its
+# 6500 rpm limiter.
+hold 5400 1 0.5
+free 1 5

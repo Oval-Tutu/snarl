@@ -1,0 +1,6 @@
+# v12-412 (Ferrari 412 T2 [V12]): written by tools/fit --upstream-scenarios from the engine dump.
+# engine-sim only: the dynamometer holds 17000 rpm at full throttle for
+# 0.5 s, then the engine runs free at full throttle for 5 s into its
+# 18500 rpm limiter.
+hold 17000 1 0.5
+free 1 5

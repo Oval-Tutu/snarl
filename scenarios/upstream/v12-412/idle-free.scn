@@ -1,0 +1,5 @@
+# v12-412 (Ferrari 412 T2 [V12]): written by tools/fit --upstream-scenarios from the engine dump.
+# engine-sim only: the dynamometer holds idle at throttle 0 for 1 s, then
+# the engine runs free at throttle 0 for 10 s.
+hold 3810 0 1
+free 0 10

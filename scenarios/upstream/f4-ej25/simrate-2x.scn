@@ -1,0 +1,4 @@
+# f4-ej25 (Subaru EJ25): written by tools/fit --upstream-scenarios from the engine dump.
+# Simulation-rate check: the simrate hold, rendered with the simulation
+# frequency doubled to 40000 Hz.
+hold 5000 1 3

@@ -1,0 +1,4 @@
+# v12-412 (Ferrari 412 T2 [V12]): written by tools/fit --upstream-scenarios from the engine dump.
+# Simulation-rate check: the simrate hold, rendered with the simulation
+# frequency doubled to 10000 Hz.
+hold 13000 1 3

@@ -50,11 +50,23 @@
 // pulse file gets one spread line per row with the firing gain spread,
 // which the model takes with [pulse] measured_variation.
 //
+// With --upstream-scenarios, it writes the scenarios of just ref-upstream
+// for the engine dump of --engine into --scenarios: holds at throttle 0,
+// 0.5 and 1 from idle to the top RPM in steps of about 1000 RPM, a
+// full-throttle sweep, an overrun, a free-running idle, a free run into
+// the limiter, and the simulation-rate hold. With --health, it checks
+// from the per-step CSV files given as arguments, with the scenario of the
+// same name in --scenarios, that each cylinder of the engine of --engine
+// fires on its spark angle at each hold, with no misfires and a steady
+// peak runner pressure, and gives the RPM statistics of each free run.
+//
 // Usage:
 //
 //	go run ./tools/fit --ir IR.wav [--base ir] [--profile LEGACY.toml] [--out out/analysis/fit/v8.toml] > fit.md
 //	go run ./tools/fit --pop --profile LEGACY.toml [--out out/analysis/fit/v8-pop.toml] > fit.md
 //	go run ./tools/fit --pulse [--variation] --throttle 1 --engine engine.json --scenarios scenarios/v8 [--out internal/model/pulses/v8.txt] holds-t100.csv [holds-t050.csv] > pulse.md
+//	go run ./tools/fit --upstream-scenarios --engine engine.json --scenarios scenarios/upstream/v8-ls --name v8-ls
+//	go run ./tools/fit --health --engine engine.json --scenarios scenarios/upstream/v8-ls --name v8-ls holds-t000.csv [idle-free.csv ...] > health.md
 package main
 
 import (
@@ -98,6 +110,9 @@ type config struct {
 	maxRPM            float64
 	// variation adds the cycle-to-cycle variation of each hold.
 	variation bool
+	// upstream writes the just ref-upstream scenarios, and health checks
+	// the engine from its CSV files.
+	upstream, health bool
 }
 
 // smoothing names the smoothing of the target.
@@ -162,8 +177,22 @@ func run(args []string, w io.Writer) error {
 	fs.Float64Var(&cfg.minRPM, "min-rpm", 0, "lowest RPM of the holds that the --pulse table follows")
 	fs.Float64Var(&cfg.maxRPM, "max-rpm", 100000, "highest RPM of the holds that the --pulse table follows")
 	fs.BoolVar(&cfg.variation, "variation", false, "with --pulse, also fit a gain, a shift and a width to each firing and report their spreads")
+	fs.BoolVar(&cfg.upstream, "upstream-scenarios", false, "write the just ref-upstream scenarios of the engine dump of --engine into --scenarios, in place of a bank fit")
+	fs.BoolVar(&cfg.health, "health", false, "check the firings and the free-run RPM of the engine of --engine from the per-step CSV files given as arguments, in place of a bank fit")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if cfg.upstream || cfg.health {
+		if cfg.name == "" {
+			cfg.name = filepath.Base(cfg.scenarios)
+		}
+		if cfg.upstream {
+			if cfg.engine == "" || cfg.scenarios == "" || fs.NArg() != 0 {
+				return errors.New("--upstream-scenarios needs --engine and --scenarios, and no other arguments")
+			}
+			return writeUpstreamScenarios(cfg.engine, cfg.scenarios, cfg.name, w)
+		}
+		return runHealth(&cfg, fs.Args(), w)
 	}
 	if cfg.pulse {
 		if cfg.name == "" {
