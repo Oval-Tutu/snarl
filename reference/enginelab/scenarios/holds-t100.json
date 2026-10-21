@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "name": "holds-t100",
+  "stages": [
+    { "name": "preroll_crank", "duration_seconds": 1.5, "ignition": true, "starter": true, "governed": false, "throttle_start": 0.0, "throttle_end": 0.0, "load_start": 0.0, "load_end": 0.0, "target_rpm_start": 0.0, "target_rpm_end": 0.0 },
+    { "name": "preroll_idle", "duration_seconds": 3.5, "ignition": true, "starter": false, "governed": false, "throttle_start": 0.0, "throttle_end": 0.0, "load_start": 0.0, "load_end": 0.0, "target_rpm_start": 0.0, "target_rpm_end": 0.0 },
+    { "name": "preroll_prime", "duration_seconds": 1.5, "ignition": true, "starter": false, "governed": true, "throttle_start": 1.0, "throttle_end": 1.0, "load_start": 0.0, "load_end": 0.0, "target_rpm_start": 780.0, "target_rpm_end": 780.0 },
+    { "name": "hold_780", "duration_seconds": 3.0, "ignition": true, "starter": false, "governed": true, "throttle_start": 1.0, "throttle_end": 1.0, "load_start": 0.0, "load_end": 0.0, "target_rpm_start": 780.0, "target_rpm_end": 780.0 },
+    { "name": "sweep_780_2000", "duration_seconds": 0.5, "ignition": true, "starter": false, "governed": true, "throttle_start": 1.0, "throttle_end": 1.0, "load_start": 0.0, "load_end": 0.0, "target_rpm_start": 780.0, "target_rpm_end": 2000.0 },
+    { "name": "hold_2000", "duration_seconds": 3.0, "ignition": true, "starter": false, "governed": true, "throttle_start": 1.0, "throttle_end": 1.0, "load_start": 0.0, "load_end": 0.0, "target_rpm_start": 2000.0, "target_rpm_end": 2000.0 },
+    { "name": "sweep_2000_3000", "duration_seconds": 0.5, "ignition": true, "starter": false, "governed": true, "throttle_start": 1.0, "throttle_end": 1.0, "load_start": 0.0, "load_end": 0.0, "target_rpm_start": 2000.0, "target_rpm_end": 3000.0 },
+    { "name": "hold_3000", "duration_seconds": 3.0, "ignition": true, "starter": false, "governed": true, "throttle_start": 1.0, "throttle_end": 1.0, "load_start": 0.0, "load_end": 0.0, "target_rpm_start": 3000.0, "target_rpm_end": 3000.0 },
+    { "name": "sweep_3000_4000", "duration_seconds": 0.5, "ignition": true, "starter": false, "governed": true, "throttle_start": 1.0, "throttle_end": 1.0, "load_start": 0.0, "load_end": 0.0, "target_rpm_start": 3000.0, "target_rpm_end": 4000.0 },
+    { "name": "hold_4000", "duration_seconds": 3.0, "ignition": true, "starter": false, "governed": true, "throttle_start": 1.0, "throttle_end": 1.0, "load_start": 0.0, "load_end": 0.0, "target_rpm_start": 4000.0, "target_rpm_end": 4000.0 },
+    { "name": "sweep_4000_5000", "duration_seconds": 0.5, "ignition": true, "starter": false, "governed": true, "throttle_start": 1.0, "throttle_end": 1.0, "load_start": 0.0, "load_end": 0.0, "target_rpm_start": 4000.0, "target_rpm_end": 5000.0 },
+    { "name": "hold_5000", "duration_seconds": 3.0, "ignition": true, "starter": false, "governed": true, "throttle_start": 1.0, "throttle_end": 1.0, "load_start": 0.0, "load_end": 0.0, "target_rpm_start": 5000.0, "target_rpm_end": 5000.0 },
+    { "name": "sweep_5000_6000", "duration_seconds": 0.5, "ignition": true, "starter": false, "governed": true, "throttle_start": 1.0, "throttle_end": 1.0, "load_start": 0.0, "load_end": 0.0, "target_rpm_start": 5000.0, "target_rpm_end": 6000.0 },
+    { "name": "hold_6000", "duration_seconds": 3.0, "ignition": true, "starter": false, "governed": true, "throttle_start": 1.0, "throttle_end": 1.0, "load_start": 0.0, "load_end": 0.0, "target_rpm_start": 6000.0, "target_rpm_end": 6000.0 },
+    { "name": "sweep_6000_7000", "duration_seconds": 0.5, "ignition": true, "starter": false, "governed": true, "throttle_start": 1.0, "throttle_end": 1.0, "load_start": 0.0, "load_end": 0.0, "target_rpm_start": 6000.0, "target_rpm_end": 7000.0 },
+    { "name": "hold_7000", "duration_seconds": 3.0, "ignition": true, "starter": false, "governed": true, "throttle_start": 1.0, "throttle_end": 1.0, "load_start": 0.0, "load_end": 0.0, "target_rpm_start": 7000.0, "target_rpm_end": 7000.0 }
+  ]
+}

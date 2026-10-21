@@ -67,6 +67,9 @@
         engine-sim-render =
           nixpkgs.legacyPackages.${system}.callPackage ./reference/engine-sim/package.nix
             { };
+        enginelab-offline-audio-exporter =
+          nixpkgs.legacyPackages.${system}.callPackage ./reference/enginelab/package.nix
+            { };
       });
 
       formatter = forAllSystems (system: nixpkgs.legacyPackages.${system}.nixfmt);

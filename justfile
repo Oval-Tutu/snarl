@@ -177,6 +177,35 @@ ref-limiter profile="":
             --volume 0.5 --out "${out}/limiter.wav" --csv "${out}/limiter.csv" --csv-every 10
     done
 
+# Render the EngineLab references of the Aircooled-like 3.6 Flat-6 with the
+# EngineLab offline audio exporter (reference/enginelab/README.md). For each
+# scenario in reference/enginelab/scenarios it writes the exporter output
+# (master, stems, engine order map and manifest) to
+# out/reference/enginelab/f6-aircooled/<scenario>/ at 48 kHz, 32-bit float
+# and --volume 0.5, and <scenario>.wav beside it: the master without the
+# pre-roll stages.
+ref-enginelab:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v ffmpeg >/dev/null; then
+        echo "Error: ffmpeg is not on PATH. Run this recipe in nix develop." >&2
+        exit 1
+    fi
+    r="$(nix build -f reference/enginelab --print-out-paths --no-link)"
+    jq="$(nix build --inputs-from . nixpkgs#jq.bin --print-out-paths --no-link)/bin/jq"
+    out=out/reference/enginelab/f6-aircooled
+    mkdir -p "${out}"
+    for f in reference/enginelab/scenarios/*.json; do
+        name="$(basename "${f}" .json)"
+        "${r}/bin/EngineLabOfflineAudioExporter" --catalog-root "${r}/share/enginelab" \
+            --engine "Aircooled-like 3.6 Flat-6" --scenario "${f}" --output "${out}/${name}" \
+            --sample-rate 48000 --format float32 --volume 0.5 --stems --overwrite
+        preroll="$("${jq}" '[.stages[] | select(.name | startswith("preroll_")) | .duration_seconds] | add // 0' "${f}")"
+        ffmpeg -nostdin -hide_banner -loglevel error -y -i "${out}/${name}/master.wav" -ss "${preroll}" \
+            -c:a pcm_f32le "${out}/${name}.wav"
+        echo "Wrote ${out}/${name}.wav (${preroll} s pre-roll removed)"
+    done
+
 # Build listening files in out/listen from existing snarl and engine-sim
 # renders: each snarl render followed by its engine-sim reference, and blind
 # sets of the snarl sweep-wot, overrun and limiter renders in a new random
