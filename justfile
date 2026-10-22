@@ -38,6 +38,50 @@ render profile script *args: (_command "snarl-render")
 scorecard *args:
     go run ./tools/scorecard {{ args }}
 
+# Measure the 30 short exterior crackle clips of the muffler crackle pack
+# with tools/crackle (docs/research/crackle-measure.md). The pack licence
+# keeps the clips and the measures of each clip out of the repository, so
+# both stay in the ignored out directory. Writes to out: summary.md (the
+# clips as one class), summary-classes.md (the k-means classes), and
+# clips.csv, shocks.csv and bands.csv.
+crackle-measure dir="out/pack/muffler/MufflerCrackleSounds/Unity Engine/Muffler Sound Pack/Assets/Audio/Muffler/Short_Cracles" out="out/crackle":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    files=()
+    for i in $(seq 1 30); do
+        files+=("{{ dir }}/crackle_${i}.wav")
+    done
+    mkdir -p "{{ out }}"
+    go run ./tools/crackle --k 1 --out "{{ out }}" "${files[@]}" > "{{ out }}/summary.md"
+    go run ./tools/crackle "${files[@]}" > "{{ out }}/summary-classes.md"
+    echo "Wrote the crackle measures to {{ out }}"
+
+# Measure the own pops of each snarl pop kind with tools/crackle, as the
+# baseline for just crackle-measure. snarl-render renders the lift-offs of
+# tools/crackle/lift.scn at 44.1 kHz with one kind in use, and once with
+# no own pops. tools/crackle subtracts the render with no pops, so that
+# the pops alone remain, and cuts it into the runs of pops at quiet spans
+# of 0.3 s. Writes out/crackle/baseline/<kind>/ with summary.md.
+crackle-baseline profile="v8-ls": (_command "snarl-render")
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out=out/crackle/baseline
+    mkdir -p "${out}"
+    common=(--rate 44100 --format f32 --set 'pops.character="race"' --set pops.density=1)
+    go run ./cmd/snarl-render "${common[@]}" --set pops.density=0 --out "${out}/none.wav" "{{ profile }}" tools/crackle/lift.scn
+    for kind in pop boom crackle burble; do
+        sets=()
+        for k in pop boom crackle burble; do
+            w=0
+            [[ "${k}" == "${kind}" ]] && w=1
+            sets+=(--set "pops.weight_${k}=${w}")
+        done
+        go run ./cmd/snarl-render "${common[@]}" "${sets[@]}" --out "${out}/${kind}.wav" "{{ profile }}" tools/crackle/lift.scn
+        mkdir -p "${out}/${kind}"
+        go run ./tools/crackle --k 1 --minus "${out}/none.wav" --split 0.3 --out "${out}/${kind}" "${out}/${kind}.wav" > "${out}/${kind}/summary.md"
+    done
+    echo "Wrote the pop baseline to ${out}"
+
 # Compare two renders and write metrics and spectrograms.
 compare a b *args: (_command "snarl-compare")
     go run ./cmd/snarl-compare {{ args }} "{{ a }}" "{{ b }}"
