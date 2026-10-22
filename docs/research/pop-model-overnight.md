@@ -1,6 +1,6 @@
 # Overnight report: the crackle pop model
 
-Status: done, apart from the blind test, which you must do. All work is on the branch `pop-model`, 20 commits on top of `main` (51f94ef), from c40b58f to 71f25e3. Nothing is pushed or merged. `go test ./...`, `go test -race -short ./...` and `go vet ./...` pass. `just lint` still fails on the known golangci-lint toolchain mismatch.
+Status: done, apart from the blind test, which you must do. All work is on the branch `pop-model`, 18 commits on top of `main` (51f94ef), from c40b58f to the commit of this report and its correction. Nothing is pushed or merged. `go test ./...`, `go test -race -short ./...` and `go vet ./...` pass. `just lint` still fails on the known golangci-lint toolchain mismatch.
 
 ## 1. Listen first
 
