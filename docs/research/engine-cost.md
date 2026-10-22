@@ -1,6 +1,6 @@
 # Engine cost: profile and byte-identical savings
 
-Measured on the branch `upstream-profiles` after `c5e89e9`, on an AMD Ryzen 9 7940HS, one core, Go 1.27.2 for amd64, at 48 kHz in 256-frame blocks. The engine is the cycle table player (`internal/cycles`, `Live`) into the synthesiser runtime (`internal/esynth`, `Runtime`), with the game features of `internal/core`.
+Measured on the branch `upstream-profiles` after `c5e89e9`, on an AMD Ryzen 9 7940HS, one core, Go 1.27.2 for amd64, at 48 kHz in 256-frame blocks. The engine is the cycle table player (`internal/cycles`, `Live`) into the synthesiser runtime (`internal/esynth`, `Runtime`), with the game features of `internal/core`. Sections 1 to 7 describe the engine at `c5e89e9`, with the pop side input. Section 8 gives the pop cost after the crackle model of the branch `pop-model`, which removes the side input.
 
 ## Answer
 
@@ -127,7 +127,7 @@ Each option was applied on its own to the new code, rendered with the scorecard 
 | 1. Merge the two exhaust channels before the synthesiser: one runtime channel takes the sum of the two table channels. All five engines have one impulse response and one volume for both channels, so the convolution sum is the same. | 0.09 (`i4-vtec` wot 42.8 to 37.5 us per block, `v12-412` 27.8 to 23.1 us) | -0.5 to +0.7 on every scenario, 0.1 or less on every hold, sweep and overrun | One set of jitter and air noise draws instead of one per channel. The cost of the input stage and `pre` halves. |
 | 2. Shorten the impulse response to 4096 taps (`RuntimeOptions.MaxTaps`) | 0.04 on `v8-ls`, `v12-412` and `v12-merlin` (runtime 20.2 to 18.1 us per block), none on `i4-vtec` and `f4-ej25` (1893 taps) | -0.3 to +0.3, except `v8-ls` idle-free -3.3 | Up to 0.92 dB of third-octave distance (`esynth-runtime.md` section 3) |
 | 3. A 16-tap resampler (`RuntimeOptions.ResamplerTaps`) | about 0.02, half of the 2.4 us stage (an estimate from the tap count) | -0.1 to +0.2 | A wider transition band near 20 kHz. Not measured against aliasing. |
-| 4. Sum the pop side input into the main convolution, so that the leveller sees the pops | 0.08 to 0.23 while a pop rings (`BenchmarkPops` -7 to -21 %), none otherwise | With the own pops: overrun -1.3 to +0.9, all else unchanged | The pops duck the engine through the leveller again, which the side input removed (`TestPopLeveller`). |
+| 4. Sum the pop side input into the main convolution, so that the leveller sees the pops. It no longer applies: the side input is gone (section 8). | 0.08 to 0.23 while a pop rings (`BenchmarkPops` -7 to -21 %), none otherwise | With the own pops: overrun -1.3 to +0.9, all else unchanged | The pops duck the engine through the leveller again, which the side input removed (`TestPopLeveller`). |
 | 5. Second-order residual bands instead of fourth-order | about 0.1 on `i4-vtec`, none measurable on `v12-412` | holds -0.4 to -2.1, idle-free-rpm down to -8.6 (`v12-merlin`) | The band shapes no longer match the measured envelopes. Not recommended. |
 | 6. No residual noise | 0.06 to 0.29 | holds down to 57.8 (`v12-412` holds-t000), simrate 75.6 | Rejected: the residual is most of the score on `v12-412`. |
 
@@ -146,3 +146,14 @@ go test -c -o out/cost/after.test .
 go tool pprof -top -cum -nodefraction=0 -focus='core.\(\*Engine\).Render' out/cost/after.test out/cost/after-i4-vtec.prof
 go run ./tools/scorecard --dyno --no-pops --out out/cost/final-np
 ```
+
+## 8. Pops after the crackle model
+
+On the branch `pop-model`, each pop plays on a voice of the crackle model (`internal/crackle`). `Engine.mix` adds the voices to each runtime block after the leveller, the volume and the clamp, and before the resampler (`esynth.RuntimeOptions.Mix`). The pop side input and its second runtime pass are gone: `WriteInputSide`, `preSide` and the side convolution. The pop side chain of section 1 and option 4 of section 5 no longer apply.
+
+| Benchmark | With the side input | With the crackle model |
+| --- | --- | --- |
+| `BenchmarkPops` on this PC, mean of the five engines, per cent of one core | 0.97 | 0.78 |
+| `BenchmarkPops` on the phone slow core (cpu0), medians of 8 counts, per cent of one core | 5.6 to 6.7 (`out/phone/phone-pops.txt`) | 4.0 to 5.7 (`out/phone/pop-model-pops.txt`) |
+
+On this PC, a pop now costs about 0.09 per cent of one core over the engine, against 0.28 per cent with the side input ([crackle-model.md](crackle-model.md) section 9.6). With pops off, the output is byte-identical to the engine before the change.

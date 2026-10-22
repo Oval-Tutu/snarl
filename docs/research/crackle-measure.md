@@ -1,6 +1,6 @@
 # Short exterior crackles: measures for the pop model
 
-Status: measured. Date: 2026-10-22. Branch `pop-model` after `51f94ef`. This report gives the measures of the 30 short exterior crackle clips of the muffler crackle pack ([crackles.md](crackles.md)), and of the own pops of snarl as a baseline. The model phase selects a pop model from these measures. Every number below comes from `tools/crackle` on the clips or on snarl renders. No audio and no measure of a single clip is in the repository. The measures of each clip, shock and frame are in `out/crackle/`.
+Status: measured. Date: 2026-10-22. Branch `pop-model` after `51f94ef`. This report gives the measures of the 30 short exterior crackle clips of the muffler crackle pack ([crackles.md](crackles.md)), and of the own pops of snarl as a baseline. The model phase selects a pop model from these measures. Every number below comes from `tools/crackle` on the clips or on snarl renders. No audio and no measure of a single clip is in the repository. The range of a distribution, its minimum and its maximum, is a statistic of the class, and it cannot rebuild a clip. The measures of each clip, shock and frame are in `out/crackle/`.
 
 ## 1. Answer
 

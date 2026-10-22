@@ -131,7 +131,7 @@ The model shocks are no more alike than the clip shocks, within a train or betwe
 | fitted, by the scaling | `out_db` |
 | snarl default | `fade_in_ms` (1 ms against a click at the start: the clips start cut, so they cannot give a fade-in) |
 
-The quantile tables hold the quantiles at the probabilities (i + 0.5) / 21, so they hold no extreme value of the set. Each table is pooled over all clips, so it cannot rebuild a clip. The minimum and maximum of `length_ms` and `shocks_range` are the range of the controls, and phase 1 gives the same ranges. The grain count, the grain length, the loop length and the cross fade are constants of the code, not parameters: they set the realisation of the generator, not its statistics.
+The quantile tables hold the quantiles at the probabilities (i + 0.5) / 21, so they hold no extreme value of the set. Each table is pooled over all clips, so it cannot rebuild a clip. The minimum and maximum of `length_ms` and `shocks_range` are the range of the controls, and phase 1 gives the same ranges. The range of a distribution is a statistic of the class, and it cannot rebuild a clip. The grain count, the grain length, the loop length and the cross fade are constants of the code, not parameters: they set the realisation of the generator, not its statistics.
 
 ## 5. The fit
 
@@ -304,15 +304,15 @@ Phase 3 makes the crackle model the voice of the snarl pops. The decision layer 
 
 ### 9.1 The mix
 
-Each of the four slots plays its pop on a voice of the model. `Engine.mix` adds the voices to each block of the runtime output at 44.1 kHz, after the 1900 Hz input filter, the impulse responses, the leveller, the volume and the clamp, and before the resampler to the output rate (`esynth.RuntimeOptions.Mix`). A pop limiter keeps the sum below 0.95 of full scale: its gain falls at once to what a peak needs and recovers with a time constant of 50 ms, as the limiter of the side input did. The side input of the runtime had no other user, so it is gone, and a pop no longer costs a second runtime pass.
+Each of the four slots plays its pop on a voice of the model. `Engine.mix` adds the voices to each block of the runtime output at 44.1 kHz, after the 1900 Hz input filter, the impulse responses, the leveller, the volume and the clamp, and before the resampler to the output rate (`esynth.RuntimeOptions.Mix`). A pop limiter keeps the sum below 0.95 of full scale: its gain falls at once to what a peak needs and recovers with a time constant of 50 ms, as the limiter of the side input did. The side input of the runtime had no other user, so it is gone, and a pop no longer costs a second runtime pass. A requested pop that takes a busy slot stops the old train with a ramp from its last output down to 0 over 1.5 ms (`releaseMS` of `internal/crackle`), so that the steal does not click (`TestRetrigger`).
 
-One bank and the kind gains are made once for the process (`sharedModel`, a `sync.OnceValue`) at the first `New`, and every engine only reads them. The bank seed is fixed. The seeds of the four voices of an engine come from the pop random source, so that the engine sound stays independent of the pops. `Render` makes no allocations (`TestEngine`).
+One bank and the kind gains are made once for the process (`sharedModel`, a `sync.OnceValues`) at the first `New`, and every engine only reads them. A bad `crackle.toml` makes every `New` return the error of the file. The bank seed is fixed. The seeds of the four voices of an engine come from the pop random source, so that the engine sound stays independent of the pops. `Render` makes no allocations (`TestEngine`).
 
 ### 9.2 The kinds
 
 | Kind | Voice | Source (`internal/core/pops.sources.toml`) |
 | --- | --- | --- |
-| `KindCrackle` | A train. The rank of the sub-event count in its range (5 to 32 later sub-events, at most 10 for a requested crackle) sets the active length at the same rank of the measured lengths, 368 to 637 ms | measured |
+| `KindCrackle` | A train. The rank of the sub-event count in its range (5 to 32 later sub-events, at most 10 for a requested crackle) sets the active length at the same rank of the measured lengths, 368 to 637 ms | measured class |
 | `KindBoom` | A short train with one shock for each sub-event, 4 to 16 shocks, over the body (`Options.Short`) | partial; the length is derived |
 | `KindPop` | The single-shock mode | derived |
 | `KindBurble` | The single-shock mode at the burble level | not measured |
