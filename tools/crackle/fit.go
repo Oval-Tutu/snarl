@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
@@ -21,26 +22,30 @@ const (
 	// fitTrains is the number of model trains of each step of the fit,
 	// with the seeds 1 to fitTrains in every step. The check uses other
 	// seeds (checkSeed).
-	fitTrains = 64
+	fitTrains = 96
 	// trimSteps is the number of steps of the band powers of the banks
 	// before the search, and fitGain the part of the error that
 	// each step corrects.
 	trimSteps = 15
 	fitGain   = 0.4
-	// searchEvals is the most evaluations of the search, and searchClip
+	// searchEvals and weightEvals are the most evaluations of the two
+	// searches, and searchClip
 	// the largest square of the distance of one measure in the loss.
 	searchEvals = 600
+	weightEvals = 900
 	searchClip  = 16
 	// checkSeed is the seed of the first train of the check.
-	checkSeed = 1001
+	checkSeed = 5001
+	// bankGroup is the number of trains of one bank in the fit and the
+	// check.
+	bankGroup = 16
 	// fadeInMS is the fade at the start of a train. The clips start cut,
 	// with no fade, so it is a snarl default against a click.
 	fadeInMS = 1
-	// prerollMS is the time for which the bed and the body run before a
-	// train. The clips start with the event under way, with sound at the
-	// first sample, so it is a snarl default of more than two body cycles
-	// and the ring of the body filter.
-	prerollMS = 50
+	// actMS and actDB are the start of the slow ring of the shock
+	// activity for the search.
+	actMS = 30
+	actDB = -20
 	// The frames of the band energy over time that the fit matches, in
 	// milliseconds from the frame of the strongest shock: the background
 	// before the shock, the shock, and the decay after it.
@@ -175,19 +180,25 @@ func statsOf(clips []*clip) stats {
 	return s
 }
 
-// renderModel renders a train for each seed, scales each to the sample
-// peak peakDB in dBFS, as the pack scales its clips, and measures it. It
-// returns the measures, the sample peak of each train before the scaling,
-// and the scaled trains.
+// renderModel renders a train for each seed, with a bank for each group of
+// bankGroup seeds, whose seed is the first seed of the group, so that the
+// fit does not follow the grains of one bank. It scales each train to the
+// sample peak peakDB in dBFS, as the pack scales its clips, and measures
+// it. It returns the measures, the sample peak of each train before the
+// scaling, and the scaled trains.
 func renderModel(p *crackle.Params, seeds []uint32, peakDB float64) ([]*clip, []float64, [][]float32, error) {
 	clips := make([]*clip, len(seeds))
 	raw := make([]float64, len(seeds))
 	trains := make([][]float32, len(seeds))
 	errs := make([]error, len(seeds))
+	banks := make([]*crackle.Bank, (len(seeds)+bankGroup-1)/bankGroup)
+	for i := range banks {
+		banks[i] = crackle.NewBank(p, modelRate, seeds[i*bankGroup])
+	}
 	var wg sync.WaitGroup
 	for i, seed := range seeds {
 		wg.Go(func() {
-			y := crackle.Render(p, modelRate, seed, crackle.Options{})
+			y := crackle.Render(banks[i/bankGroup], seed, crackle.Options{})
 			var pk float64
 			for _, v := range y {
 				pk = max(pk, math.Abs(float64(v)))
@@ -319,7 +330,7 @@ func initial(clips []*clip, t stats) *fitState {
 		RingMS: -2 * (ringFrame - shockFrame) / (t.ring[crackle.Bands] - t.shock[crackle.Bands]) * 10 / math.Ln10,
 		BodyHz: t.med["body_hz"], BodyQ: 2,
 		FadeDelayMS: t.med["tail_ms"], FadeDBPerMS: -t.med["end_fall_db"] / (endFallS * 1000),
-		FadeInMS: fadeInMS, PrerollMS: prerollMS,
+		FadeInMS: fadeInMS, ActMS: actMS, ActDB: actDB,
 		TailHz: t.med["tail_cycle_hz"], TailDecayMS: t.med["tail_decay20_ms"],
 	}
 	lengths := finite(over(clips, "active_ms"))
@@ -454,7 +465,11 @@ var knobs = []knob{
 	{"shock level", func(s *fitState) *float64 { return &s.shockLevel }, -20, 20, 6, false},
 	{"body level", func(s *fitState) *float64 { return &s.bodyLevel }, -20, 20, 6, false},
 	{"place scale", func(s *fitState) *float64 { return &s.placeScale }, 0, 1, 0.5, false},
+	{"place scale wide", func(s *fitState) *float64 { return &s.placeScale }, 0, 2, 0.5, false},
+	{"place_weight", func(s *fitState) *float64 { return &s.p.PlaceWeight }, 0, 1, 0.5, false},
 	{"top_hz", func(s *fitState) *float64 { return &s.p.TopHz }, 8000, 19000, math.Ln2 / 4, true},
+	{"act_ms", func(s *fitState) *float64 { return &s.p.ActMS }, 5, 300, math.Ln2, true},
+	{"act_db", func(s *fitState) *float64 { return &s.p.ActDB }, -60, 10, 6, false},
 	{"body_hz", func(s *fitState) *float64 { return &s.p.BodyHz }, 30, 80, math.Ln2 / 4, true},
 	{"body_q", func(s *fitState) *float64 { return &s.p.BodyQ }, 0.3, 10, math.Ln2, true},
 	{"tail_gain_db", func(s *fitState) *float64 { return &s.p.TailGainDB }, -40, 20, 6, false},
@@ -502,8 +517,8 @@ func loss(clips, model []*clip) float64 {
 
 // search moves each knob in turn by its step up and down, and keeps a move
 // that lowers the loss. A knob that no move improves halves its step. It
-// stops after searchEvals evaluations.
-func (s *fitState) search(clips []*clip, seeds []uint32, peak float64, log io.Writer) error {
+// leaves out the knobs in skip, and stops after budget evaluations.
+func (s *fitState) search(clips []*clip, seeds []uint32, peak float64, budget int, log io.Writer, skip ...string) error {
 	eval := func() (float64, error) {
 		s.solve()
 		mc, _, _, err := renderModel(s.p, seeds, peak)
@@ -521,9 +536,12 @@ func (s *fitState) search(clips []*clip, seeds []uint32, peak float64, log io.Wr
 		steps[i] = k.step
 	}
 	evals := 1
-	for evals < searchEvals {
+	for evals < budget {
 		moved := false
 		for i, k := range knobs {
+			if slices.Contains(skip, k.name) {
+				continue
+			}
 			x := k.v(s)
 			old := *x
 			improved := false
@@ -572,7 +590,7 @@ type fitResult struct {
 }
 
 // fit fits the parameters of the model to the clips: steps of the band
-// powers of the banks, then the search of the knobs.
+// powers of the banks, then two searches of the knobs.
 func fit(clips []*clip, log io.Writer) (*fitResult, error) {
 	t := statsOf(clips)
 	s := initial(clips, t)
@@ -586,7 +604,16 @@ func fit(clips []*clip, log io.Writer) (*fitResult, error) {
 		}
 		s.trimStep(t, statsOf(mc))
 	}
-	if err := s.search(clips, seeds, peak, log); err != nil {
+	// The first search puts the place offsets on the whole level, with a
+	// scale up to 1. The second starts with them on the median and not the
+	// top, with a scale up to 2, from the values of the first, and frees
+	// their weight, so that the loss on the fit trains selects it.
+	p.PlaceWeight = 0
+	if err := s.search(clips, seeds, peak, searchEvals, log, "place scale wide", "place_weight"); err != nil {
+		return nil, err
+	}
+	p.PlaceWeight = 1
+	if err := s.search(clips, seeds, peak, weightEvals, log, "place scale"); err != nil {
 		return nil, err
 	}
 	mc, raw, _, err := renderModel(p, seeds, peak)
@@ -603,7 +630,7 @@ type source struct{ key, kind, from string }
 func (f *fitResult) sources() []source {
 	t, m := f.clip, f.model
 	searched := func(start string) string {
-		return fmt.Sprintf("fitted by the search of tools/crackle --fit (just crackle-fit): the compass search of %d knobs that lowers the loss over the measures of the check, the distance of the model median from the clip median over the clip interquartile range, on %d model trains with the seeds 1 to %d, to %.3f; the start is %s", len(knobs), fitTrains, fitTrains, f.loss, start)
+		return fmt.Sprintf("fitted by the two searches of tools/crackle --fit (just crackle-fit): the compass searches of %d knobs that lower the loss over the measures of the check, the distance of the model median from the clip median over the clip interquartile range, on %d model trains with the seeds 1 to %d, to %.3f; the start is %s", len(knobs), fitTrains, fitTrains, f.loss, start)
 	}
 	bank := func(what string) string {
 		return fmt.Sprintf("fitted by tools/crackle --fit: the gains by %d Richardson-Lucy steps that give the band powers of %s, against the loudest frame of a clip, from the medians over the 30 clips of the band energy over time around the strongest shock (tools/crackle), less the background; %d steps of the fit correct the band powers by the errors of the band energy of the model trains, and the search moves the level of all bands", rlSteps, what, trimSteps)
@@ -618,6 +645,7 @@ func (f *fitResult) sources() []source {
 		{"level_scale", "fitted", searched(fmt.Sprintf("1; %.2f of the shocks are strong for the clips and %.2f for the model", t.strongShare, m.strongShare))},
 		{"level_corr", "fitted", searched(fmt.Sprintf("the correlation of the levels of consecutive shocks of the clips, pooled, %.2f; it is %.2f for the model", t.serial, m.serial))},
 		{"place_db", "fitted", searched("the median level of the shocks in each tenth of the active span of the clips, pooled, against the pooled median level, with a scale that the search moves from 1")},
+		{"place_weight", "fitted", searched("0 in the first search, which holds it, and 1 in the second, which frees it")},
 		{"attack_ms", "fitted", searched(fmt.Sprintf("the median rise above 1 kHz of the strong shocks of the clips over 0.8; the median rise is %.2f ms for the clips and %.2f ms for the model", t.med["strong_rise_ms"], m.med["strong_rise_ms"]))},
 		{"decay_ms", "fitted", searched(fmt.Sprintf("the median fall of the strong shocks of the clips to -10 dB, %.2f ms; it is %.2f ms for the model", t.strongFall, m.strongFall))},
 		{"ring_ms", "fitted", searched("the fall above 2 kHz from the frame 5 ms after the strongest shock to the frame 20 ms after it, median over the clips, as an exponential decay")},
@@ -631,7 +659,8 @@ func (f *fitResult) sources() []source {
 		{"fade_delay_ms", "fitted", searched(fmt.Sprintf("the median tail after the last shock of the clips; it is %.0f ms for the clips and %.0f ms for the model", t.med["tail_ms"], m.med["tail_ms"]))},
 		{"fade_db_per_ms", "fitted", searched(fmt.Sprintf("the median fall over the last 20 ms of the active span of the clips over 20 ms; the fall is %.1f dB for the clips and %.1f dB for the model", t.med["end_fall_db"], m.med["end_fall_db"]))},
 		{"fade_in_ms", "snarl", "a snarl default against a click at the start: the clips start cut, with sound at the first sample, so they cannot give a fade-in"},
-		{"preroll_ms", "snarl", "a snarl default: the clips start with the event under way, with sound at the first sample, so the bed and the body run for more than two body cycles and the ring of the body filter before the first sample"},
+		{"act_ms", "fitted", searched("30 ms")},
+		{"act_db", "fitted", searched("-20 dB")},
 		{"tail_hz", "measured", "the median over the clips of the tail frequency from the median half cycle after the last shock (tools/crackle), n=13"},
 		{"tail_decay_ms", "measured", "the median over the clips of the tail decay to -20 dB after the last shock (tools/crackle), n=13"},
 		{"tail_gain_db", "fitted", searched(fmt.Sprintf("the peak of a sine with the RMS level of the body; the median tail peak is %.0f Hz for the clips and %.0f Hz for the model", t.med["tail_hz"], m.med["tail_hz"]))},

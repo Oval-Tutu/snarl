@@ -124,3 +124,21 @@ func TestRayleigh(t *testing.T) {
 		t.Errorf("locked phases give R %.3f and p %.3g", r, p)
 	}
 }
+
+func TestLikeness(t *testing.T) {
+	rng := rand.New(rand.NewPCG(7, 8))
+	a, b := make([]float64, 176), make([]float64, 176)
+	for i := range a {
+		a[i], b[i] = rng.NormFloat64(), rng.NormFloat64()
+	}
+	half := make([]float64, len(a))
+	for i, v := range a {
+		half[i] = -0.5 * v
+	}
+	if l := likeness(a, half, rate); l < 0.999 {
+		t.Errorf("a wave and its scaled inverse give %.3f, want 1", l)
+	}
+	if l := likeness(a, b, rate); l > 0.5 {
+		t.Errorf("two noise waves give %.3f, want below 0.5", l)
+	}
+}

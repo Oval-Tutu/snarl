@@ -20,7 +20,7 @@ func TestCheck(t *testing.T) {
 	dir := t.TempDir()
 	var paths []string
 	for i := range 3 {
-		y := crackle.Render(crackle.Default(), modelRate, uint32(100+i), crackle.Options{})
+		y := crackle.Render(crackle.NewBank(crackle.Default(), modelRate, 1), uint32(100+i), crackle.Options{})
 		p := filepath.Join(dir, fmt.Sprintf("clip%d.wav", i))
 		if err := writeWAV(p, y); err != nil {
 			t.Fatal(err)
@@ -74,7 +74,7 @@ func TestFitBank(t *testing.T) {
 		p.ShockDB[b], p.RingDB[b] = offDB, offDB
 	}
 	p.BodyGainDB = offDB
-	y := crackle.Render(p, modelRate, 7, crackle.Options{LengthMS: 600})
+	y := crackle.Render(crackle.NewBank(p, modelRate, 1), 7, crackle.Options{LengthMS: 600})
 	x := make([]float64, len(y))
 	for i, v := range y {
 		x[i] = float64(v) / dbAmp(p.OutDB)

@@ -43,6 +43,62 @@ func frameDB(c *clip, off int) []float64 {
 	return out
 }
 
+// likeness returns the peak of the normalised cross correlation of the
+// waves of two shocks over lags up to likeLagS: 1 for the same wave at any
+// level, near 0 for independent noise.
+func likeness(a, b []float64, rate int) float64 {
+	n := min(len(a), len(b))
+	lag := int(likeLagS * float64(rate))
+	if n <= 2*lag {
+		return math.NaN()
+	}
+	var best float64
+	for d := -lag; d <= lag; d++ {
+		var ab, aa, bb float64
+		for i := lag; i < n-lag; i++ {
+			x, y := a[i], b[i+d]
+			ab += x * y
+			aa += x * x
+			bb += y * y
+		}
+		if aa > 0 && bb > 0 {
+			best = max(best, math.Abs(ab)/math.Sqrt(aa*bb))
+		}
+	}
+	return best
+}
+
+// shockLikeness returns the likeness of the pairs of strong shocks of one
+// clip, and of the strong shocks of each clip and the next. A table of
+// grains that repeats gives values near 1.
+func shockLikeness(clips []*clip) (within, between []float64) {
+	strong := func(c *clip) []*shock {
+		var s []*shock
+		for k := range c.Shocks {
+			if c.Shocks[k].Strong {
+				s = append(s, &c.Shocks[k])
+			}
+		}
+		return s
+	}
+	for i, c := range clips {
+		s := strong(c)
+		for a := range s {
+			for b := a + 1; b < len(s); b++ {
+				within = append(within, likeness(s[a].wave, s[b].wave, c.Rate))
+			}
+		}
+		if i+1 < len(clips) {
+			for _, x := range s {
+				for _, y := range strong(clips[i+1]) {
+					between = append(between, likeness(x.wave, y.wave, c.Rate))
+				}
+			}
+		}
+	}
+	return within, between
+}
+
 // compareRows returns the measures of the clips and of the model trains.
 func compareRows(clips, model []*clip) []cmpRow {
 	var rows []cmpRow
@@ -77,6 +133,11 @@ func compareRows(clips, model []*clip) []cmpRow {
 			rows = append(rows, cmpRow{sec, r.name, "", a, b, r.digits})
 		}
 	}
+	cw, cb := shockLikeness(clips)
+	mw, mb := shockLikeness(model)
+	rows = append(rows,
+		cmpRow{"Shock likeness, pooled", "Peak correlation of two strong shocks of one clip", "", cw, mw, 2},
+		cmpRow{"Shock likeness, pooled", "Peak correlation of a strong shock of a clip and one of the next clip", "", cb, mb, 2})
 	for i := range bands {
 		for _, k := range []struct {
 			name string

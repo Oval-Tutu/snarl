@@ -38,6 +38,10 @@ const (
 	shockSepS         = 0.003
 	shockRangeDB      = 30
 	shockProminenceDB = 6
+	// likeS is the part of a shock from its onset that the likeness of
+	// two shocks compares, and likeLagS the largest lag between them.
+	likeS    = 0.004
+	likeLagS = 0.0005
 	// fallDB is the fall from the peak of a shock for its fall time.
 	fallDB = 10
 	// strongDB is the range below the strongest shock of a clip in which a
@@ -88,6 +92,8 @@ const (
 type shock struct {
 	at int // Onset in samples from the start of the active span.
 	pk int // Peak of the 0.25 ms envelope above shockHPHz.
+	// wave is the signal above shockHPHz for likeS from the onset.
+	wave []float64
 	// T is the onset, the 10 per cent point of the rise, in seconds from
 	// the start of the active span. Gap is the time from the onset of the
 	// shock before, NaN for the first shock.
@@ -464,6 +470,7 @@ func findShocks(x, hp []float64, rate int) []shock {
 		s.RiseFullMS = float64(j90-j10) / fr * 1000
 		s.PeakDB = ampDB(pk)
 		s.CrestDB = analysis.CrestFactorDB(x[s.at:end])
+		s.wave = hp[s.at:min(len(hp), s.at+int(likeS*fr))]
 		s.FallMS = math.NaN()
 		for j := s.pk; j < end; j++ {
 			if e025[j] <= e025[s.pk]*dbAmp(-fallDB) {
