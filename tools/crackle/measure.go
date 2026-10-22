@@ -38,6 +38,8 @@ const (
 	shockSepS         = 0.003
 	shockRangeDB      = 30
 	shockProminenceDB = 6
+	// fallDB is the fall from the peak of a shock for its fall time.
+	fallDB = 10
 	// strongDB is the range below the strongest shock of a clip in which a
 	// shock is strong.
 	strongDB = 12
@@ -85,6 +87,7 @@ const (
 // shock is one shock of a clip.
 type shock struct {
 	at int // Onset in samples from the start of the active span.
+	pk int // Peak of the 0.25 ms envelope above shockHPHz.
 	// T is the onset, the 10 per cent point of the rise, in seconds from
 	// the start of the active span. Gap is the time from the onset of the
 	// shock before, NaN for the first shock.
@@ -98,6 +101,10 @@ type shock struct {
 	// RiseFullMS is the 10 to 90 per cent rise of the running full-band
 	// sample peak from the onset to the full-band peak.
 	RiseMS, RiseFullMS float64
+	// FallMS is the time from the peak of the 0.25 ms RMS envelope above
+	// shockHPHz to the first fall of fallDB below it, NaN when the next
+	// onset or the end of the shock span comes first.
+	FallMS float64
 	// CrestDB is the full-band sample peak over the RMS level from the
 	// onset to the end of the shock span.
 	CrestDB float64
@@ -105,6 +112,9 @@ type shock struct {
 	// in dB.
 	BandDB []float64
 	Strong bool
+	// Phase is the place of the onset in the body cycle, from 0 to 1, and
+	// JumpDB the rise of the body envelope at the shock (nature).
+	Phase, JumpDB float64
 }
 
 // tail is the body after the last shock.
@@ -186,6 +196,7 @@ type clip struct {
 	// bodyLoHz to bodyHiHz.
 	BodyHz float64
 	Tail   tail
+	Nature nature
 }
 
 // measure measures one clip.
@@ -242,6 +253,7 @@ func measure(name string, a *wav.Audio, floor float64) (*clip, error) {
 	c.measureShockSpectra(band)
 	c.BodyHz = peakHz(x, rate, bodyLoHz, bodyHiHz)
 	c.Tail = measureTail(x, c.Shocks, rate)
+	c.measureNature(x, analysis.BandPass(mono, rate, c.BodyHz/bodyBandRatio, c.BodyHz*bodyBandRatio)[lo:hi])
 	return c, nil
 }
 
@@ -419,6 +431,7 @@ func findShocks(x, hp []float64, rate int) []shock {
 		j10, j90 := rise(e025, m, p)
 		out = append(out, shock{
 			at:     j10,
+			pk:     p,
 			T:      float64(j10) / fr,
 			RelDB:  ampDB(v / top),
 			RiseMS: float64(j90-j10) / fr * 1000,
@@ -451,6 +464,13 @@ func findShocks(x, hp []float64, rate int) []shock {
 		s.RiseFullMS = float64(j90-j10) / fr * 1000
 		s.PeakDB = ampDB(pk)
 		s.CrestDB = analysis.CrestFactorDB(x[s.at:end])
+		s.FallMS = math.NaN()
+		for j := s.pk; j < end; j++ {
+			if e025[j] <= e025[s.pk]*dbAmp(-fallDB) {
+				s.FallMS = float64(j-s.pk) / fr * 1000
+				break
+			}
+		}
 		s.Strong = s.RelDB >= -strongDB
 	}
 	return out

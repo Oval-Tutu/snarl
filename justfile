@@ -56,6 +56,42 @@ crackle-measure dir="out/pack/muffler/MufflerCrackleSounds/Unity Engine/Muffler 
     go run ./tools/crackle "${files[@]}" > "{{ out }}/summary-classes.md"
     echo "Wrote the crackle measures to {{ out }}"
 
+# Fit the crackle model (internal/crackle) to the 30 short exterior crackle
+# clips with tools/crackle --fit (docs/research/crackle-model.md). Writes
+# the class-level parameters to internal/crackle/crackle.toml and their
+# sources to internal/crackle/crackle.sources.toml, and the check of the
+# fit trains to out/crackle/fit.md.
+crackle-fit dir="out/pack/muffler/MufflerCrackleSounds/Unity Engine/Muffler Sound Pack/Assets/Audio/Muffler/Short_Cracles":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    files=()
+    for i in $(seq 1 30); do
+        files+=("{{ dir }}/crackle_${i}.wav")
+    done
+    mkdir -p out/crackle
+    go run ./tools/crackle --fit internal/crackle/crackle.toml "${files[@]}" > out/crackle/fit.md
+    echo "Wrote internal/crackle/crackle.toml and the check of the fit to out/crackle/fit.md"
+
+# Render model trains of the crackle model with the committed parameters
+# to out/crackle/model, with seeds other than those of the fit, and check
+# them against the 30 clips with the same measures. Writes compare.md (the
+# check), and summary.md and the CSV files of the trains.
+crackle-model trains="60" dir="out/pack/muffler/MufflerCrackleSounds/Unity Engine/Muffler Sound Pack/Assets/Audio/Muffler/Short_Cracles" out="out/crackle/model":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    files=()
+    for i in $(seq 1 30); do
+        files+=("{{ dir }}/crackle_${i}.wav")
+    done
+    mkdir -p "{{ out }}"
+    go run ./tools/crackle --model {{ trains }} --render "{{ out }}" "${files[@]}" > "{{ out }}/compare.md"
+    model=()
+    for i in $(seq 1 {{ trains }}); do
+        model+=("{{ out }}/crackle_${i}.wav")
+    done
+    go run ./tools/crackle --k 1 --out "{{ out }}" "${model[@]}" > "{{ out }}/summary.md"
+    echo "Wrote the model trains and their check to {{ out }}"
+
 # Measure the own pops of each snarl pop kind with tools/crackle, as the
 # baseline for just crackle-measure. snarl-render renders the lift-offs of
 # tools/crackle/lift.scn at 44.1 kHz with one kind in use, and once with

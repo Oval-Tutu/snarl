@@ -144,6 +144,7 @@ var shockRows = []shockRow{
 	{"Full-band sample peak, dBFS", "peak_dbfs", 1, func(s *shock) float64 { return s.PeakDB }},
 	{"Rise above 1 kHz, 10 to 90 per cent, ms", "rise_ms", 2, func(s *shock) float64 { return s.RiseMS }},
 	{"Full-band rise, 10 to 90 per cent, ms", "rise_full_ms", 2, func(s *shock) float64 { return s.RiseFullMS }},
+	{"Fall above 1 kHz to -10 dB, ms", "fall_ms", 2, func(s *shock) float64 { return s.FallMS }},
 	{"Crest factor over the shock span, dB", "crest_db", 1, func(s *shock) float64 { return s.CrestDB }},
 }
 
@@ -285,7 +286,7 @@ func writeSummary(w io.Writer, clips []*clip, cl classes) error {
 	}
 	b.WriteString("\n## Clip measures\n\nMedian (p25 to p75, range min to max) over the clips of each class.\n\n")
 	head("Measure")
-	for _, r := range measureRows {
+	for _, r := range allRows {
 		b.WriteString("| " + r.name)
 		for _, m := range members {
 			var x []float64
@@ -408,6 +409,7 @@ func writeSummary(w io.Writer, clips []*clip, cl classes) error {
 			fmt.Fprintf(&b, "| %s | %s | %s | %s | %s |\n", bandName(i), short(all, 1), short(strong, 1), short(between, 1), short(event, 1))
 		}
 	}
+	writeNature(&b, clips)
 	_, err := io.WriteString(w, b.String())
 	return err
 }
@@ -418,7 +420,7 @@ func writeCSV(dir string, clips []*clip, cl classes) error {
 		return err
 	}
 	clipRows := [][]string{{"clip", "class"}}
-	for _, r := range measureRows {
+	for _, r := range allRows {
 		clipRows[0] = append(clipRows[0], r.column)
 	}
 	for i := range bands {
@@ -438,7 +440,7 @@ func writeCSV(dir string, clips []*clip, cl classes) error {
 	bandRows := [][]string{bandHead}
 	for i, c := range clips {
 		row := []string{c.Name, className(cl.Assign[i])}
-		for _, r := range measureRows {
+		for _, r := range allRows {
 			row = append(row, num(r.get(c), r.digits+2))
 		}
 		for b := range bands {

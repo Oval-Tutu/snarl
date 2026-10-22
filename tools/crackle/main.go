@@ -11,9 +11,16 @@
 // pops alone. With --split it cuts each input into events at spans of
 // quiet spans, and measures each event as a clip.
 //
+// With --fit it fits the class-level parameters of the crackle model
+// (internal/crackle) to the clips and writes them with their sources, and
+// with --model it renders model trains and checks them against the clips
+// with the same measures (docs/research/crackle-model.md).
+//
 // Usage:
 //
 //	go run ./tools/crackle [--out DIR] [--k N] [--minus REF.wav] [--split S] [--floor DB] CLIP.wav...
+//	go run ./tools/crackle --fit PARAMS.toml CLIP.wav...
+//	go run ./tools/crackle --model N [--params PARAMS.toml] [--render DIR] CLIP.wav...
 package main
 
 import (
@@ -25,6 +32,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/oval-tutu/snarl/internal/crackle"
 	"github.com/oval-tutu/snarl/internal/wav"
 )
 
@@ -42,10 +50,14 @@ func run(args []string, stdout io.Writer) error {
 	minus := fs.String("minus", "", "subtract this WAV file from each input before the measures")
 	split := fs.Float64("split", 0, "cut each input into events at quiet spans of at least this many seconds (0: one clip per file)")
 	floorDB := fs.Float64("floor", defaultFloorDB, "level in dBFS at or below which a sample is quiet")
+	fitPath := fs.String("fit", "", "fit the crackle model to the clips, write the parameters to this file and the sources beside it, and print the check of the fit trains")
+	trains := fs.Int("model", 0, "render this many model trains, measure them and print the check against the clips")
+	params := fs.String("params", "", "the parameter file of the model trains (default: the embedded internal/crackle/crackle.toml)")
+	render := fs.String("render", "", "write the model trains to this directory as crackle_N.wav")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if fs.NArg() == 0 || *k < 0 || *split < 0 {
+	if fs.NArg() == 0 || *k < 0 || *split < 0 || *trains < 0 {
 		fs.Usage()
 		return errors.New("need one or more WAV files, a k of 0 or more and a split of 0 or more")
 	}
@@ -88,6 +100,23 @@ func run(args []string, stdout io.Writer) error {
 	if len(clips) == 0 {
 		return errors.New("no clip has sound")
 	}
+	if *fitPath != "" {
+		f, err := fit(clips, os.Stderr)
+		if err != nil {
+			return err
+		}
+		if err := writeFit(*fitPath, f); err != nil {
+			return err
+		}
+		model, _, _, err := renderModel(f.p, seedRange(1, fitTrains), f.clip.med["peak_dbfs"])
+		if err != nil {
+			return err
+		}
+		return writeCompare(stdout, clips, model)
+	}
+	if *trains > 0 {
+		return check(stdout, clips, *trains, *params, *render)
+	}
 	cl := classify(clips, *k)
 	if *out != "" {
 		if err := writeCSV(*out, clips, cl); err != nil {
@@ -95,6 +124,59 @@ func run(args []string, stdout io.Writer) error {
 		}
 	}
 	return writeSummary(stdout, clips, cl)
+}
+
+// check renders n model trains from the seed checkSeed with the
+// parameters of the file, or with the embedded parameters, writes them to
+// dir when it is set, and writes the check against the clips.
+func check(stdout io.Writer, clips []*clip, n int, file, dir string) error {
+	var p *crackle.Params
+	if file == "" {
+		p = crackle.Default()
+	} else {
+		data, err := os.ReadFile(file) //nolint:gosec // The path is a user-supplied parameter file.
+		if err != nil {
+			return err
+		}
+		if p, err = crackle.Parse(data); err != nil {
+			return fmt.Errorf("%s: %w", file, err)
+		}
+	}
+	model, _, trains, err := renderModel(p, seedRange(checkSeed, n), median(over(clips, "peak_dbfs")))
+	if err != nil {
+		return err
+	}
+	if dir != "" {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			return err
+		}
+		for i, y := range trains {
+			if err := writeWAV(filepath.Join(dir, fmt.Sprintf("crackle_%d.wav", i+1)), y); err != nil {
+				return err
+			}
+		}
+	}
+	return writeCompare(stdout, clips, model)
+}
+
+func writeWAV(path string, y []float32) (err error) {
+	f, err := os.Create(path) //nolint:gosec // The path is in a user-supplied output directory.
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+	}()
+	w, err := wav.NewWriter(f, modelRate, wav.F32, len(y))
+	if err != nil {
+		return err
+	}
+	if err := w.Write(y); err != nil {
+		return err
+	}
+	return w.Close()
 }
 
 // subtract subtracts ref from a, sample by sample, on each channel.
