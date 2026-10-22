@@ -22,7 +22,7 @@ func TestCheck(t *testing.T) {
 	for i := range 3 {
 		y := crackle.Render(crackle.NewBank(crackle.Default(), modelRate, 1), uint32(100+i), crackle.Options{})
 		p := filepath.Join(dir, fmt.Sprintf("clip%d.wav", i))
-		if err := writeWAV(p, y); err != nil {
+		if err := writeWAV(p, modelRate, y); err != nil {
 			t.Fatal(err)
 		}
 		paths = append(paths, p)

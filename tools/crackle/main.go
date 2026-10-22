@@ -16,11 +16,17 @@
 // with --model it renders model trains and checks them against the clips
 // with the same measures (docs/research/crackle-model.md).
 //
+// With --listen it writes the listening files of just listen-pops-model:
+// clips against model trains at one RMS level, and a blind test. With
+// --join it joins mono renders, each at one integrated loudness.
+//
 // Usage:
 //
 //	go run ./tools/crackle [--out DIR] [--k N] [--minus REF.wav] [--split S] [--floor DB] CLIP.wav...
 //	go run ./tools/crackle --fit PARAMS.toml CLIP.wav...
 //	go run ./tools/crackle --model N [--params PARAMS.toml] [--render DIR] CLIP.wav...
+//	go run ./tools/crackle --listen DIR CLIP.wav...
+//	go run ./tools/crackle --join OUT.wav [--lufs L] RENDER.wav...
 package main
 
 import (
@@ -54,12 +60,21 @@ func run(args []string, stdout io.Writer) error {
 	trains := fs.Int("model", 0, "render this many model trains, measure them and print the check against the clips")
 	params := fs.String("params", "", "the parameter file of the model trains (default: the embedded internal/crackle/crackle.toml)")
 	render := fs.String("render", "", "write the model trains to this directory as crackle_N.wav")
+	listenDir := fs.String("listen", "", "write the listening files of the clips and of model trains to this directory")
+	join := fs.String("join", "", "join the mono inputs, each at the loudness of --lufs, with 1 s of silence between them, to this WAV file")
+	lufs := fs.Float64("lufs", -16, "the integrated loudness in LUFS of each input of --join")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() == 0 || *k < 0 || *split < 0 || *trains < 0 {
 		fs.Usage()
 		return errors.New("need one or more WAV files, a k of 0 or more and a split of 0 or more")
+	}
+	if *join != "" {
+		return joinFiles(*join, *lufs, fs.Args())
+	}
+	if *listenDir != "" {
+		return listen(*listenDir, fs.Args())
 	}
 	floor := dbAmp(*floorDB)
 	var ref *wav.Audio
@@ -151,7 +166,7 @@ func check(stdout io.Writer, clips []*clip, n int, file, dir string) error {
 			return err
 		}
 		for i, y := range trains {
-			if err := writeWAV(filepath.Join(dir, fmt.Sprintf("crackle_%d.wav", i+1)), y); err != nil {
+			if err := writeWAV(filepath.Join(dir, fmt.Sprintf("crackle_%d.wav", i+1)), modelRate, y); err != nil {
 				return err
 			}
 		}
@@ -159,7 +174,7 @@ func check(stdout io.Writer, clips []*clip, n int, file, dir string) error {
 	return writeCompare(stdout, clips, model)
 }
 
-func writeWAV(path string, y []float32) (err error) {
+func writeWAV(path string, rate int, y []float32) (err error) {
 	f, err := os.Create(path) //nolint:gosec // The path is in a user-supplied output directory.
 	if err != nil {
 		return err
@@ -169,7 +184,7 @@ func writeWAV(path string, y []float32) (err error) {
 			err = cerr
 		}
 	}()
-	w, err := wav.NewWriter(f, modelRate, wav.F32, len(y))
+	w, err := wav.NewWriter(f, rate, wav.F32, len(y))
 	if err != nil {
 		return err
 	}

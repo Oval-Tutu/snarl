@@ -124,6 +124,52 @@ crackle-baseline profile="v8-ls": (_command "snarl-render")
     done
     echo "Wrote the pop baseline to ${out}"
 
+# Make the listening files of the crackle pops in out: clips-then-model.wav
+# (3 clips, then 3 model trains, at one RMS level, with README.txt), a
+# blind test of 20 trials of a clip and a model train in blind/ (key in
+# blind/.key), and lift-offs of tools/crackle/lift.scn with the race pops
+# at 48 kHz and -19 LUFS: <engine>-liftoffs.wav for each engine, and
+# v8-ls-old-then-new.wav with the pops of the old commit first. The old
+# render runs in a temporary git worktree of old under out/crackle.
+# Writes the length, the integrated loudness and the sample peak of each
+# file to levels.txt.
+listen-pops-model old="51f94ef" dir=crackle_clips out="out/listen-pops-model": (_command "snarl-render")
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v ffmpeg >/dev/null; then
+        echo "Error: ffmpeg is not on PATH. Run this recipe in nix develop." >&2
+        exit 1
+    fi
+    files=()
+    for i in $(seq 1 {{ crackle_count }}); do
+        files+=("{{ dir }}/crackle_${i}.wav")
+    done
+    mkdir -p "{{ out }}"
+    go run ./tools/crackle --listen "{{ out }}" "${files[@]}"
+    renders="${PWD}/out/crackle/listen-renders"
+    mkdir -p "${renders}"
+    common=(--rate 48000 --format f32 --set 'pops.character="race"')
+    for engine in v8-ls i4-vtec v12-412; do
+        go run ./cmd/snarl-render "${common[@]}" --out "${renders}/${engine}-new.wav" "${engine}" tools/crackle/lift.scn
+        go run ./tools/crackle --join "{{ out }}/${engine}-liftoffs.wav" --lufs -19 "${renders}/${engine}-new.wav"
+    done
+    wt="out/crackle/worktree-old"
+    git worktree add --detach "${wt}" "{{ old }}"
+    trap 'git worktree remove --force "${wt}"' EXIT
+    scn="${PWD}/tools/crackle/lift.scn"
+    (cd "${wt}" && go run ./cmd/snarl-render "${common[@]}" --out "${renders}/v8-ls-old.wav" v8-ls "${scn}")
+    git worktree remove "${wt}"
+    trap - EXIT
+    go run ./tools/crackle --join "{{ out }}/v8-ls-old-then-new.wav" --lufs -19 "${renders}/v8-ls-old.wav" "${renders}/v8-ls-new.wav"
+    : > "{{ out }}/levels.txt"
+    for f in "{{ out }}"/*.wav "{{ out }}"/blind/*.wav; do
+        len=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "${f}")
+        lv=$(ffmpeg -nostdin -hide_banner -nostats -i "${f}" -af ebur128=peak=sample -f null - 2>&1 | grep -E '^ +(I|Peak):' | tr -s ' ' | tr '\n' ' ')
+        echo "${f#{{ out }}/}: ${len} s,${lv}" >> "{{ out }}/levels.txt"
+    done
+    cat "{{ out }}/levels.txt"
+    echo "Wrote the listening files to {{ out }}"
+
 # Compare two renders and write metrics and spectrograms.
 compare a b *args: (_command "snarl-compare")
     go run ./cmd/snarl-compare {{ args }} "{{ a }}" "{{ b }}"
