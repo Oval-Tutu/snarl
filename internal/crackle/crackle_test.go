@@ -34,6 +34,8 @@ func TestParse(t *testing.T) {
 		{"missing key", strings.Replace(data, "attack_ms", "# attack_ms", 1)},
 		{"wrong count", strings.Replace(data, "place_db = [", "place_db = [1, ", 1)},
 		{"bad number", strings.Replace(data, "attack_ms = ", "attack_ms = x", 1)},
+		{"negative fade delay", strings.Replace(data, "fade_delay_ms = ", "fade_delay_ms = -", 1)},
+		{"negative fade in", strings.Replace(data, "fade_in_ms = ", "fade_in_ms = -", 1)},
 	} {
 		if _, err := Parse([]byte(c.data)); err == nil {
 			t.Errorf("%s: no error", c.name)
@@ -132,6 +134,32 @@ func TestNoAllocations(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Errorf("%.1f allocations per block, want 0", allocs)
+	}
+}
+
+// TestRetrigger checks that a Trigger at the peak of a train that sounds
+// does not step the output by more than a quarter of the peak.
+func TestRetrigger(t *testing.T) {
+	k := NewBank(Default(), rate, 1)
+	for seed := uint32(1); seed <= 8; seed++ {
+		o := Options{Shocks: 40}
+		y := Render(k, seed, o)
+		at := 0
+		for i, s := range y {
+			if math.Abs(float64(s)) > math.Abs(float64(y[at])) {
+				at = i
+			}
+		}
+		v := New(k, seed)
+		v.Trigger(o)
+		buf := make([]float32, at+1)
+		v.Process(buf)
+		v.Trigger(o)
+		next := make([]float32, 1)
+		v.Process(next)
+		if step := math.Abs(float64(next[0] - buf[at])); step > 0.25*math.Abs(float64(buf[at])) {
+			t.Errorf("seed %d: the Trigger at the peak %.3g steps the output by %.3g", seed, buf[at], step)
+		}
 	}
 }
 

@@ -226,6 +226,8 @@ func (p *Params) check() error {
 		return errors.New("gap_scale, level_scale, attack_ms, decay_ms, ring_ms and fade_db_per_ms must be above 0")
 	case p.BodyHz <= 0 || p.BodyQ <= 0 || p.TopHz <= 0 || p.TailHz <= 0 || p.TailDecayMS <= 0 || p.ActMS <= 0:
 		return errors.New("body_hz, body_q, top_hz, tail_hz, tail_decay_ms and act_ms must be above 0")
+	case p.FadeDelayMS < 0 || p.FadeInMS < 0:
+		return errors.New("fade_delay_ms and fade_in_ms must not be negative")
 	}
 	for _, t := range [][]float64{p.LengthMS[:], p.GapMS[:], p.LevelDB[:]} {
 		for i := 1; i < len(t); i++ {
@@ -242,12 +244,23 @@ var paramFile []byte
 
 var defaults = sync.OnceValues(func() (*Params, error) { return Parse(paramFile) })
 
-// Default returns the fitted parameters of crackle.toml.
-func Default() *Params {
+// Fitted returns the fitted parameters of crackle.toml, or the error of
+// the file.
+func Fitted() (*Params, error) {
 	p, err := defaults()
 	if err != nil {
-		panic("crackle: crackle.toml: " + err.Error())
+		return nil, fmt.Errorf("crackle: crackle.toml: %w", err)
 	}
 	c := *p
-	return &c
+	return &c, nil
+}
+
+// Default returns the fitted parameters of crackle.toml, and panics on an
+// error of the file.
+func Default() *Params {
+	p, err := Fitted()
+	if err != nil {
+		panic(err.Error())
+	}
+	return p
 }

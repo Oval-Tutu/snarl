@@ -12,6 +12,9 @@ const (
 	maxShocks = 32
 	// voiceEnd is the fade gain at which the voice ends, -100 dB.
 	voiceEnd = 1e-5
+	// releaseMS is the ramp from the last output of a train that a
+	// Trigger stops down to 0, so that the stop does not click.
+	releaseMS = 1.5
 )
 
 // Options set one train.
@@ -77,6 +80,13 @@ type Voice struct {
 	z      float64 // Normal value of the level of the last shock.
 	fade   float32
 	in     float32
+	// last is the last output sample. The release adds relStep times
+	// relLeft to each sample, while relLeft counts down to 0, over
+	// relLen samples.
+	last    float32
+	relStep float32
+	relLeft int
+	relLen  int
 }
 
 // New returns a voice that plays from the bank.
@@ -95,6 +105,7 @@ func New(b *Bank, seed uint32) *Voice {
 	s, c := math.Sincos(2 * math.Pi * p.TailHz / rate)
 	v.tailTurn = complex(float32(r*c), float32(r*s))
 	v.tailGain = float32(dbAmp(p.TailGainDB))
+	v.relLen = max(1, int(v.samples(releaseMS)))
 	return v
 }
 
@@ -154,9 +165,14 @@ func lerp(t []float64, u float64) float64 {
 
 // Trigger starts a train with a shock at its first sample, at a random
 // place in the loops, so that the bed and the body are under way. A train
-// that sounds stops.
+// that sounds stops, with a ramp from its last output down to 0 over
+// releaseMS.
 func (v *Voice) Trigger(o Options) {
 	p := v.p
+	v.relLeft, v.relStep = 0, 0
+	if v.active {
+		v.relLeft, v.relStep = v.relLen, v.last/float32(v.relLen)
+	}
 	v.active, v.single = true, o.Single
 	v.t, v.count, v.nPlay, v.next = 0, 0, 0, 0
 	v.at = int(v.rng.Next() % uint32(len(v.b.bed)))
@@ -273,7 +289,13 @@ func (v *Voice) Process(out []float32) {
 		}
 		z := complex(v.tailRe, v.tailIm) * v.tailTurn
 		v.tailRe, v.tailIm = real(z), imag(z)
-		out[i] += (y*v.fade*v.in + v.tailIm) * v.gain
+		s := (y*v.fade*v.in + v.tailIm) * v.gain
+		if v.relLeft > 0 {
+			v.relLeft--
+			s += v.relStep * float32(v.relLeft)
+		}
+		out[i] += s
+		v.last = s
 		v.in = min(1, v.in+v.fadeStep)
 		v.t++
 	}
