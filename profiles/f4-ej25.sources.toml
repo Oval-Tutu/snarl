@@ -115,17 +115,7 @@ kind = "snarl"
 from = "pops are a snarl-only feature: core default"
 
 [[source]]
-key = "pops.body_hz"
-kind = "snarl"
-from = "pops are a snarl-only feature: core default"
-
-[[source]]
 key = "pops.body_ms"
-kind = "snarl"
-from = "pops are a snarl-only feature: core default"
-
-[[source]]
-key = "pops.jump_ms"
 kind = "snarl"
 from = "pops are a snarl-only feature: core default"
 

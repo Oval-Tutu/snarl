@@ -38,17 +38,23 @@ render profile script *args: (_command "snarl-render")
 scorecard *args:
     go run ./tools/scorecard {{ args }}
 
+# The directory of the short exterior crackle clips of the muffler crackle
+# pack, crackle_1.wav to crackle_<crackle_count>.wav, for the crackle
+# recipes.
+crackle_clips := "out/pack/muffler/MufflerCrackleSounds/Unity Engine/Muffler Sound Pack/Assets/Audio/Muffler/Short_Cracles"
+crackle_count := "30"
+
 # Measure the 30 short exterior crackle clips of the muffler crackle pack
 # with tools/crackle (docs/research/crackle-measure.md). The pack licence
 # keeps the clips and the measures of each clip out of the repository, so
 # both stay in the ignored out directory. Writes to out: summary.md (the
 # clips as one class), summary-classes.md (the k-means classes), and
 # clips.csv, shocks.csv and bands.csv.
-crackle-measure dir="out/pack/muffler/MufflerCrackleSounds/Unity Engine/Muffler Sound Pack/Assets/Audio/Muffler/Short_Cracles" out="out/crackle":
+crackle-measure dir=crackle_clips out="out/crackle":
     #!/usr/bin/env bash
     set -euo pipefail
     files=()
-    for i in $(seq 1 30); do
+    for i in $(seq 1 {{ crackle_count }}); do
         files+=("{{ dir }}/crackle_${i}.wav")
     done
     mkdir -p "{{ out }}"
@@ -61,11 +67,11 @@ crackle-measure dir="out/pack/muffler/MufflerCrackleSounds/Unity Engine/Muffler 
 # the class-level parameters to internal/crackle/crackle.toml and their
 # sources to internal/crackle/crackle.sources.toml, and the check of the
 # fit trains to out/crackle/fit.md.
-crackle-fit dir="out/pack/muffler/MufflerCrackleSounds/Unity Engine/Muffler Sound Pack/Assets/Audio/Muffler/Short_Cracles":
+crackle-fit dir=crackle_clips:
     #!/usr/bin/env bash
     set -euo pipefail
     files=()
-    for i in $(seq 1 30); do
+    for i in $(seq 1 {{ crackle_count }}); do
         files+=("{{ dir }}/crackle_${i}.wav")
     done
     mkdir -p out/crackle
@@ -76,11 +82,11 @@ crackle-fit dir="out/pack/muffler/MufflerCrackleSounds/Unity Engine/Muffler Soun
 # to out/crackle/model, with seeds other than those of the fit, and check
 # them against the 30 clips with the same measures. Writes compare.md (the
 # check), and summary.md and the CSV files of the trains.
-crackle-model trains="60" dir="out/pack/muffler/MufflerCrackleSounds/Unity Engine/Muffler Sound Pack/Assets/Audio/Muffler/Short_Cracles" out="out/crackle/model":
+crackle-model trains="60" dir=crackle_clips out="out/crackle/model":
     #!/usr/bin/env bash
     set -euo pipefail
     files=()
-    for i in $(seq 1 30); do
+    for i in $(seq 1 {{ crackle_count }}); do
         files+=("{{ dir }}/crackle_${i}.wav")
     done
     mkdir -p "{{ out }}"

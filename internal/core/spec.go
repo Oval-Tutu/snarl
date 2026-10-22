@@ -99,10 +99,8 @@ type PopSpec struct {
 	// engine level.
 	Gain float64 `toml:"gain"`
 	// BodyMS sets the slot length of a pop and a limiter bang. The crackle
-	// model sets the sound of the pops, so BodyHz and JumpMS have no effect.
-	BodyHz float64 `toml:"body_hz"`
+	// model sets the sound of the pops.
 	BodyMS float64 `toml:"body_ms"`
-	JumpMS float64 `toml:"jump_ms"`
 	// LimiterBangs makes a limiter cut bang with a chance of twice the
 	// density.
 	LimiterBangs bool `toml:"limiter_bangs"`
@@ -129,7 +127,7 @@ func DefaultSpec() Spec {
 		Limiter: LimiterSpec{CutMS: 50, FallRPMS: 6000, RiseRPMS: 10000, LoadScale: 1, FinalGearWaver: 0.003},
 		Idle:    IdleSpec{FadeRPM: 2200, HuntHz: 1.2},
 		Pops: PopSpec{
-			Character: "sport", Gain: 1, BodyHz: 200, BodyMS: 35, JumpMS: 3,
+			Character: "sport", Gain: 1, BodyMS: 35,
 			// The kind mix of the muffler crackle pack.
 			WeightPop: 0.4, WeightBoom: 0.2, WeightCrackle: 0.3, WeightBurble: 0.1,
 		},
@@ -202,8 +200,8 @@ func (s *Spec) validateIdle() error {
 func (s *Spec) validatePops() error {
 	p := s.Pops
 	switch {
-	case p.BodyHz <= 0 || p.BodyHz > 2000 || p.BodyMS <= 0 || p.BodyMS > 500 || p.JumpMS <= 0 || p.JumpMS > 50:
-		return errors.New("pops body_hz must be from above 0 to 2000, body_ms from above 0 to 500 and jump_ms from above 0 to 50")
+	case p.BodyMS <= 0 || p.BodyMS > 500:
+		return errors.New("pops body_ms must be from above 0 to 500")
 	case p.Density < 0 || p.Gain < 0 || p.Gain > 10:
 		return errors.New("pops density must not be negative and gain must be from 0 to 10")
 	case !validCharacter(p.Character):

@@ -31,9 +31,6 @@ type RuntimeOptions struct {
 	// InputBuffer is the capacity of the input buffer in samples at the
 	// synthesiser rate, a power of two. The default is 8192.
 	InputBuffer int
-	// Unlevelled leaves out the leveller, the volume and the clamp: Render
-	// returns the output filter output, in the units of PreLevelPower.
-	Unlevelled bool
 	// Mix, when set, adds to each block at the synthesiser rate after the
 	// leveller, the volume and the clamp, and before the resampler. It
 	// must not allocate.
@@ -112,11 +109,9 @@ type Runtime struct {
 	rs     *dsp.Resampler
 	aa     bw4
 	lev    rtLeveller
-	// unlevelled skips the stages after the output filter, and prePower is
-	// the mean square of the last block before the leveller.
-	unlevelled bool
-	prePower   float64
-	invBlock   float32
+	// prePower is the mean square of the last block before the leveller.
+	prePower float64
+	invBlock float32
 	// mix adds to each block before the resampler (RuntimeOptions.Mix).
 	mix func([]float32)
 
@@ -194,7 +189,6 @@ func NewRuntime(p Parameters, irs [][]int16, volumes []float64, o RuntimeOptions
 			maxLevel: float32(p.InitialAudioParameters.LevelerMaxGain),
 		},
 		invRandMax2: float32(2.0 / RandMax),
-		unlevelled:  o.Unlevelled,
 		invBlock:    1 / float32(o.Block),
 		mix:         o.Mix,
 	}
@@ -525,8 +519,8 @@ func (r *Runtime) finish() {
 }
 
 // PreLevelPower returns the mean square of the last rendered block after
-// the output filter and before the leveller, in the units of the
-// Unlevelled output.
+// the output filter and before the leveller, in the units of the output
+// filter output.
 func (r *Runtime) PreLevelPower() float64 { return r.prePower }
 
 // LevellerGain returns the gain of the leveller after the last rendered
@@ -543,9 +537,6 @@ func (r *Runtime) post() {
 		sq += s * s
 	}
 	r.prePower = float64(sq * r.invBlock)
-	if r.unlevelled {
-		return
-	}
 	volume := r.volume
 	for i, s := range out {
 		v := r.lev.f(s) * volume

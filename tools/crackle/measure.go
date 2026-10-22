@@ -6,6 +6,7 @@ import (
 	"math"
 
 	"github.com/oval-tutu/snarl/internal/analysis"
+	"github.com/oval-tutu/snarl/internal/crackle"
 	"github.com/oval-tutu/snarl/internal/wav"
 )
 
@@ -74,12 +75,10 @@ const (
 	maxDelayS = 0.005
 )
 
-// bands are the octave bands of the band energy, in hertz. The top band
-// stops at 20 kHz, below the Nyquist frequency of 44.1 kHz.
-var bands = [][2]float64{
-	{15.625, 31.25}, {31.25, 62.5}, {62.5, 125}, {125, 250}, {250, 500}, {500, 1000},
-	{1000, 2000}, {2000, 4000}, {4000, 8000}, {8000, 16000}, {16000, 20000},
-}
+// bands are the octave bands of the band energy, in hertz, the bands of
+// the filter banks of the model. The top band stops at 20 kHz, below the
+// Nyquist frequency of 44.1 kHz.
+var bands = crackle.BandEdges[:]
 
 const (
 	// hiBand is the first band above 2 kHz, and lowBands the number of
