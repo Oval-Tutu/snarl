@@ -1,6 +1,6 @@
 # Short exterior crackles: the crackle model and its check
 
-Status: model, fit and check done, with the grain voice and the slow ring of phase 2b. The model is not connected to the engine. Date: 2026-10-22. Branch `pop-model`. This report gives the evidence for the form of the crackle model, the model in `internal/crackle`, the fit in `tools/crackle --fit`, and the check of 240 model trains against the 30 short exterior crackle clips of [crackle-measure.md](crackle-measure.md) with the same measures. No audio and no measure of a single clip is in the repository. The model parameters are statistics and fits of the whole set.
+Status: model, fit and check done, with the grain voice and the slow ring of phase 2b. Phase 3 connects the model to the engine as the voice of the snarl pops (section 9). Date: 2026-10-22. Branch `pop-model`. This report gives the evidence for the form of the crackle model, the model in `internal/crackle`, the fit in `tools/crackle --fit`, and the check of 240 model trains against the 30 short exterior crackle clips of [crackle-measure.md](crackle-measure.md) with the same measures. No audio and no measure of a single clip is in the repository. The model parameters are statistics and fits of the whole set.
 
 ## 1. Answer
 
@@ -104,7 +104,7 @@ The parts of a train:
 The controls:
 
 - Level: `Options.LevelDB` is a gain in dB over the fitted level. At 0 dB, the median sample peak of a train is the median sample peak of the clips, -0.4 dBFS.
-- Length: `Options.Shocks` sets the count of shocks, clamped to the measured range of 28 to 61. `Options.LengthMS` sets the active length, clamped to the measured range of 368 to 637 ms. With neither, the length comes from the measured quartiles.
+- Length: `Options.Shocks` sets the count of shocks, clamped to the measured range of 28 to 61. With `Options.Short`, the count can go down to 1: a short train, which is derived, not measured, because no clip holds one. `Options.LengthMS` sets the active length, clamped to the measured range of 368 to 637 ms. With neither, the length comes from the measured quartiles.
 - Single shock: `Options.Single` plays one shock at the level of the strongest shock, with the bed and the body until the fade. This mode is derived, not measured: no clip holds an isolated shock (phase 1, section 10).
 - Rate: `NewBank` renders the bank at its sample rate. The fit and the check run at 44.1 kHz, the rate of the clips and of the snarl mix.
 
@@ -297,3 +297,83 @@ Shocks, pooled over the 30 clips (1,251 shocks, 231 strong) and the 240 trains:
 3. Run `just crackle-model 240`. It writes 240 trains, `compare.md` (the check of section 6) and `summary.md` to `out/crackle/model/`.
 
 `go test ./internal/crackle` checks the parameter file, the sources file, the bank, the determinism, the absence of allocations, the length control, the level control and the rate. `go test ./tools/crackle` checks the body and timing measures on test signals (a harmonic tone, narrow band noise, periodic and random times, even and locked phases), the likeness, the bank fit, and the check command.
+
+## 9. The model in the engine
+
+Phase 3 makes the crackle model the voice of the snarl pops. The decision layer of `internal/core/pops.go` stays: the lift-offs, coasts, wind-down bands, throttle history, wall heat, requests with their queue and 50 ms guard, limiter bangs, characters, `FlagNoPops`, the four kinds, the four slots, the pop reports and the levels from `overDB`. The game API does not change.
+
+### 9.1 The mix
+
+Each of the four slots plays its pop on a voice of the model. `Engine.mix` adds the voices to each block of the runtime output at 44.1 kHz, after the 1900 Hz input filter, the impulse responses, the leveller, the volume and the clamp, and before the resampler to the output rate (`esynth.RuntimeOptions.Mix`). A pop limiter keeps the sum below 0.95 of full scale: its gain falls at once to what a peak needs and recovers with a time constant of 50 ms, as the limiter of the side input did. The side input of the runtime had no other user, so it is gone, and a pop no longer costs a second runtime pass.
+
+One bank and the kind gains are made once for the process (`sharedModel`, a `sync.OnceValue`) at the first `New`, and every engine only reads them. The bank seed is fixed. The seeds of the four voices of an engine come from the pop random source, so that the engine sound stays independent of the pops. `Render` makes no allocations (`TestEngine`).
+
+### 9.2 The kinds
+
+| Kind | Voice | Source (`internal/core/pops.sources.toml`) |
+| --- | --- | --- |
+| `KindCrackle` | A train. The rank of the sub-event count in its range (5 to 32 later sub-events, at most 10 for a requested crackle) sets the active length at the same rank of the measured lengths, 368 to 637 ms | measured |
+| `KindBoom` | A short train with one shock for each sub-event, 4 to 16 shocks, over the body (`Options.Short`) | partial; the length is derived |
+| `KindPop` | The single-shock mode | derived |
+| `KindBurble` | The single-shock mode at the burble level | not measured |
+| Limiter bang | The single-shock mode at `bangGain` times an own pop | derived |
+
+`Options.Short` lets only the boom go below the measured minimum of 28 shocks. The crackle uses the length control alone, inside its measured range (`TestVoiceOptions`).
+
+### 9.3 The level
+
+The level rule stays: a voice of unit gain is at its `overDB` target over an engine of unit RMS level before the leveller, and each block of the voices takes the engine level (the mean of 8 blocks, as before), the leveller gain and the volume. The side input took the leveller gain at each sample. The mix takes the gain at the end of each block of 256 samples (5.8 ms). `calibrate` now renders 32 voices of each kind and source with no engine, with the sub-event counts in even steps, and sets the kind gains from the mean level in decibels. The calibration no longer depends on the profile. The trim is now 0.1 dB (was 0.5 dB), which puts the mean error over the kinds near 0 dB.
+
+`TestPopLevelOverEngine`, median level over the engine after the leveller, over the five profiles and both sources:
+
+| Kind | Target, dB | Medians, dB |
+| --- | --- | --- |
+| `KindPop` | 4.8 | 3.6 to 4.8 |
+| `KindBoom` | 4.5 | 3.2 to 4.7 |
+| `KindCrackle` | 1.5 | 1.5 to 2.6 |
+| `KindBurble` | -4.3 | -4.4 to -2.6 |
+
+`TestPopLeveller` gives a leveller gain drop of 0.00 dB. `TestPopPeak` gives peaks of 0.967 to 0.976 against the limit of 0.99.
+
+### 9.4 Checks
+
+- Pops off: `snarl-render --format f32 --set pops.density=0` at 48 kHz of `sweep-wot`, `overrun`, `holds-t100` and `tools/crackle/lift.scn` on each of the five profiles gives the same files, byte for byte, as `main` (`51f94ef`), 20 of 20.
+- `just scorecard --dyno --no-pops` gives the same table as `main`: 97.7 to 100 on the holds, sweeps, overruns and limiter.
+
+### 9.5 The new pops against the clips
+
+`just crackle-baseline` on `v8-ls`, as in section 9 of [crackle-measure.md](crackle-measure.md). Each event is one lift-off run of up to 3 pops, so the train kinds join up to 3 voices in one event, and the single-shock kinds give up to 3 shocks about 190 ms apart. Medians:
+
+| Measure | Clips (30) | `KindPop` (6) | `KindBoom` (6) | `KindCrackle` (6) | `KindBurble` (6) |
+| --- | --- | --- | --- | --- | --- |
+| Active length, ms | 544 | 496 | 532 | 816 | 482 |
+| Crest factor, dB | 12.4 | 16.7 | 13.8 | 12.4 | 21.6 |
+| Shocks per event | 40 | 14 | 32 | 72 | 11 |
+| Strong shocks per event | 8 | 3 | 5 | 20 | 3 |
+| Median gap between shocks, ms | 8.6 | 10.9 | 9.3 | 8.5 | 13.9 |
+| Gap between strong shocks, pooled, ms | 32.2 | 191.6 | 11.4 | 17.3 | 191.6 |
+| Median rise above 1 kHz, ms | 2.25 | 2.00 | 2.36 | 2.70 | 2.00 |
+| Crest factor of the strong shocks, pooled, dB | 8.5 | 10.0 | 6.9 | 7.9 | 11.6 |
+| Share above 2 kHz, dB | -16.6 | -12.8 | -18.5 | -15.6 | -12.2 |
+| Share below 125 Hz, dB | -1.1 | -1.8 | -0.7 | -1.0 | -1.9 |
+| Decay above 2 kHz to -20 dB, ms | 40 | 20 | 35 | 72 | 22 |
+| Power between the shock windows against inside, dB | -1.2 | -5.2 | -3.7 | -0.6 | -6.1 |
+| The same above 2 kHz, dB | -3.5 | -13.2 | -5.0 | -1.3 | -14.0 |
+| Body peak, 10 to 500 Hz, Hz | 52 | 50 | 50 | 49 | 51 |
+| Tail frequency from the half cycles, Hz | 27 (n=13) | 26 (n=3) | 28 (n=3) | 24 (n=3) | 42 (n=1) |
+| Tail decay to -20 dB, ms | 22 (n=13) | 21 (n=3) | 20 (n=2) | 20 (n=3) | 32 (n=1) |
+| Fall over the last 20 ms, dB | -18.0 | -17.6 | -17.8 | -15.1 | -16.3 |
+
+Against the old pops (crackle-measure.md section 9), every kind now has its body at 49 to 51 Hz (was 86 to 421 Hz) and 66 to 85 per cent of its energy below 125 Hz (was 4 to 29 per cent). The share above 2 kHz is -12.2 to -18.5 dB (was -24.3 to -27.4 dB), and the crackle is within 1 dB of the clips. The crackle train is near the clips on most measures. Its event is longer and holds more strong shocks because a run joins up to 3 trains. The single-shock kinds have more crack for their level than the clips, because one shock over 140 ms of body is the whole event.
+
+### 9.6 Cost
+
+`BenchmarkRender`, `BenchmarkStates` and `BenchmarkPops` on an AMD Ryzen 7940HS, three runs each, mean of the five profiles, in per cent of real time at 48 kHz, with 0 allocations before and after:
+
+| Benchmark | Before | After |
+| --- | --- | --- |
+| `BenchmarkRender` | 0.69 | 0.69 to 0.77 (two sets of runs, the code path is the same) |
+| `BenchmarkStates` wot / idle / overrun / limiter | 0.68 / 0.67 / 0.72 / 0.65 | 0.62 / 0.63 / 0.67 / 0.62 |
+| `BenchmarkPops` | 0.97 | 0.78 |
+
+A pop now costs 0.09 per cent of one core over the engine (`BenchmarkPops` against `BenchmarkRender`), from 0.28 per cent with the side input. The shared model takes less than 0.15 s to make and calibrate, once for the process.
