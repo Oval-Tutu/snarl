@@ -1,7 +1,6 @@
 package esynth
 
 import (
-	"math"
 	"testing"
 
 	"github.com/oval-tutu/snarl/internal/analysis"
@@ -118,63 +117,6 @@ func TestUniformFast(t *testing.T) {
 	// The port draws from [a, b) for any a. The runtime needs a = 0 only.
 	if x, y := a.uniformFast(7)+2, b.uniformFloat32(2, 9); x != y {
 		t.Errorf("draw from [2, 9): %g, the port %g", x, y)
-	}
-}
-
-// TestRuntimeSide checks the side input: without the leveller, a main
-// input x with a side input y renders what a main input x+y renders, as
-// the stages are linear in the input and share the random draws, and the
-// side input that stops and starts again starts from rest. With the
-// leveller, the side input takes the gain of the main input alone, so it
-// does not change the gain.
-func TestRuntimeSide(t *testing.T) {
-	sum, input := benchRuntime(t, 2, 1893, false, RuntimeOptions{OutputSampleRate: 48000, Unlevelled: true})
-	split, _ := benchRuntime(t, 2, 1893, false, RuntimeOptions{OutputSampleRate: 48000, Unlevelled: true, Side: true})
-	plain, _ := benchRuntime(t, 2, 1893, false, RuntimeOptions{OutputSampleRate: 48000})
-	levelled, _ := benchRuntime(t, 2, 1893, false, RuntimeOptions{OutputSampleRate: 48000, Side: true})
-	// y is a burst in the steps from 3000 to 3600 and from 9000 to 9100.
-	y := func(step int) float64 {
-		if step >= 3000 && step < 3600 || step >= 9000 && step < 9100 {
-			return 3000 * math.Sin(float64(step)*0.3)
-		}
-		return 0
-	}
-	a, b, c, d := make([]float32, 256), make([]float32, 256), make([]float32, 256), make([]float32, 256)
-	var data, main, side [2]float64
-	step := 0
-	var diff, peak, gain float64
-	for range 120 {
-		for sum.InputSize() < 256+300 {
-			for ch := range 2 {
-				x := input[ch][step%len(input[ch])]
-				data[ch], main[ch], side[ch] = x+y(step), x, y(step)
-			}
-			sum.WriteInput(data[:])
-			plain.WriteInput(main[:])
-			// The side input runs from before each burst until its impulse
-			// response has rung out.
-			on := step >= 2900 && step < 5000 || step >= 8900 && step < 11000
-			if on {
-				split.WriteInputSide(main[:], side[:])
-				levelled.WriteInputSide(main[:], side[:])
-			} else {
-				split.WriteInputSide(main[:], nil)
-				levelled.WriteInputSide(main[:], nil)
-			}
-			step++
-		}
-		sum.Render(a)
-		split.Render(b)
-		plain.Render(c)
-		levelled.Render(d)
-		for i := range a {
-			diff = max(diff, math.Abs(float64(a[i]-b[i])))
-			peak = max(peak, math.Abs(float64(a[i])))
-		}
-		gain = max(gain, math.Abs(float64(plain.LevellerGain()-levelled.LevellerGain())))
-	}
-	if diff > 1e-4*peak || gain != 0 {
-		t.Errorf("side input differs by %.3g of the peak %.3g, leveller gains differ by %g", diff/peak, peak, gain)
 	}
 }
 

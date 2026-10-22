@@ -80,7 +80,6 @@ type Engine struct {
 	live  *cycles.Live
 	rt    *esynth.Runtime
 	in    []float64
-	side  []float64
 	ctl   Control
 	steps int // Simulation steps of the last control block.
 	// nominal is the mean number of simulation steps of a control block,
@@ -125,17 +124,19 @@ type Engine struct {
 
 	// Pops. level is the RMS level of the engine before the leveller over
 	// the last engLevelBlocks control blocks, whose powers engRing holds
-	// from engI on, engN of them filled. hold is the control blocks left in
-	// which a pop that ended can still sound through the impulse response.
+	// from engI on, engN of them filled. popBuf holds the voices of one
+	// block, popVolume is the volume over full scale, and popGain is the
+	// gain of the pop limiter, which recovers by popRelease per sample.
 	pops       pops
 	level      float64
 	engRing    [engLevelBlocks]float32
 	engI, engN int
-	hold       int
-	holdLen    int
+	popBuf     []float32
+	popVolume  float32
+	popGain    float32
+	popRelease float32
 	redline    float32
 	noise      dsp.Noise
-	channels   int
 }
 
 // New returns an engine for the spec and its resources at the output
@@ -154,14 +155,15 @@ func New(s *Spec, res Resources, rate int) (*Engine, error) {
 	if len(t.Channels) != len(s.Channels) || len(res.ImpulseResponses) != len(t.Channels) || len(t.Channels) > MaxChannels {
 		return nil, fmt.Errorf("profile %s: %d channels, %d impulse responses and %d channels in the tables", s.Name, len(s.Channels), len(res.ImpulseResponses), len(t.Channels))
 	}
-	rt, err := newRuntime(t, res.ImpulseResponses, s.Volume, rate, false)
+	var e *Engine
+	rt, err := newRuntime(t, res.ImpulseResponses, s.Volume, rate, func(b []float32) { e.mix(b) })
 	if err != nil {
 		return nil, err
 	}
 	feedHz := float64(synthRate) / block
 	seed := uint32(s.Seed & math.MaxUint16)
 	nominal := t.Rate / feedHz
-	e := &Engine{
+	e = &Engine{
 		spec: s,
 		live: res.Bank.NewLive(cycles.LiveOptions{
 			Lag:  cycles.ThrottleLag{Close: s.Throttle.CloseLagS, Open: s.Throttle.OpenLagS},
@@ -169,8 +171,6 @@ func New(s *Spec, res Resources, rate int) (*Engine, error) {
 		}),
 		rt:         rt,
 		in:         make([]float64, len(t.Channels)),
-		side:       make([]float64, len(t.Channels)),
-		channels:   len(t.Channels),
 		nominal:    nominal,
 		invNominal: 1 / nominal,
 		kRPM:       dsp.TimeCoef(rpmSec, feedHz),
@@ -187,35 +187,28 @@ func New(s *Spec, res Resources, rate int) (*Engine, error) {
 		waver:      float32(s.Limiter.FinalGearWaver),
 		wavInc1:    float32(waverHz1 / feedHz),
 		wavInc2:    float32(waverHz2 / feedHz),
-		pops:       newPops(s, t.Rate, 1/feedHz),
+		pops:       newPops(s, sharedModel(), t.Rate, 1/feedHz),
+		popBuf:     make([]float32, block),
+		popVolume:  float32(s.Volume) / 32768,
+		popGain:    1,
+		popRelease: float32(-math.Expm1(-1 / (popReleaseSec * synthRate))),
 		redline:    float32(s.RedlineRPM),
 		noise:      dsp.NewNoise(seed + 0x11a7),
 		bangAt:     -1,
 	}
-	// A pop that ends can sound on through the longest impulse response
-	// and the convolution block.
-	taps := 0
-	for _, ir := range res.ImpulseResponses {
-		taps = max(taps, len(ir))
-	}
-	e.holdLen = int(math.Ceil(float64(taps+2*block)/block)) + 1
-	gains, err := popGains(s, res, t)
-	if err != nil {
-		return nil, err
-	}
-	e.pops.kindGain = gains
 	return e, nil
 }
 
 // newRuntime returns the synthesiser runtime of the tables at the output
-// rate, with the audio parameters of the tables and the volume.
-func newRuntime(t *cycles.Tables, irs [][]int16, volume float64, rate int, unlevelled bool) (*esynth.Runtime, error) {
+// rate, with the audio parameters of the tables and the volume, and mix
+// for RuntimeOptions.Mix.
+func newRuntime(t *cycles.Tables, irs [][]int16, volume float64, rate int, mix func([]float32)) (*esynth.Runtime, error) {
 	params := esynth.SimulatorParameters(len(t.Channels), t.Rate)
 	vols := make([]float64, len(t.Channels))
 	for i, c := range t.Channels {
 		vols[i] = c.Volume
 	}
-	rt, err := esynth.NewRuntime(params, irs, vols, esynth.RuntimeOptions{OutputSampleRate: rate, Unlevelled: unlevelled, Side: !unlevelled}, esynth.NewRandom(1))
+	rt, err := esynth.NewRuntime(params, irs, vols, esynth.RuntimeOptions{OutputSampleRate: rate, Mix: mix}, esynth.NewRandom(1))
 	if err != nil {
 		return nil, err
 	}
@@ -307,25 +300,60 @@ func (e *Engine) feed() {
 			e.pitch = e.pitchTo
 		}
 		e.live.Next(e.pitch, float64(e.throttle), steps < e.offFrom || steps >= e.offTo, in)
-		e.pops.tick()
-		// The pops are the side input of the synthesiser: they take every
-		// stage of the engine input, and the leveller gain of the engine
-		// alone, so that they do not duck the engine. The side input runs
-		// on until the impulse response has rung out.
-		if e.pops.active > 0 || e.hold > 0 {
-			for c := range e.side {
-				e.side[c] = 0
-				if e.pops.active > 0 {
-					e.side[c] = float64(e.pops.jump[c]) * e.level
-				}
-			}
-			e.rt.WriteInputSide(in, e.side)
-		} else {
-			e.rt.WriteInput(in)
-		}
+		e.rt.WriteInput(in)
 		steps++
 	}
 	e.steps = steps
+	e.pops.tick(steps)
+}
+
+// mix adds the pop voices to one block of the synthesiser output, after
+// the leveller and before the resampler, so that the pops do not take the
+// 1900 Hz input filter and the impulse responses, and do not duck the
+// engine. A voice of unit gain is at its level over an engine of unit RMS
+// level before the leveller, so the voices take the engine level, the
+// leveller gain and the volume. The pop limiter keeps the sum below
+// popCeiling: its gain falls at once to what a peak needs and recovers
+// with popReleaseSec, so that a loud pop does not clip.
+func (e *Engine) mix(out []float32) {
+	buf := e.popBuf[:len(out)]
+	on := false
+	for _, v := range e.pops.voices {
+		if v.Active() {
+			if !on {
+				clear(buf)
+				on = true
+			}
+			v.Process(buf)
+		}
+	}
+	if !on {
+		e.popGain = 1
+		return
+	}
+	k := float32(e.level) * e.rt.LevellerGain() * e.popVolume
+	g := e.popGain
+	for i, v := range out {
+		p := k * buf[i]
+		room := popCeiling - abs32(v)
+		if ap := abs32(p); ap*g > room {
+			g = 0
+			if room > 0 {
+				g = room / ap
+			}
+		}
+		out[i] = v + g*p
+		g += (1 - g) * e.popRelease
+	}
+	e.popGain = g
+}
+
+// abs32 returns the magnitude of x.
+func abs32(x float32) float32 {
+	if x < 0 {
+		return -x
+	}
+	return x
 }
 
 // control runs once per control block, before its simulation steps.
@@ -357,8 +385,8 @@ func (e *Engine) control() {
 	e.pitchStep = (pitch - e.pitch) * e.invNominal
 
 	// The engine level for the pops: the mean power of the engine before
-	// the leveller over the last engLevelBlocks blocks. The pops are the side
-	// input, which the power leaves out.
+	// the leveller over the last engLevelBlocks blocks. The pops join the
+	// output after the leveller, so the power leaves them out.
 	e.engRing[e.engI] = float32(e.rt.PreLevelPower())
 	e.engI = (e.engI + 1) % engLevelBlocks
 	e.engN = min(e.engN+1, engLevelBlocks)
@@ -367,18 +395,11 @@ func (e *Engine) control() {
 		sum += v
 	}
 	e.level = float64(math.Sqrt(float64(sum / float32(e.engN))))
-	switch {
-	case e.pops.active > 0 || e.pops.sounded:
-		e.pops.sounded = false
-		e.hold = e.holdLen
-	case e.hold > 0:
-		e.hold--
-	}
 	rr := min(e.rpm/e.redline, 1.2)
 	heat := b2f(thr > 0.2) * e.load * min(rr, 1)
 	e.pops.control(&popInput{
 		rpm: e.rpm, throttle: thr, overrun: over && e.master > 0.5, cut: limiting, off: c.NoPops,
-		heat: heat, character: c.Character, n: e.steps, paths: e.channels,
+		heat: heat, character: c.Character, n: e.steps,
 	})
 }
 
@@ -431,7 +452,7 @@ func (e *Engine) limit(rpm, thr float32, gear uint8, final bool) bool {
 				from = t
 			}
 			if e.bangAt >= 0 && e.limCut-e.cut+part >= e.bangAt {
-				e.pops.bang(e.channels)
+				e.pops.bang()
 				e.bangAt = -1
 			}
 			e.cut -= part

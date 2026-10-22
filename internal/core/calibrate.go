@@ -4,147 +4,65 @@ import (
 	"math"
 	"sync"
 
-	"github.com/oval-tutu/snarl/internal/cycles"
-	"github.com/oval-tutu/snarl/internal/dsp"
+	"github.com/oval-tutu/snarl/internal/crackle"
 )
 
-// The calibration of the kind gains plays calDraws pops of each kind and
-// source on each channel through the synthesiser, without the leveller,
-// with calGapSec of silence after each. calTrimDB raises the gains,
-// because the median of the random pops in an engine is about 0.5 dB
-// below the mean level of the calibration pops.
+// The calibration of the kind gains renders calDraws voices of each kind
+// and source with no engine. calTrimDB raises the gains, because the
+// median of the random pops in an engine, over the kinds and the
+// profiles, is about 0.1 dB below the mean level of the calibration
+// voices (TestPopLevelOverEngine). bankSeed sets the carriers and the
+// noise of the shared bank.
 const (
-	calDraws  = 7
-	calTrimDB = 0.5
-	calGapSec = 0.3
+	calDraws  = 32
+	calTrimDB = 0.1
+	bankSeed  = 1
 )
 
-// calKey holds every input of the calibration: the tables, the impulse
-// responses and the pop shape settings. The pop settings that only the
-// triggers and the gains of the own and requested pops read are left
-// out, so that profiles that differ only in them share one calibration.
-type calKey struct {
-	tables                 *cycles.Tables
-	irs                    [MaxChannels]*int16
-	n                      [MaxChannels]int
-	bodyHz, bodyMS, jumpMS float64
+// popModel is the crackle model of the pops at the synthesiser rate,
+// which every engine shares and only reads: the parameters, the bank of
+// the voices and the kind gains.
+type popModel struct {
+	params *crackle.Params
+	bank   *crackle.Bank
+	// gain is the gain of each kind that puts a voice of unit scale on an
+	// engine of unit RMS level before the leveller at its overDB target,
+	// for an own pop or a bang and for a requested pop.
+	gain [2][numKinds]float32
 }
 
-// calEntry is one calibration. once runs it, so that concurrent calls of
-// New for one profile calibrate once.
-type calEntry struct {
-	once sync.Once
-	gain [MaxChannels][2][numKinds]float32
-	err  error
-}
+// sharedModel returns the pop model of the process. The first call makes
+// the bank and calibrates the kind gains.
+var sharedModel = sync.OnceValue(func() *popModel {
+	p := crackle.Default()
+	m := &popModel{params: p, bank: crackle.NewBank(p, synthRate, bankSeed)}
+	m.calibrate()
+	return m
+})
 
-// calCacheMax is the most calibrations that the cache holds.
-const calCacheMax = 64
-
-var calCache struct {
-	sync.Mutex
-	m map[calKey]*calEntry
-}
-
-// popGains returns the kind gains of the profile, from the cache or from
-// a new calibration.
-func popGains(s *Spec, res Resources, t *cycles.Tables) ([MaxChannels][2][numKinds]float32, error) {
-	k := calKey{tables: t, bodyHz: s.Pops.BodyHz, bodyMS: s.Pops.BodyMS, jumpMS: s.Pops.JumpMS}
-	for i, ir := range res.ImpulseResponses {
-		if len(ir) > 0 {
-			k.irs[i], k.n[i] = &ir[0], len(ir)
-		}
-	}
-	calCache.Lock()
-	e := calCache.m[k]
-	if e == nil {
-		if calCache.m == nil {
-			calCache.m = make(map[calKey]*calEntry)
-		}
-		if len(calCache.m) >= calCacheMax {
-			for old := range calCache.m {
-				delete(calCache.m, old)
-				break
-			}
-		}
-		e = &calEntry{}
-		calCache.m[k] = e
-	}
-	calCache.Unlock()
-	e.once.Do(func() { e.gain, e.err = calibrate(s, res, t) })
-	return e.gain, e.err
-}
-
-// calibrate measures the level of each pop kind on each channel: the RMS
-// level of the synthesiser output before the leveller over the span from
-// the start that holds 90 per cent of the energy, for a pop at unit gain.
-// The gain of a kind is set from the mean level in decibels, so that a pop
-// of unit scale on an engine whose output before the leveller has unit RMS
-// level is at its overDB target. The body frequency, body decay and
-// sub-event count of the pops cover their spreads in even steps, and the
-// sub-events follow a low-discrepancy sequence. It allocates.
-func calibrate(s *Spec, res Resources, t *cycles.Tables) ([MaxChannels][2][numKinds]float32, error) {
-	var gain [MaxChannels][2][numKinds]float32
-	for i := range gain {
-		for r := range gain[i] {
-			for k := range gain[i][r] {
-				gain[i][r][k] = 1
-			}
-		}
-	}
-	nc := len(t.Channels)
-	c := newPops(s, t.Rate, block/float64(synthRate))
-	c.noise = dsp.NewNoise(0xca1)
-	in := make([]float64, nc)
-	out := make([]float32, block)
-	gap := int(math.Ceil(calGapSec * synthRate / block))
-	for ch := range nc {
-		rt, err := newRuntime(t, res.ImpulseResponses, 1, synthRate, true)
-		if err != nil {
-			return gain, err
-		}
-		// run renders one convolution block of the pops on channel ch.
-		run := func() {
-			for rt.InputSize() < block {
-				c.tick()
-				clear(in)
-				if c.active > 0 {
-					in[ch] = float64(c.jump[ch])
-				}
-				rt.WriteInput(in)
-			}
-			rt.Render(out)
-		}
-		var buf []float32
-		tail := int(math.Ceil(float64(len(res.ImpulseResponses[ch])+2*block)/block)) + 1
-		for slot := range 2 * numKinds {
-			kind, src := slot%numKinds, srcOwn
-			if slot >= numKinds {
-				src = srcRequest
-			}
+// calibrate measures the level of the voice of each kind and source: the
+// RMS level over the span from the start that holds 90 per cent of the
+// energy, for a voice at 0 dB. The gain of a kind is set from the mean
+// level in decibels, so that a voice of unit scale on an engine whose
+// output before the leveller has unit RMS level is at its overDB target.
+// The sub-event counts of the draws cover the range of the kind in even
+// steps, and each draw has its own seed. It allocates.
+func (m *popModel) calibrate() {
+	for r := range m.gain {
+		for kind := range numKinds {
+			sh := &shapes[kind]
 			var lg float64
 			for d := range calDraws {
-				c.target, c.stratum, c.drawN = ch, d+1, 0
-				c.subU = float32(d) / calDraws
-				e := c.fire(nc, kind, src, 1, 1, 1)
-				buf = buf[:0]
-				for left := tail; left > 0; {
-					run()
-					buf = append(buf, out...)
-					if e.left == 0 {
-						left--
-					}
+				subs := sh.subs + int(float64(sh.subsRange+1)*(float64(d)+0.5)/calDraws)
+				if r == 1 && kind == kindCrackle {
+					subs = min(subs, shortCrackle)
 				}
-				c.stratum = 0
-				for range gap {
-					run()
-				}
-				lg += math.Log10(math.Max(spanRMS(buf, synthRate/100), 1e-12))
+				x := crackle.Render(m.bank, uint32(d+1), voiceOptions(m.params, kind, subs))
+				lg += math.Log10(math.Max(spanRMS(x, synthRate/100), 1e-12))
 			}
-			gain[ch][slot/numKinds][kind] = float32(math.Pow(10, (overDB[kind]+calTrimDB)/20-lg/calDraws))
+			m.gain[r][kind] = float32(math.Pow(10, (overDB[kind]+calTrimDB)/20-lg/calDraws))
 		}
 	}
-	return gain, nil
 }
 
 // spanRMS returns the RMS level of x from its start to the sample at which

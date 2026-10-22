@@ -2,6 +2,8 @@ package core
 
 import (
 	"math"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/oval-tutu/snarl/internal/cycles"
@@ -96,6 +98,78 @@ func TestValidate(t *testing.T) {
 		f(s)
 		if err := s.Validate(); err == nil {
 			t.Errorf("%s: no error", name)
+		}
+	}
+}
+
+// TestPopSources checks that pops.sources.toml has one entry of a known
+// kind for each pop kind, the boom length and the limiter bang, and no
+// other entry.
+func TestPopSources(t *testing.T) {
+	data, err := os.ReadFile("pops.sources.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[string]bool{"measured": true, "partial": true, "derived": true, "not-measured": true}
+	seen := map[string]int{}
+	var key string
+	for _, line := range strings.Split(string(data), "\n") {
+		name, val, ok := strings.Cut(line, " = ")
+		if !ok {
+			continue
+		}
+		val = strings.Trim(val, `"`)
+		switch name {
+		case "key":
+			key = val
+			seen[key]++
+		case "kind":
+			if !kinds[val] {
+				t.Errorf("%s has the kind %q", key, val)
+			}
+		case "from":
+			if val == "" {
+				t.Errorf("%s has no source", key)
+			}
+		}
+	}
+	for _, k := range []string{"pop", "boom", "boom.length", "crackle", "burble", "bang"} {
+		if seen[k] != 1 {
+			t.Errorf("%s has %d entries, want 1", k, seen[k])
+		}
+		delete(seen, k)
+	}
+	for k := range seen {
+		t.Errorf("%s is not a pop kind or the bang", k)
+	}
+}
+
+// TestVoiceOptions checks the length control of the voice of each kind:
+// the crackle length follows the rank of its sub-events from the shortest
+// to the longest measured length, and every crackle stays in the measured
+// range of the model, a boom has a shock per sub-event as a short train,
+// and a pop and a burble are single shocks.
+func TestVoiceOptions(t *testing.T) {
+	m := sharedModel().params
+	c := &shapes[kindCrackle]
+	for subs := c.subs; subs <= c.subs+c.subsRange; subs++ {
+		o := voiceOptions(m, kindCrackle, subs)
+		if o.LengthMS < m.LengthMS[0] || o.LengthMS > m.LengthMS[4] || o.Shocks != 0 || o.Short || o.Single {
+			t.Errorf("crackle of %d later sub-events: %+v, want a length from %g to %g ms", subs, o, m.LengthMS[0], m.LengthMS[4])
+		}
+	}
+	if lo, hi := voiceOptions(m, kindCrackle, c.subs), voiceOptions(m, kindCrackle, c.subs+c.subsRange); lo.LengthMS != m.LengthMS[0] || hi.LengthMS != m.LengthMS[4] {
+		t.Errorf("crackle lengths %g to %g ms, want %g to %g ms", lo.LengthMS, hi.LengthMS, m.LengthMS[0], m.LengthMS[4])
+	}
+	if mid := voiceOptions(m, kindCrackle, c.subs+c.subsRange/2); mid.LengthMS <= m.LengthMS[1] || mid.LengthMS >= m.LengthMS[3] {
+		t.Errorf("crackle of median rank %g ms, want inside the quartiles", mid.LengthMS)
+	}
+	if o := voiceOptions(m, kindBoom, 5); o.Shocks != 6 || !o.Short || o.Single {
+		t.Errorf("boom of 5 later sub-events: %+v", o)
+	}
+	for _, k := range []int{kindPop, kindBurble} {
+		if o := voiceOptions(m, k, 3); !o.Single {
+			t.Errorf("kind %d: %+v, want a single shock", k, o)
 		}
 	}
 }

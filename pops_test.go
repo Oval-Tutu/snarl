@@ -503,10 +503,11 @@ func levellerDip(t *testing.T, name string, kind PopKind, n int) (dipDB, ms floa
 
 // TestPopLeveller checks how the engine-sim leveller reacts to the pops:
 // its gain drops by at most 0.1 dB against a twin engine with no pops, for
-// requested pops of each kind on each profile. The pops are the side input
-// of the synthesiser, so they take the gain that the engine sets and do
-// not duck it. With the pops in the engine input, the gain dropped by 6 to
-// 14 dB after each pop and stayed more than 1 dB down for 40 to 150 ms.
+// requested pops of each kind on each profile. The pops join the
+// synthesiser output after the leveller, so they take the gain that the
+// engine sets and do not duck it. With the pops in the engine input, the
+// gain dropped by 6 to 14 dB after each pop and stayed more than 1 dB down
+// for 40 to 150 ms.
 func TestPopLeveller(t *testing.T) {
 	if testing.Short() {
 		t.Skip("the leveller measure renders about 100 s of engine per case")

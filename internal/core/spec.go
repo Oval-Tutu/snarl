@@ -82,8 +82,9 @@ type IdleSpec struct {
 	HuntHz float64 `toml:"hunt_hz"`
 }
 
-// PopSpec is the pop model. A pop is a pressure jump with a resonant body
-// in the input of one exhaust channel of the synthesiser.
+// PopSpec is the pop model. A pop is a voice of the crackle model
+// (internal/crackle), which joins the synthesiser output after the
+// leveller.
 type PopSpec struct {
 	// Density scales the chances of the own pops of a lift-off and a
 	// wind-down: 5 times the density multiplies each chance. Zero stops
@@ -96,7 +97,9 @@ type PopSpec struct {
 	Character string `toml:"character"`
 	// Gain multiplies every pop. At 1, each kind has its level over the
 	// engine level.
-	Gain   float64 `toml:"gain"`
+	Gain float64 `toml:"gain"`
+	// BodyMS sets the slot length of a pop and a limiter bang. The crackle
+	// model sets the sound of the pops, so BodyHz and JumpMS have no effect.
 	BodyHz float64 `toml:"body_hz"`
 	BodyMS float64 `toml:"body_ms"`
 	JumpMS float64 `toml:"jump_ms"`

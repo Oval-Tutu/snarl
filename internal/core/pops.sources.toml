@@ -1,0 +1,38 @@
+# Sources of the mapping of the pop kinds and the limiter bang to the
+# crackle model (internal/crackle), in voiceOptions and bang of pops.go.
+# kind: measured (the model plays the measured class of the 30 short
+# exterior crackle clips of docs/research/crackle-measure.md), partial (a
+# part of the sound is measured), derived (made from a measured part, but
+# no clip holds an example) or not-measured (the closest measured form,
+# because no clip holds an example of the kind). The level of each kind
+# over the engine is overDB in pops.go.
+
+[[source]]
+key = "crackle"
+kind = "measured"
+from = "a crackle train of the model, the measured class of the 30 clips, with the length control inside its measured range; the rank of the sub-event count of the pop in its range (5 to 32 later sub-events, at most 10 for a requested crackle) sets the active length at the same rank of the measured lengths, 368 to 637 ms (length_ms of internal/crackle/crackle.toml)"
+
+[[source]]
+key = "boom"
+kind = "partial"
+from = "a short train of the model over the body; the shocks and the body near 51 Hz are measured, the bright onset is not, because the clips start cut (docs/research/crackle-measure.md section 10)"
+
+[[source]]
+key = "boom.length"
+kind = "derived"
+from = "one shock of the model for each sub-event of the pop, 4 to 16 shocks, with Options.Short of internal/crackle; a train of fewer than 28 shocks is below the measured range, because no clip holds one"
+
+[[source]]
+key = "pop"
+kind = "derived"
+from = "the single-shock mode of the model: one shock at the level of the strongest shock of a train, with the bed and the body until the fade; the strong shock is measured, an isolated pop is not, because no clip holds one (docs/research/crackle-measure.md section 10)"
+
+[[source]]
+key = "burble"
+kind = "not-measured"
+from = "the single-shock mode of the model at the burble level over the engine, the closest measured form, a single weak shock; no clip holds a soft pop with no crack, and each clip is peak-normalised, so the level of a soft pop is not measurable (docs/research/crackle-measure.md section 10)"
+
+[[source]]
+key = "bang"
+kind = "derived"
+from = "the single-shock mode of the model, as for the pop, at bangGain times the gain of an own pop"

@@ -3,6 +3,7 @@ package core
 import (
 	"math"
 
+	"github.com/oval-tutu/snarl/internal/crackle"
 	"github.com/oval-tutu/snarl/internal/dsp"
 )
 
@@ -30,10 +31,6 @@ const (
 	ownSeconds = 10
 	// shortCrackle is the most sub-events of a requested crackle.
 	shortCrackle = 10
-	// gapSteps is the number of steps per unit of the normal value in
-	// the crackle gap table, and gapRange the highest normal value in it.
-	gapSteps = 8
-	gapRange = 3
 )
 
 // The pop timing in seconds, chances and gates.
@@ -67,17 +64,19 @@ var overDB = [numKinds]float64{kindPop: 4.8, kindBoom: 4.5, kindCrackle: 1.5, ki
 
 const ownNorm = 1 / 0.675
 
-// snapLevel is the level, 400 dB below full scale, below which a decaying
-// pop level snaps to zero.
-const snapLevel = 1e-20
-
-// The crackle gaps are log-normal around gapMS with the spread gapSigma,
-// and the normal value of each gap follows the one before with the
-// correlation gapRho (docs/research/crackles.md section 11).
+// The crackle sub-event gaps are log-normal around gapMS with the spread
+// gapSigma (docs/research/crackles.md section 11). They set the length of
+// the slot of a crackle.
 const (
 	gapMS    = 6.5
 	gapSigma = 0.95
-	gapRho   = 0.1
+)
+
+// The pop limiter keeps the engine and the pops below popCeiling of full
+// scale. Its gain recovers with the time constant popReleaseSec.
+const (
+	popCeiling    = 0.95
+	popReleaseSec = 0.05
 )
 
 // The pop kinds, from the clusters of the muffler crackle pack in
@@ -149,48 +148,52 @@ func characterIndex(name string) (int, bool) {
 	return 0, false
 }
 
-// popShape is the form of one pop kind. A pop is a train of sub-events:
-// the first starts the pop, and subs more follow at about spacingMS.
+// popShape is the length of one pop kind. A pop is a train of sub-events:
+// the first starts the pop, and subs more follow at about spacingMS. The
+// sub-events and the body decay set the length of the slot of the pop and
+// the length control of its voice (voiceOptions).
 type popShape struct {
-	bodyRatio float64 // Body frequency over the profile body_hz.
 	bodyMS    float64 // Body decay to -20 dB, or 0 for the profile body_ms.
-	jump      float64 // Pressure jump length over the profile jump_ms.
-	roundMS   float64 // Rounding of the jump edges, or 0 for 0.25 ms.
-	subGain   float32 // Jump of a later sub-event over the first.
 	subs      int     // Least number of later sub-events.
 	subsRange int     // Spread of the number of later sub-events.
 	spacingMS float64 // Median spacing of the sub-events.
 	logNormal bool    // Sub-events follow at log-normal gaps.
 }
 
-// shapes holds the form of each kind. The body frequencies, decays,
-// sub-event counts and spacings are the medians of the pack clusters. The
-// kind gains of the calibration set the levels.
+// shapes holds the length of each kind. The body decays, sub-event counts
+// and spacings are the medians of the pack clusters.
 var shapes = [numKinds]popShape{
-	kindPop:     {bodyRatio: 1, jump: 1},
-	kindBoom:    {bodyRatio: 0.3, bodyMS: 50, jump: 1, subGain: 0.25, subs: 3, subsRange: 12, spacingMS: 12.5},
-	kindCrackle: {bodyRatio: 0.3, bodyMS: 70, jump: 0.4, subGain: 0.5, subs: 5, subsRange: 27, spacingMS: gapMS, logNormal: true},
-	kindBurble:  {bodyRatio: 0.8, bodyMS: 34, jump: 3, roundMS: 1.5, subGain: 0.6, subs: 0, subsRange: 6, spacingMS: 11},
+	kindPop:     {},
+	kindBoom:    {bodyMS: 50, subs: 3, subsRange: 12, spacingMS: 12.5},
+	kindCrackle: {bodyMS: 70, subs: 5, subsRange: 27, spacingMS: gapMS, logNormal: true},
+	kindBurble:  {bodyMS: 34, subs: 0, subsRange: 6, spacingMS: 11},
 }
 
-// popEvent is one sounding pop.
+// voiceOptions returns the options of the crackle model voice of a pop of
+// the kind with subs later sub-events, at the level 0 dB. The mapping and
+// its sources are in pops.sources.toml. A crackle is a train whose active
+// length has the rank in the measured lengths of m that the sub-event
+// count has in its range. A boom is a short train of one shock per
+// sub-event. A pop and a burble are the single-shock mode.
+func voiceOptions(m *crackle.Params, kind, subs int) crackle.Options {
+	switch kind {
+	case kindCrackle:
+		sh := &shapes[kind]
+		r := 4 * float64(subs-sh.subs) / float64(sh.subsRange)
+		i := min(int(r), 3)
+		l := &m.LengthMS
+		return crackle.Options{LengthMS: l[i] + (r-float64(i))*(l[i+1]-l[i])}
+	case kindBoom:
+		return crackle.Options{Shocks: 1 + subs, Short: true}
+	}
+	return crackle.Options{Single: true}
+}
+
+// popEvent is the slot of one sounding pop.
 type popEvent struct {
-	left              int // Steps until the slot is free.
-	channel           int
-	subs, next        int // Sub-events to come and steps to the next.
-	spacing           float32
-	amp               float32
-	jumpLeft, jumpLen int
-	jumpAmp           float32
-	// ring is the steps left in which the pop jump sounds: the jump of the
-	// last sub-event and six decays of the body to -120 dB. ringLen is its
-	// length from a sub-event.
-	ring, ringLen int
-	jumpLP        dsp.OnePole
-	body          dsp.Biquad
-	gapZ          float32 // Normal value of the last crackle gap.
-	kind, src     int
-	start         int64 // Start time in steps.
+	left      int // Steps until the slot is free.
+	kind, src int
+	start     int64 // Start time in steps.
 }
 
 // popInput is the engine state of one control block for the pops.
@@ -207,15 +210,14 @@ type popInput struct {
 	heat float32
 	// character is 0 for the profile character, or the character plus 1.
 	character int
-	n, paths  int
+	n         int
 }
 
 // pops is the pop model: the requested pops, the own pops of a lift-off
 // or a wind-down, the limits of the own pops and the pop events. All
-// triggers run once per control block, and the events once per simulation
-// step. A pop is a rounded pressure jump with a resonant body, which tick
-// adds to the synthesiser input of one exhaust channel, so that the
-// impulse response of the channel colours it.
+// triggers and the slots run once per control block. Each slot plays its
+// pop on a voice of the crackle model, which Engine.mix adds to the
+// synthesiser output after the leveller.
 type pops struct {
 	density    float32 // Multiplier of the own pop chances.
 	bangChance float32
@@ -267,16 +269,8 @@ type pops struct {
 	ownI            int              // Index of the oldest in ownTimes.
 	lastOwn         int64
 	lastTrig        int
-	target          int                                 // Channel of the next pop.
 	cum             [numCharacters][2][numKinds]float32 // Run kind weights: first pop, later pops.
 	gainOwn, gainRq [numCharacters]float32
-	// sounded is true when a pop sounded since the last control block.
-	sounded bool
-	// stratum is the draw of the calibration from 1 to calDraws, or 0
-	// outside it. drawN counts the draws of the form of a pop, and subU
-	// is the last draw for a sub-event.
-	stratum, drawN int
-	subU           float32
 
 	// Report: pops started, and the kind, source and strength of the last.
 	total        uint32
@@ -284,31 +278,19 @@ type pops struct {
 	lastSrc      int
 	lastStrength float32
 
-	// Events.
-	ev     [maxPopEvents]popEvent
-	active int
-	// jump is the pressure of the pops on each channel at the last step,
-	// over an engine of unit RMS level. The engine scales it by its level
-	// at each step, so that a pop follows the engine that it sounds over.
-	jump     [MaxChannels]float32
-	busyLen  int
-	jumpLen  float64
-	jumpA    [numKinds]float32 // Jump rounding coefficient per kind.
-	jumpMix  float32
-	bodyGain float32
-	bodyHz   float64
-	bodyMS   float64
-	gapTab   [2*gapSteps*gapRange + 1]float32 // Gap over gapMS per normal value step.
-	gapInnov float32                          // Gain of the new draw, sqrt(1-gapRho^2).
-	gapMean  float32                          // Mean gap over the median, exp(gapSigma^2/2).
-	// kindGain is the gain of each kind on each channel that puts a pop of
-	// unit scale on an engine of unit RMS level at its overDB target, for
-	// an own pop or a bang and for a requested pop.
-	kindGain [MaxChannels][2][numKinds]float32
+	// Events. Slot i plays on voices[i].
+	ev      [maxPopEvents]popEvent
+	voices  [maxPopEvents]*crackle.Voice
+	active  int
+	busyLen int
+	bodyMS  float64
+	gapMean float32 // Mean gap over the median, exp(gapSigma^2/2).
+	model   *popModel
 }
 
-// newPops returns the pop model at the simulation step rate.
-func newPops(s *Spec, rate, chunkSeconds float64) pops {
+// newPops returns the pop model at the simulation step rate, with voices
+// of the shared crackle model m.
+func newPops(s *Spec, m *popModel, rate, chunkSeconds float64) pops {
 	p := s.Pops
 	ch, _ := characterIndex(p.Character)
 	q := pops{
@@ -326,13 +308,14 @@ func newPops(s *Spec, rate, chunkSeconds float64) pops {
 		reqKind:   -1,
 		histLen:   int(histSeconds * rate),
 		busyLen:   int(0.3 * rate),
-		jumpLen:   p.JumpMS * 1e-3 * rate,
-		jumpMix:   0.6,
-		bodyGain:  6.4,
-		bodyHz:    p.BodyHz,
 		bodyMS:    p.BodyMS,
-		gapInnov:  float32(math.Sqrt(1 - gapRho*gapRho)),
 		gapMean:   float32(math.Exp(gapSigma * gapSigma / 2)),
+		model:     m,
+	}
+	// The seeds of the voices come from the pop random source, so that the
+	// engine sound does not depend on the pops.
+	for i := range q.voices {
+		q.voices[i] = crackle.New(m.bank, q.noise.Next())
 	}
 	if p.LimiterBangs {
 		q.bangChance = float32(2 * p.Density)
@@ -344,35 +327,17 @@ func newPops(s *Spec, rate, chunkSeconds float64) pops {
 	// The engine starts below the bands, so that the RPM rising from 0
 	// rolls no band.
 	q.windIn = q.windBands
-	for i := range q.gapTab {
-		z := float64(i)/gapSteps - gapRange
-		q.gapTab[i] = float32(math.Exp(gapSigma * z))
-	}
 	q.last = -q.guard
 	for i := range q.ownTimes {
 		q.ownTimes[i] = -q.window
 	}
 	q.lastOwn = -q.gap
-	for k, sh := range shapes {
-		r := sh.roundMS
-		if r == 0 {
-			r = 0.25
-		}
-		q.jumpA[k] = dsp.TimeCoef(r*1e-3, rate)
-	}
 	w := [numKinds]float64{p.WeightPop, p.WeightBoom, p.WeightCrackle, p.WeightBurble}
 	for c, cs := range characters {
 		q.cum[c][0] = cumulative(w, cs.first)
 		q.cum[c][1] = cumulative(w, cs.later)
 		q.gainOwn[c] = float32(math.Pow(10, cs.gainDB/20))
 		q.gainRq[c] = float32(math.Pow(10, cs.requestDB/20))
-	}
-	for i := range q.kindGain {
-		for r := range q.kindGain[i] {
-			for k := range q.kindGain[i][r] {
-				q.kindGain[i][r][k] = 1
-			}
-		}
 	}
 	return q
 }
@@ -446,7 +411,7 @@ func (p *pops) trigger(in *popInput, now int64) {
 		ch = in.character - 1
 	}
 	if p.reqPending > 0 && now-p.last >= p.guard {
-		p.requested(in, ch)
+		p.requested(ch)
 	}
 	over := in.overrun && !in.cut
 	if !over {
@@ -470,7 +435,7 @@ func (p *pops) trigger(in *popInput, now int64) {
 			if p.runFirst {
 				pos = 0
 			}
-			p.own(in, ch, pick(p.noise.Unipolar(), &p.cum[ch][pos]), trigLift, now)
+			p.own(ch, pick(p.noise.Unipolar(), &p.cum[ch][pos]), trigLift, now)
 			p.runLeft--
 			p.runFirst = false
 			p.runAt = now + p.nextInterval()
@@ -483,7 +448,7 @@ func (p *pops) trigger(in *popInput, now int64) {
 		if p.noise.Unipolar() < 0.8-0.6*float32(p.windIn-1)/float32(max(1, p.windBands-1)) {
 			k = kindPop
 		}
-		p.own(in, ch, k, trigWind, now)
+		p.own(ch, k, trigWind, now)
 	}
 }
 
@@ -560,9 +525,9 @@ func (p *pops) ownAllowed(now int64, trig int) bool {
 
 // own starts an own pop of a kind for the trigger. Its gain spreads over
 // about 9 dB and falls on a cold exhaust.
-func (p *pops) own(in *popInput, ch, kind, trig int, now int64) {
+func (p *pops) own(ch, kind, trig int, now int64) {
 	level := 1 - 0.65*p.noise.Unipolar()
-	if p.fire(in.paths, kind, srcOwn, p.gain*p.gainOwn[ch]*p.heatFactor()*ownNorm, level, level) == nil {
+	if !p.fire(kind, srcOwn, p.gain*p.gainOwn[ch]*p.heatFactor()*ownNorm, level, level) {
 		return
 	}
 	p.ownTimes[p.ownI] = now
@@ -576,7 +541,7 @@ func (p *pops) own(in *popInput, ch, kind, trig int, now int64) {
 // requested pop. The gain spreads over plus or minus 3 dB around the level
 // target of the kind over the engine. The pop does not depend on the wall
 // heat.
-func (p *pops) requested(in *popInput, ch int) {
+func (p *pops) requested(ch int) {
 	s := p.reqStrength
 	a, b := kindBoom, kindCrackle
 	switch {
@@ -595,7 +560,7 @@ func (p *pops) requested(in *popInput, ch int) {
 	p.reqKind = k
 	scale := p.gain * p.gainRq[ch]
 	level := float32(math.Pow(10, 0.15*float64(p.noise.Bipolar())))
-	p.fire(in.paths, k, srcRequest, scale, level, s)
+	p.fire(k, srcRequest, scale, level, s)
 	p.reqPending--
 }
 
@@ -605,30 +570,6 @@ func b2i(b bool) int {
 		return 1
 	}
 	return 0
-}
-
-// draw returns a random value from 0 to 1 for the form of a pop at its
-// start. In the calibration, the draws of the pops cover the range in
-// calDraws even steps, each form value in another order.
-func (p *pops) draw() float32 {
-	if p.stratum == 0 {
-		return p.noise.Unipolar()
-	}
-	p.drawN++
-	return (float32(p.stratum*p.drawN%calDraws) + 0.5) / calDraws
-}
-
-// subDraw returns a random value from 0 to 1 for a sub-event. In the
-// calibration, it is a low-discrepancy sequence from the draw.
-func (p *pops) subDraw() float32 {
-	if p.stratum == 0 {
-		return p.noise.Unipolar()
-	}
-	p.subU += golden
-	if p.subU >= 1 {
-		p.subU--
-	}
-	return p.subU
 }
 
 // heatFactor maps the wall heat to a pop gain. A cold exhaust cannot pop.
@@ -657,177 +598,97 @@ func pick(u float32, cum *[numKinds]float32) int {
 	return k
 }
 
-// slot returns the slot for a pop of the source. It is a free slot, or
-// for a requested pop the slot of the oldest own pop, or of the oldest pop
-// when no own pop sounds. Otherwise it is nil.
-func (p *pops) slot(src int) *popEvent {
-	var oldOwn, old *popEvent
+// slot returns the index of the slot for a pop of the source. It is a
+// free slot, or for a requested pop the slot of the oldest own pop, or of
+// the oldest pop when no own pop sounds. Otherwise it is -1.
+func (p *pops) slot(src int) int {
+	oldOwn, old := -1, -1
 	for i := range p.ev {
 		e := &p.ev[i]
 		if e.left == 0 {
-			return e
+			return i
 		}
-		if e.src == srcOwn && (oldOwn == nil || e.start < oldOwn.start) {
-			oldOwn = e
+		if e.src == srcOwn && (oldOwn < 0 || e.start < p.ev[oldOwn].start) {
+			oldOwn = i
 		}
-		if old == nil || e.start < old.start {
-			old = e
+		if old < 0 || e.start < p.ev[old].start {
+			old = i
 		}
 	}
 	if src != srcRequest {
-		return nil
+		return -1
 	}
-	if oldOwn != nil {
+	if oldOwn >= 0 {
 		old = oldOwn
 	}
-	old.left = 0
+	p.ev[old].left = 0
 	p.active--
 	return old
 }
 
-// fire starts one pop of a kind from the source on the next channel in
-// turn, and returns it, or nil when no slot is free. The gain is scale
-// times level times the kind gain, over an engine of unit level, so that
-// each kind keeps its level over the engine. strength is the strength in
-// the pop report. The body
-// frequency spreads over plus or minus 15 per cent, or 8 per cent for a
-// requested pop, and the body decay over plus or minus 25 per cent.
-func (p *pops) fire(channels, kind, src int, scale, level, strength float32) *popEvent {
-	e := p.slot(src)
-	if e == nil {
-		return nil
+// fire starts one pop of a kind from the source on the voice of a slot,
+// and reports false when no slot is free. The gain is scale times level
+// times the kind gain, over an engine of unit level, so that each kind
+// keeps its level over the engine. strength is the strength in the pop
+// report. The body decay spreads over plus or minus 25 per cent.
+func (p *pops) fire(kind, src int, scale, level, strength float32) bool {
+	i := p.slot(src)
+	if i < 0 {
+		return false
 	}
+	e := &p.ev[i]
 	sh := &shapes[kind]
-	e.subs = sh.subs + int(float32(sh.subsRange+1)*p.draw())
-	e.channel = p.target
-	p.target++
-	if p.target >= channels {
-		p.target = 0
-	}
+	subs := sh.subs + int(float32(sh.subsRange+1)*p.noise.Unipolar())
 	if src == srcRequest && kind == kindCrackle {
-		e.subs = min(e.subs, shortCrackle)
+		subs = min(subs, shortCrackle)
 	}
-	a := scale * level * p.kindGain[e.channel][b2i(src == srcRequest)][kind]
 	ms := sh.bodyMS
 	if ms == 0 {
 		ms = p.bodyMS
 	}
-	ms *= 0.75 + 0.5*float64(p.draw())
-	spread := 0.15
-	if src == srcRequest {
-		spread = 0.08
-	}
-	hz := p.bodyHz * sh.bodyRatio * (1 - spread + 2*spread*float64(p.draw()))
-	// The body decays to -20 dB in ms: tau = T / ln 10, Q = pi f tau.
-	tau := ms * 1e-3 / math.Ln10
-	e.body.SetBandPass(hz, math.Max(0.5, math.Pi*hz*tau), float64(p.rate))
-	e.jumpLP = dsp.OnePole{A: p.jumpA[kind]}
-	e.jumpLen = max(1, int(p.jumpLen*sh.jump))
-	e.jumpLeft = e.jumpLen
-	e.ringLen = e.jumpLen + int(6*ms*1e-3*float64(p.rate))
-	e.ring = e.ringLen
-	e.jumpAmp = a
-	e.amp = a
-	e.gapZ = 0
-	e.kind, e.src, e.start = kind, src, p.now
-	e.spacing = float32(sh.spacingMS*1e-3) * p.rate
-	e.next = p.subSpacing(e)
+	ms *= 0.75 + 0.5*float64(p.noise.Unipolar())
+	spacing := float32(sh.spacingMS*1e-3) * p.rate
 	if sh.logNormal {
-		e.spacing *= p.gapMean
+		spacing *= p.gapMean
 	}
-	// The slot holds the train and six body decays, down by 120 dB.
-	e.left = max(p.busyLen, int(float32(e.subs)*1.6*e.spacing)+int(6*ms*1e-3*float64(p.rate)))
+	// The slot holds the train and six body decays, down by 120 dB, and
+	// at least until its voice ends (tick).
+	e.left = max(p.busyLen, int(float32(subs)*1.6*spacing)+int(6*ms*1e-3*float64(p.rate)))
+	e.kind, e.src, e.start = kind, src, p.now
+	o := voiceOptions(p.model.params, kind, subs)
+	o.LevelDB = 20 * math.Log10(float64(scale*level*p.model.gain[b2i(src == srcRequest)][kind]))
+	p.voices[i].Trigger(o)
 	p.active++
 	p.total++
 	p.lastKind, p.lastSrc, p.lastStrength = kind, src, strength
 	p.last = p.now
-	return e
+	return true
 }
 
-// subSpacing returns the steps to the next sub-event, from 0.65 to 1.55
-// times the median spacing. A crackle gap is log-normal, from the normal
-// value gapZ that follows the one before with the correlation gapRho. The
-// sum of three uniform values from -1 to 1 is about normal, with a
-// variance of 1.
-func (p *pops) subSpacing(e *popEvent) int {
-	if !shapes[e.kind].logNormal {
-		return max(1, int(e.spacing*(0.65+0.9*p.subDraw())))
-	}
-	n := 2*(p.subDraw()+p.subDraw()+p.subDraw()) - 3
-	e.gapZ = gapRho*e.gapZ + p.gapInnov*n
-	i := min(len(p.gapTab)-1, max(0, int((e.gapZ+gapRange)*gapSteps+0.5)))
-	return max(1, int(gapMS*1e-3*p.rate*p.gapTab[i]))
-}
-
-// bang is the bang of unburnt fuel in a limiter cut: a pop with a shorter
-// pressure jump, so that its attack is sharper.
-func (p *pops) bang(channels int) {
+// bang is the bang of unburnt fuel in a limiter cut: the single shock of
+// a pop at bangGain.
+func (p *pops) bang() {
 	level := 1 - 0.65*p.noise.Unipolar()
-	if e := p.fire(channels, kindPop, srcLimiter, p.gain*bangGain*p.heatFactor(), level, level); e != nil {
-		e.ringLen -= e.jumpLen - max(1, e.jumpLen/3)
-		e.jumpLen = max(1, e.jumpLen/3)
-		e.jumpLeft = e.jumpLen
-		e.ring = e.ringLen
-	}
+	p.fire(kindPop, srcLimiter, p.gain*bangGain*p.heatFactor(), level, level)
 }
 
-// tick runs once per simulation step. It sets the pressure of the pops on
-// each channel in p.jump.
-func (p *pops) tick() {
+// tick runs once per control block, after its n simulation steps. It
+// frees the slots whose time has passed and whose voice has ended.
+func (p *pops) tick(n int) {
 	if p.active == 0 {
 		return
 	}
-	p.sounded = true
-	p.jump = [MaxChannels]float32{}
 	for i := range p.ev {
 		e := &p.ev[i]
 		if e.left == 0 {
 			continue
 		}
-		e.left--
+		e.left = max(e.left-n, 0)
+		if e.left == 0 && p.voices[i].Active() {
+			e.left = 1
+		}
 		if e.left == 0 {
 			p.active--
 		}
-		// After the last sub-event and its ring of six body decays, the
-		// body is 120 dB down, so its stages do not run, and the event only
-		// holds its slot for busyLen.
-		if e.ring > 0 || e.subs > 0 || e.jumpLeft > 0 {
-			p.ringBody(e)
-		}
 	}
-	if p.active == 0 {
-		p.jump = [MaxChannels]float32{}
-	}
-}
-
-// ringBody runs the sub-events, the pressure jump and the body of the
-// event for one step, and adds the jump to its channel.
-func (p *pops) ringBody(e *popEvent) {
-	if e.subs > 0 {
-		e.next--
-		if e.next == 0 {
-			sh := &shapes[e.kind]
-			u := 0.3 + 0.7*p.subDraw()
-			e.jumpLeft = e.jumpLen
-			e.ring = e.ringLen
-			e.jumpAmp = e.amp * sh.subGain * u
-			e.subs--
-			e.next = p.subSpacing(e)
-		}
-	}
-	if e.ring > 0 {
-		e.ring--
-	}
-	var g float32
-	if e.jumpLeft > 0 {
-		e.jumpLeft--
-		g = e.jumpAmp
-	}
-	j := e.jumpLP.Process(g)
-	// The decaying levels snap to zero far below audibility, before they
-	// reach subnormal values, which cost a hundred times more.
-	if g == 0 && j < snapLevel && j > -snapLevel {
-		j, e.jumpLP.Y = 0, 0
-	}
-	p.jump[e.channel] += p.jumpMix*j + p.bodyGain*e.body.Process(j)
 }

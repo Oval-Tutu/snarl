@@ -38,9 +38,8 @@ func BenchmarkRender(b *testing.B) {
 }
 
 // BenchmarkPops renders each profile on overrun at four fifths of the
-// redline, with a pop request every 12 blocks (64 ms), so that the pop
-// side input of the synthesiser runs in every block. It is the peak cost
-// of the engine.
+// redline, with a pop request every 12 blocks (64 ms), so that a pop
+// voice plays in every block. It is the peak cost of the engine.
 func BenchmarkPops(b *testing.B) {
 	for _, name := range Profiles() {
 		b.Run(name, func(b *testing.B) {
