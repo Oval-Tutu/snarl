@@ -21,6 +21,9 @@ type Options struct {
 	// Shocks is the count of shocks, clamped to the measured range, or 0
 	// for a train of a length.
 	Shocks int
+	// Short lets Shocks go below the measured minimum, down to 1. A short
+	// train is derived, not measured: no clip holds one.
+	Short bool
 	// LengthMS is the active length, clamped to the measured range, or 0
 	// to draw it from the measured distribution.
 	LengthMS float64
@@ -167,7 +170,11 @@ func (v *Voice) Trigger(o Options) {
 	case o.Single:
 		v.left, v.total = 1, 1
 	case o.Shocks > 0:
-		n := min(max(o.Shocks, p.ShocksMin), p.ShocksMax)
+		lo := p.ShocksMin
+		if o.Short {
+			lo = 1
+		}
+		n := min(max(o.Shocks, lo), p.ShocksMax)
 		v.left, v.total = n, float64(n)
 	default:
 		l := o.LengthMS

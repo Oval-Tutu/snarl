@@ -143,6 +143,8 @@ func TestLengthControl(t *testing.T) {
 		want int
 	}{
 		{Options{Shocks: 1}, p.ShocksMin},
+		{Options{Shocks: 4, Short: true}, 4},
+		{Options{Shocks: 1000, Short: true}, p.ShocksMax},
 		{Options{Shocks: 1000}, p.ShocksMax},
 		{Options{Shocks: p.ShocksMin + 1}, p.ShocksMin + 1},
 		{Options{Single: true}, 1},
