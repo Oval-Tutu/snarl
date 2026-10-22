@@ -65,8 +65,8 @@ var overDB = [numKinds]float64{kindPop: 4.8, kindBoom: 4.5, kindCrackle: 1.5, ki
 const ownNorm = 1 / 0.675
 
 // The crackle sub-event gaps are log-normal around gapMS with the spread
-// gapSigma (docs/research/crackles.md section 11). They set the length of
-// the slot of a crackle.
+// gapSigma (docs/research/crackles.md section 11). They only set how long
+// the slot of a crackle stays busy, not the sound.
 const (
 	gapMS    = 6.5
 	gapSigma = 0.95
@@ -150,23 +150,25 @@ func characterIndex(name string) (int, bool) {
 
 // popShape is the length of one pop kind. A pop is a train of sub-events:
 // the first starts the pop, and subs more follow at about spacingMS. The
-// sub-events and the body decay set the length of the slot of the pop and
-// the length control of its voice (voiceOptions).
+// sub-event count sets the length control of its voice (voiceOptions).
+// The sub-events and holdMS only set how long the slot of the pop stays
+// busy, not the sound.
 type popShape struct {
-	bodyMS    float64 // Body decay to -20 dB, or 0 for the profile body_ms.
+	holdMS    float64 // Slot hold after the sub-events, or 0 for the profile body_ms.
 	subs      int     // Least number of later sub-events.
 	subsRange int     // Spread of the number of later sub-events.
 	spacingMS float64 // Median spacing of the sub-events.
 	logNormal bool    // Sub-events follow at log-normal gaps.
 }
 
-// shapes holds the length of each kind. The body decays, sub-event counts
-// and spacings are the medians of the pack clusters.
+// shapes holds the length of each kind. The holds are the body decays to
+// -20 dB, and the sub-event counts and spacings the medians, of the pack
+// clusters.
 var shapes = [numKinds]popShape{
 	kindPop:     {},
-	kindBoom:    {bodyMS: 50, subs: 3, subsRange: 12, spacingMS: 12.5},
-	kindCrackle: {bodyMS: 70, subs: 5, subsRange: 27, spacingMS: gapMS, logNormal: true},
-	kindBurble:  {bodyMS: 34, subs: 0, subsRange: 6, spacingMS: 11},
+	kindBoom:    {holdMS: 50, subs: 3, subsRange: 12, spacingMS: 12.5},
+	kindCrackle: {holdMS: 70, subs: 5, subsRange: 27, spacingMS: gapMS, logNormal: true},
+	kindBurble:  {holdMS: 34, subs: 0, subsRange: 6, spacingMS: 11},
 }
 
 // voiceOptions returns the options of the crackle model voice of a pop of
@@ -283,7 +285,7 @@ type pops struct {
 	voices  [maxPopEvents]*crackle.Voice
 	active  int
 	busyLen int
-	bodyMS  float64
+	holdMS  float64
 	gapMean float32 // Mean gap over the median, exp(gapSigma^2/2).
 	model   *popModel
 }
@@ -308,7 +310,7 @@ func newPops(s *Spec, m *popModel, rate, chunkSeconds float64) pops {
 		reqKind:   -1,
 		histLen:   int(histSeconds * rate),
 		busyLen:   int(0.3 * rate),
-		bodyMS:    p.BodyMS,
+		holdMS:    p.BodyMS,
 		gapMean:   float32(math.Exp(gapSigma * gapSigma / 2)),
 		model:     m,
 	}
@@ -630,7 +632,7 @@ func (p *pops) slot(src int) int {
 // and reports false when no slot is free. The gain is scale times level
 // times the kind gain, over an engine of unit level, so that each kind
 // keeps its level over the engine. strength is the strength in the pop
-// report. The body decay spreads over plus or minus 25 per cent.
+// report. The slot hold spreads over plus or minus 25 per cent.
 func (p *pops) fire(kind, src int, scale, level, strength float32) bool {
 	i := p.slot(src)
 	if i < 0 {
@@ -642,17 +644,17 @@ func (p *pops) fire(kind, src int, scale, level, strength float32) bool {
 	if src == srcRequest && kind == kindCrackle {
 		subs = min(subs, shortCrackle)
 	}
-	ms := sh.bodyMS
+	ms := sh.holdMS
 	if ms == 0 {
-		ms = p.bodyMS
+		ms = p.holdMS
 	}
 	ms *= 0.75 + 0.5*float64(p.noise.Unipolar())
 	spacing := float32(sh.spacingMS*1e-3) * p.rate
 	if sh.logNormal {
 		spacing *= p.gapMean
 	}
-	// The slot holds the train and six body decays, down by 120 dB, and
-	// at least until its voice ends (tick).
+	// The slot stays busy for the sub-events and six holds, and at least
+	// until its voice ends (tick).
 	e.left = max(p.busyLen, int(float32(subs)*1.6*spacing)+int(6*ms*1e-3*float64(p.rate)))
 	e.kind, e.src, e.start = kind, src, p.now
 	o := voiceOptions(p.model.params, kind, subs)

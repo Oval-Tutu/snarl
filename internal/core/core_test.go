@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/oval-tutu/snarl/internal/crackle"
 	"github.com/oval-tutu/snarl/internal/cycles"
 	"github.com/oval-tutu/snarl/internal/esynth"
 )
@@ -86,7 +87,7 @@ func TestValidate(t *testing.T) {
 		"weights": func(s *Spec) {
 			s.Pops.WeightPop, s.Pops.WeightBoom, s.Pops.WeightCrackle, s.Pops.WeightBurble = 0, 0, 0, 0
 		},
-		"body":        func(s *Spec) { s.Pops.BodyHz = 0 },
+		"body":        func(s *Spec) { s.Pops.BodyMS = 0 },
 		"density":     func(s *Spec) { s.Pops.Density = -1 },
 		"seed":        func(s *Spec) { s.Seed = -1 },
 		"many chans":  func(s *Spec) { s.Channels = make([]ChannelSpec, MaxChannels+1) },
@@ -110,7 +111,7 @@ func TestPopSources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	kinds := map[string]bool{"measured": true, "partial": true, "derived": true, "not-measured": true}
+	kinds := map[string]bool{"measured-class": true, "partial": true, "derived": true, "not-measured": true}
 	seen := map[string]int{}
 	var key string
 	for _, line := range strings.Split(string(data), "\n") {
@@ -144,13 +145,37 @@ func TestPopSources(t *testing.T) {
 	}
 }
 
+// TestPopModel checks that bad crackle model parameters give an error and
+// no model, and that the kind gains of the fitted model are finite and
+// above 0.
+func TestPopModel(t *testing.T) {
+	if m, err := newPopModel(crackle.Parse([]byte("nope = 1"))); err == nil || m != nil {
+		t.Errorf("bad parameters give the model %v and the error %v", m, err)
+	}
+	m, err := sharedModel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for r, row := range m.gain {
+		for k, g := range row {
+			if !(g > 0) || math.IsInf(float64(g), 0) {
+				t.Errorf("source row %d, kind %d: gain %g", r, k, g)
+			}
+		}
+	}
+}
+
 // TestVoiceOptions checks the length control of the voice of each kind:
 // the crackle length follows the rank of its sub-events from the shortest
 // to the longest measured length, and every crackle stays in the measured
 // range of the model, a boom has a shock per sub-event as a short train,
 // and a pop and a burble are single shocks.
 func TestVoiceOptions(t *testing.T) {
-	m := sharedModel().params
+	pm, err := sharedModel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := pm.params
 	c := &shapes[kindCrackle]
 	for subs := c.subs; subs <= c.subs+c.subsRange; subs++ {
 		o := voiceOptions(m, kindCrackle, subs)

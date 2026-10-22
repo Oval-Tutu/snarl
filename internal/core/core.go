@@ -155,6 +155,10 @@ func New(s *Spec, res Resources, rate int) (*Engine, error) {
 	if len(t.Channels) != len(s.Channels) || len(res.ImpulseResponses) != len(t.Channels) || len(t.Channels) > MaxChannels {
 		return nil, fmt.Errorf("profile %s: %d channels, %d impulse responses and %d channels in the tables", s.Name, len(s.Channels), len(res.ImpulseResponses), len(t.Channels))
 	}
+	model, err := sharedModel()
+	if err != nil {
+		return nil, err
+	}
 	var e *Engine
 	rt, err := newRuntime(t, res.ImpulseResponses, s.Volume, rate, func(b []float32) { e.mix(b) })
 	if err != nil {
@@ -187,7 +191,7 @@ func New(s *Spec, res Resources, rate int) (*Engine, error) {
 		waver:      float32(s.Limiter.FinalGearWaver),
 		wavInc1:    float32(waverHz1 / feedHz),
 		wavInc2:    float32(waverHz2 / feedHz),
-		pops:       newPops(s, sharedModel(), t.Rate, 1/feedHz),
+		pops:       newPops(s, model, t.Rate, 1/feedHz),
 		popBuf:     make([]float32, block),
 		popVolume:  float32(s.Volume) / 32768,
 		popGain:    1,

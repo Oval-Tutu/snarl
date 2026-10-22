@@ -1,7 +1,9 @@
 # Sources of the mapping of the pop kinds and the limiter bang to the
 # crackle model (internal/crackle), in voiceOptions and bang of pops.go.
-# kind: measured (the model plays the measured class of the 30 short
-# exterior crackle clips of docs/research/crackle-measure.md), partial (a
+# kind: measured-class (the model plays the measured class of the 30 short
+# exterior crackle clips of docs/research/crackle-measure.md; the kind
+# measured of internal/crackle/crackle.sources.toml is a statistic of the
+# clips, which this file does not use), partial (a
 # part of the sound is measured), derived (made from a measured part, but
 # no clip holds an example) or not-measured (the closest measured form,
 # because no clip holds an example of the kind). The level of each kind
@@ -9,7 +11,7 @@
 
 [[source]]
 key = "crackle"
-kind = "measured"
+kind = "measured-class"
 from = "a crackle train of the model, the measured class of the 30 clips, with the length control inside its measured range; the rank of the sub-event count of the pop in its range (5 to 32 later sub-events, at most 10 for a requested crackle) sets the active length at the same rank of the measured lengths, 368 to 637 ms (length_ms of internal/crackle/crackle.toml)"
 
 [[source]]
