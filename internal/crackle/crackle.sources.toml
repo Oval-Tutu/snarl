@@ -12,7 +12,7 @@ from = "the minimum, quartiles and maximum of the active length of the 30 clips 
 [[source]]
 key = "length_offset_ms"
 kind = "fitted"
-from = "fitted by the search of tools/crackle --fit (just crackle-fit): the compass search of 18 knobs that lowers the loss over the measures of the check, the distance of the model median from the clip median over the clip interquartile range, on 64 model trains with the seeds 1 to 64, to 0.719; the start is the median tail after the last shock of the clips and 10 ms; the median active length is 544 ms for the clips and 515 ms for the model"
+from = "fitted by the two searches of tools/crackle --fit (just crackle-fit): the compass searches of 22 knobs that lower the loss over the measures of the check, the distance of the model median from the clip median over the clip interquartile range, on 96 model trains with the seeds 1 to 96, to 0.592; the start is the median tail after the last shock of the clips and 10 ms; the median active length is 544 ms for the clips and 489 ms for the model"
 
 [[source]]
 key = "shocks_range"
@@ -27,7 +27,7 @@ from = "the quantiles at the probabilities (i + 0.5) / 21 of the 1221 gaps betwe
 [[source]]
 key = "gap_scale"
 kind = "fitted"
-from = "fitted by the search of tools/crackle --fit (just crackle-fit): the compass search of 18 knobs that lowers the loss over the measures of the check, the distance of the model median from the clip median over the clip interquartile range, on 64 model trains with the seeds 1 to 64, to 0.719; the start is 1; the median shock rate is 77 per second for the clips and 86 for the model"
+from = "fitted by the two searches of tools/crackle --fit (just crackle-fit): the compass searches of 22 knobs that lower the loss over the measures of the check, the distance of the model median from the clip median over the clip interquartile range, on 96 model trains with the seeds 1 to 96, to 0.592; the start is 1; the median shock rate is 77 per second for the clips and 87 for the model"
 
 [[source]]
 key = "level_db"
@@ -37,32 +37,37 @@ from = "the quantiles at the probabilities (i + 0.5) / 21 of the level of the 12
 [[source]]
 key = "level_scale"
 kind = "fitted"
-from = "fitted by the search of tools/crackle --fit (just crackle-fit): the compass search of 18 knobs that lowers the loss over the measures of the check, the distance of the model median from the clip median over the clip interquartile range, on 64 model trains with the seeds 1 to 64, to 0.719; the start is 1; 0.18 of the shocks are strong for the clips and 0.20 for the model"
+from = "fitted by the two searches of tools/crackle --fit (just crackle-fit): the compass searches of 22 knobs that lower the loss over the measures of the check, the distance of the model median from the clip median over the clip interquartile range, on 96 model trains with the seeds 1 to 96, to 0.592; the start is 1; 0.18 of the shocks are strong for the clips and 0.20 for the model"
 
 [[source]]
 key = "level_corr"
 kind = "fitted"
-from = "fitted by the search of tools/crackle --fit (just crackle-fit): the compass search of 18 knobs that lowers the loss over the measures of the check, the distance of the model median from the clip median over the clip interquartile range, on 64 model trains with the seeds 1 to 64, to 0.719; the start is the correlation of the levels of consecutive shocks of the clips, pooled, 0.29; it is 0.52 for the model"
+from = "fitted by the two searches of tools/crackle --fit (just crackle-fit): the compass searches of 22 knobs that lower the loss over the measures of the check, the distance of the model median from the clip median over the clip interquartile range, on 96 model trains with the seeds 1 to 96, to 0.592; the start is the correlation of the levels of consecutive shocks of the clips, pooled, 0.29; it is 0.49 for the model"
 
 [[source]]
 key = "place_db"
 kind = "fitted"
-from = "fitted by the search of tools/crackle --fit (just crackle-fit): the compass search of 18 knobs that lowers the loss over the measures of the check, the distance of the model median from the clip median over the clip interquartile range, on 64 model trains with the seeds 1 to 64, to 0.719; the start is the median level of the shocks in each tenth of the active span of the clips, pooled, against the pooled median level, with a scale that the search moves from 1"
+from = "fitted by the two searches of tools/crackle --fit (just crackle-fit): the compass searches of 22 knobs that lower the loss over the measures of the check, the distance of the model median from the clip median over the clip interquartile range, on 96 model trains with the seeds 1 to 96, to 0.592; the start is the median level of the shocks in each tenth of the active span of the clips, pooled, against the pooled median level, with a scale that the search moves from 1"
+
+[[source]]
+key = "place_weight"
+kind = "fitted"
+from = "fitted by the two searches of tools/crackle --fit (just crackle-fit): the compass searches of 22 knobs that lower the loss over the measures of the check, the distance of the model median from the clip median over the clip interquartile range, on 96 model trains with the seeds 1 to 96, to 0.592; the start is 0 in the first search, which holds it, and 1 in the second, which frees it"
 
 [[source]]
 key = "attack_ms"
 kind = "fitted"
-from = "fitted by the search of tools/crackle --fit (just crackle-fit): the compass search of 18 knobs that lowers the loss over the measures of the check, the distance of the model median from the clip median over the clip interquartile range, on 64 model trains with the seeds 1 to 64, to 0.719; the start is the median rise above 1 kHz of the strong shocks of the clips over 0.8; the median rise is 2.39 ms for the clips and 3.52 ms for the model"
+from = "fitted by the two searches of tools/crackle --fit (just crackle-fit): the compass searches of 22 knobs that lower the loss over the measures of the check, the distance of the model median from the clip median over the clip interquartile range, on 96 model trains with the seeds 1 to 96, to 0.592; the start is the median rise above 1 kHz of the strong shocks of the clips over 0.8; the median rise is 2.39 ms for the clips and 3.39 ms for the model"
 
 [[source]]
 key = "decay_ms"
 kind = "fitted"
-from = "fitted by the search of tools/crackle --fit (just crackle-fit): the compass search of 18 knobs that lowers the loss over the measures of the check, the distance of the model median from the clip median over the clip interquartile range, on 64 model trains with the seeds 1 to 64, to 0.719; the start is the median fall of the strong shocks of the clips to -10 dB, 0.57 ms; it is 0.88 ms for the model"
+from = "fitted by the two searches of tools/crackle --fit (just crackle-fit): the compass searches of 22 knobs that lower the loss over the measures of the check, the distance of the model median from the clip median over the clip interquartile range, on 96 model trains with the seeds 1 to 96, to 0.592; the start is the median fall of the strong shocks of the clips to -10 dB, 0.57 ms; it is 0.70 ms for the model"
 
 [[source]]
 key = "ring_ms"
 kind = "fitted"
-from = "fitted by the search of tools/crackle --fit (just crackle-fit): the compass search of 18 knobs that lowers the loss over the measures of the check, the distance of the model median from the clip median over the clip interquartile range, on 64 model trains with the seeds 1 to 64, to 0.719; the start is the fall above 2 kHz from the frame 5 ms after the strongest shock to the frame 20 ms after it, median over the clips, as an exponential decay"
+from = "fitted by the two searches of tools/crackle --fit (just crackle-fit): the compass searches of 22 knobs that lower the loss over the measures of the check, the distance of the model median from the clip median over the clip interquartile range, on 96 model trains with the seeds 1 to 96, to 0.592; the start is the fall above 2 kHz from the frame 5 ms after the strongest shock to the frame 20 ms after it, median over the clips, as an exponential decay"
 
 [[source]]
 key = "shock_db"
@@ -82,17 +87,17 @@ from = "fitted by tools/crackle --fit: the gains by 500 Richardson-Lucy steps th
 [[source]]
 key = "top_hz"
 kind = "fitted"
-from = "fitted by the search of tools/crackle --fit (just crackle-fit): the compass search of 18 knobs that lowers the loss over the measures of the check, the distance of the model median from the clip median over the clip interquartile range, on 64 model trains with the seeds 1 to 64, to 0.719; the start is the corner from 8 to 19 kHz at which the banks come nearest to their band powers"
+from = "fitted by the two searches of tools/crackle --fit (just crackle-fit): the compass searches of 22 knobs that lower the loss over the measures of the check, the distance of the model median from the clip median over the clip interquartile range, on 96 model trains with the seeds 1 to 96, to 0.592; the start is the corner from 8 to 19 kHz at which the banks come nearest to their band powers"
 
 [[source]]
 key = "body_hz"
 kind = "fitted"
-from = "fitted by the search of tools/crackle --fit (just crackle-fit): the compass search of 18 knobs that lowers the loss over the measures of the check, the distance of the model median from the clip median over the clip interquartile range, on 64 model trains with the seeds 1 to 64, to 0.719; the start is the median body peak of the clips; it is 52.2 Hz for the clips and 49.6 Hz for the model"
+from = "fitted by the two searches of tools/crackle --fit (just crackle-fit): the compass searches of 22 knobs that lower the loss over the measures of the check, the distance of the model median from the clip median over the clip interquartile range, on 96 model trains with the seeds 1 to 96, to 0.592; the start is the median body peak of the clips; it is 52.2 Hz for the clips and 48.7 Hz for the model"
 
 [[source]]
 key = "body_q"
 kind = "fitted"
-from = "fitted by the search of tools/crackle --fit (just crackle-fit): the compass search of 18 knobs that lowers the loss over the measures of the check, the distance of the model median from the clip median over the clip interquartile range, on 64 model trains with the seeds 1 to 64, to 0.719; the start is 2; the median spread of the body cycles is 0.23 for the clips and 0.20 for the model"
+from = "fitted by the two searches of tools/crackle --fit (just crackle-fit): the compass searches of 22 knobs that lower the loss over the measures of the check, the distance of the model median from the clip median over the clip interquartile range, on 96 model trains with the seeds 1 to 96, to 0.592; the start is 2; the median spread of the body cycles is 0.23 for the clips and 0.22 for the model"
 
 [[source]]
 key = "body_gain_db"
@@ -102,12 +107,12 @@ from = "fitted by tools/crackle --fit: the gain of the body filter for white noi
 [[source]]
 key = "fade_delay_ms"
 kind = "fitted"
-from = "fitted by the search of tools/crackle --fit (just crackle-fit): the compass search of 18 knobs that lowers the loss over the measures of the check, the distance of the model median from the clip median over the clip interquartile range, on 64 model trains with the seeds 1 to 64, to 0.719; the start is the median tail after the last shock of the clips; it is 69 ms for the clips and 69 ms for the model"
+from = "fitted by the two searches of tools/crackle --fit (just crackle-fit): the compass searches of 22 knobs that lower the loss over the measures of the check, the distance of the model median from the clip median over the clip interquartile range, on 96 model trains with the seeds 1 to 96, to 0.592; the start is the median tail after the last shock of the clips; it is 69 ms for the clips and 68 ms for the model"
 
 [[source]]
 key = "fade_db_per_ms"
 kind = "fitted"
-from = "fitted by the search of tools/crackle --fit (just crackle-fit): the compass search of 18 knobs that lowers the loss over the measures of the check, the distance of the model median from the clip median over the clip interquartile range, on 64 model trains with the seeds 1 to 64, to 0.719; the start is the median fall over the last 20 ms of the active span of the clips over 20 ms; the fall is -18.0 dB for the clips and -16.9 dB for the model"
+from = "fitted by the two searches of tools/crackle --fit (just crackle-fit): the compass searches of 22 knobs that lower the loss over the measures of the check, the distance of the model median from the clip median over the clip interquartile range, on 96 model trains with the seeds 1 to 96, to 0.592; the start is the median fall over the last 20 ms of the active span of the clips over 20 ms; the fall is -18.0 dB for the clips and -16.6 dB for the model"
 
 [[source]]
 key = "fade_in_ms"
@@ -115,9 +120,14 @@ kind = "snarl"
 from = "a snarl default against a click at the start: the clips start cut, with sound at the first sample, so they cannot give a fade-in"
 
 [[source]]
-key = "preroll_ms"
-kind = "snarl"
-from = "a snarl default: the clips start with the event under way, with sound at the first sample, so the bed and the body run for more than two body cycles and the ring of the body filter before the first sample"
+key = "act_ms"
+kind = "fitted"
+from = "fitted by the two searches of tools/crackle --fit (just crackle-fit): the compass searches of 22 knobs that lower the loss over the measures of the check, the distance of the model median from the clip median over the clip interquartile range, on 96 model trains with the seeds 1 to 96, to 0.592; the start is 30 ms"
+
+[[source]]
+key = "act_db"
+kind = "fitted"
+from = "fitted by the two searches of tools/crackle --fit (just crackle-fit): the compass searches of 22 knobs that lower the loss over the measures of the check, the distance of the model median from the clip median over the clip interquartile range, on 96 model trains with the seeds 1 to 96, to 0.592; the start is -20 dB"
 
 [[source]]
 key = "tail_hz"
@@ -132,9 +142,9 @@ from = "the median over the clips of the tail decay to -20 dB after the last sho
 [[source]]
 key = "tail_gain_db"
 kind = "fitted"
-from = "fitted by the search of tools/crackle --fit (just crackle-fit): the compass search of 18 knobs that lowers the loss over the measures of the check, the distance of the model median from the clip median over the clip interquartile range, on 64 model trains with the seeds 1 to 64, to 0.719; the start is the peak of a sine with the RMS level of the body; the median tail peak is 28 Hz for the clips and 27 Hz for the model"
+from = "fitted by the two searches of tools/crackle --fit (just crackle-fit): the compass searches of 22 knobs that lower the loss over the measures of the check, the distance of the model median from the clip median over the clip interquartile range, on 96 model trains with the seeds 1 to 96, to 0.592; the start is the peak of a sine with the RMS level of the body; the median tail peak is 28 Hz for the clips and 28 Hz for the model"
 
 [[source]]
 key = "out_db"
 kind = "fitted"
-from = "the gain that brings the median sample peak of the 64 fit trains, 4.84 dBFS, to the median sample peak of the clips, -0.41 dBFS"
+from = "the gain that brings the median sample peak of the 96 fit trains, 4.57 dBFS, to the median sample peak of the clips, -0.41 dBFS"

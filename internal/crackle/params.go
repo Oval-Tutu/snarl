@@ -3,9 +3,12 @@
 // (docs/research/crackle-model.md). The shocks come at random gaps with
 // random levels from the measured tables. Each shock is a crack with a
 // linear rise and a fast decay, and a ring with a slow decay, each through
-// a bank of octave band filters. The bed is a third bank. The body is
-// white noise through a resonant band pass, independent of the shocks, and
-// at the end of a train a damped sine is the tail. The class-level
+// a bank of octave band filters. The bed is a third bank, and the activity
+// of the shocks plays the ring bank as a slow ring. The body is white
+// noise through a resonant band pass, independent of the shocks, and at
+// the end of a train a damped sine is the tail. NewBank renders the shocks
+// as a table of grains and the bed, the ring and the body as loops once,
+// so that a voice only adds grains and reads loops. The class-level
 // parameters in crackle.toml are statistics and fits of the set of clips
 // that tools/crackle measures, with their sources in crackle.sources.toml.
 package crackle
@@ -53,8 +56,11 @@ type Params struct {
 	// LevelCorr is the correlation of the levels of consecutive shocks
 	// (Voice.level).
 	LevelCorr float64
-	// PlaceDB is the level offset of a shock in each tenth of the train.
-	PlaceDB [10]float64
+	// PlaceDB is the level offset of a shock in each tenth of the train,
+	// and PlaceWeight the part of it that the top level does not take
+	// (Voice.level).
+	PlaceDB     [10]float64
+	PlaceWeight float64
 	// AttackMS is the linear rise of the shock envelope. From the peak, the
 	// crack falls with the time constant DecayMS and the ring with RingMS.
 	AttackMS, DecayMS, RingMS float64
@@ -70,12 +76,12 @@ type Params struct {
 	// start of the fade at the end, and FadeDBPerMS the rate of the fade.
 	// FadeInMS is the linear fade at the start.
 	FadeDelayMS, FadeDBPerMS, FadeInMS float64
-	// PrerollMS is the time for which the bed and the body run before the
-	// first sample of a train.
-	PrerollMS float64
-	// At the fade, the body stops and rings out, and the tail starts: a
-	// damped sine at TailHz that falls 20 dB in TailDecayMS, with the
-	// amplitude TailGainDB.
+	// The activity of the shocks plays the ring bank as a slow ring: each
+	// shock adds its amplitude, which decays with the time constant ActMS,
+	// at the gain ActDB.
+	ActMS, ActDB float64
+	// At the fade, the tail starts: a damped sine at TailHz that falls
+	// 20 dB in TailDecayMS, with the amplitude TailGainDB.
 	TailHz, TailDecayMS, TailGainDB float64
 	// OutDB is the output gain at level 0 dB.
 	OutDB float64
@@ -106,12 +112,12 @@ func (p *Params) keys(shocks *[2]float64) []key {
 		array("length_ms", p.LengthMS[:]), one("length_offset_ms", &p.LengthOffsetMS),
 		array("shocks_range", shocks[:]),
 		array("gap_ms", p.GapMS[:]), one("gap_scale", &p.GapScale),
-		array("level_db", p.LevelDB[:]), one("level_scale", &p.LevelScale), one("level_corr", &p.LevelCorr), array("place_db", p.PlaceDB[:]),
+		array("level_db", p.LevelDB[:]), one("level_scale", &p.LevelScale), one("level_corr", &p.LevelCorr), array("place_db", p.PlaceDB[:]), one("place_weight", &p.PlaceWeight),
 		one("attack_ms", &p.AttackMS), one("decay_ms", &p.DecayMS), one("ring_ms", &p.RingMS),
 		array("shock_db", p.ShockDB[:]), array("ring_db", p.RingDB[:]), array("bed_db", p.BedDB[:]), one("top_hz", &p.TopHz),
 		one("body_hz", &p.BodyHz), one("body_q", &p.BodyQ), one("body_gain_db", &p.BodyGainDB),
 		one("fade_delay_ms", &p.FadeDelayMS), one("fade_db_per_ms", &p.FadeDBPerMS),
-		one("fade_in_ms", &p.FadeInMS), one("preroll_ms", &p.PrerollMS),
+		one("fade_in_ms", &p.FadeInMS), one("act_ms", &p.ActMS), one("act_db", &p.ActDB),
 		one("tail_hz", &p.TailHz), one("tail_decay_ms", &p.TailDecayMS), one("tail_gain_db", &p.TailGainDB),
 		one("out_db", &p.OutDB),
 	}
@@ -208,6 +214,8 @@ func Parse(data []byte) (*Params, error) {
 // check reports parameters that the voice cannot use.
 func (p *Params) check() error {
 	switch {
+	case p.PlaceWeight < 0 || p.PlaceWeight > 1:
+		return errors.New("place_weight must be from 0 to 1")
 	case p.LevelCorr <= -1 || p.LevelCorr >= 1:
 		return errors.New("level_corr must be inside -1 to 1")
 	case p.ShocksMin < 1 || p.ShocksMax < p.ShocksMin:
@@ -216,8 +224,8 @@ func (p *Params) check() error {
 		return errors.New("length_ms and gap_ms must be above 0")
 	case p.GapScale <= 0 || p.LevelScale <= 0 || p.AttackMS <= 0 || p.DecayMS <= 0 || p.RingMS <= 0 || p.FadeDBPerMS <= 0:
 		return errors.New("gap_scale, level_scale, attack_ms, decay_ms, ring_ms and fade_db_per_ms must be above 0")
-	case p.BodyHz <= 0 || p.BodyQ <= 0 || p.TopHz <= 0 || p.TailHz <= 0 || p.TailDecayMS <= 0:
-		return errors.New("body_hz, body_q, top_hz, tail_hz and tail_decay_ms must be above 0")
+	case p.BodyHz <= 0 || p.BodyQ <= 0 || p.TopHz <= 0 || p.TailHz <= 0 || p.TailDecayMS <= 0 || p.ActMS <= 0:
+		return errors.New("body_hz, body_q, top_hz, tail_hz, tail_decay_ms and act_ms must be above 0")
 	}
 	for _, t := range [][]float64{p.LengthMS[:], p.GapMS[:], p.LevelDB[:]} {
 		for i := 1; i < len(t); i++ {
