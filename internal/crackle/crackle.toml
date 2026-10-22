@@ -1,0 +1,32 @@
+# Class-level parameters of the crackle model (internal/crackle), written by
+# just crackle-fit (tools/crackle --fit) from the 30 short exterior crackle
+# clips. Do not edit by hand. crackle.sources.toml gives the source of each
+# key, and docs/research/crackle-model.md the model and the check.
+
+length_ms = [367.506, 476.327, 544.172, 573.889, 637.347]
+length_offset_ms = 127.52
+shocks_range = [28, 61]
+gap_ms = [2.69949, 3.58601, 4.42177, 5.05669, 5.46485, 5.91837, 6.46259, 6.93878, 7.55102, 8.22913, 8.86621, 9.47846, 10.2041, 11.0269, 11.9955, 12.9813, 13.9229, 15.616, 17.3534, 21.9566, 31.0452]
+gap_scale = 0.499995
+level_db = [-28.7433, -27.1707, -25.9379, -25.1978, -24.4397, -23.8428, -23.3362, -22.8303, -22.2036, -21.6265, -20.9845, -20.1311, -19.1969, -18.2697, -17.2144, -15.5833, -13.8599, -11.248, -7.31159, -3.99775, -0.0401904]
+level_scale = 1.19052
+level_corr = 0.489421
+place_db = [5.02958, 1.07943, -0.00189195, -0.4793, -0.516529, -0.245691, -0.0652181, -0.87648, -1.38061, -0.622373]
+attack_ms = 2.92635
+decay_ms = 1.90615
+ring_ms = 5.92009
+shock_db = [-200, -200, -200, -12.7176, -7.00071, -6.37641, -5.40742, -6.26206, -17.2664, -17.7277, -200]
+ring_db = [-200, -200, -200, -11.7969, -4.08843, -19.6849, -19.7235, -16.8495, -10.3635, -200, -200]
+bed_db = [-200, -200, -200, -200, -17.8828, -16.9673, -28.4796, -39.2775, -42.5288, -200, -200]
+top_hz = 14048.2
+body_hz = 51.012
+body_q = 2.04931
+body_gain_db = 26.9161
+fade_delay_ms = 42.3788
+fade_db_per_ms = 0.803042
+fade_in_ms = 1
+preroll_ms = 50
+tail_hz = 27.2896
+tail_decay_ms = 21.9469
+tail_gain_db = -0.594473
+out_db = -5.24928
