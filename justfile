@@ -127,7 +127,8 @@ crackle-baseline profile="v8-ls": (_command "snarl-render")
 # Make the listening files of the crackle pops in out: clips-then-model.wav
 # (3 clips, then 3 model trains, at one RMS level, with README.txt), a
 # blind test of 20 trials of a clip and a model train in blind/ (key in
-# blind/.key), and lift-offs of tools/crackle/lift.scn with the race pops
+# blind/.key), and lift-offs of tools/crackle/lift.scn (or of
+# tools/crackle/lift-<engine>.scn when it exists) with the race pops
 # at 48 kHz and -19 LUFS: <engine>-liftoffs.wav for each engine, and
 # v8-ls-old-then-new.wav with the pops of the old commit first. The old
 # render runs in a temporary git worktree of old under out/crackle.
@@ -150,7 +151,9 @@ listen-pops-model old="51f94ef" dir=crackle_clips out="out/listen-pops-model": (
     mkdir -p "${renders}"
     common=(--rate 48000 --format f32 --set 'pops.character="race"')
     for engine in v8-ls i4-vtec v12-412; do
-        go run ./cmd/snarl-render "${common[@]}" --out "${renders}/${engine}-new.wav" "${engine}" tools/crackle/lift.scn
+        lift=tools/crackle/lift.scn
+        [[ -f "tools/crackle/lift-${engine}.scn" ]] && lift="tools/crackle/lift-${engine}.scn"
+        go run ./cmd/snarl-render "${common[@]}" --out "${renders}/${engine}-new.wav" "${engine}" "${lift}"
         go run ./tools/crackle --join "{{ out }}/${engine}-liftoffs.wav" --lufs -19 "${renders}/${engine}-new.wav"
     done
     wt="out/crackle/worktree-old"

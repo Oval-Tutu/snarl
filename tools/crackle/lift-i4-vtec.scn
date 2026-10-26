@@ -1,0 +1,16 @@
+# Six lift-offs at 6500 rpm for i4-vtec in just listen-pops-model: 0.77
+# of its 8400 rpm redline, the same share as 5000 rpm on v8-ls. The own
+# pops start only above 0.6 of the redline (5040 rpm on this engine), so
+# the 5000 rpm of lift.scn makes no lift-off pops here.
+hold 6500 1 3
+hold 6500 0 3
+hold 6500 1 3
+hold 6500 0 3
+hold 6500 1 3
+hold 6500 0 3
+hold 6500 1 3
+hold 6500 0 3
+hold 6500 1 3
+hold 6500 0 3
+hold 6500 1 3
+hold 6500 0 3

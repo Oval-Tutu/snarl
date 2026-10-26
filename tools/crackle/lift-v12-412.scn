@@ -1,0 +1,16 @@
+# Six lift-offs at 14000 rpm for v12-412 in just listen-pops-model: 0.78
+# of its 18000 rpm redline, about the same share as 5000 rpm on v8-ls.
+# The own pops start only above 0.6 of the redline (10800 rpm on this
+# engine), so the 5000 rpm of lift.scn makes no lift-off pops here.
+hold 14000 1 3
+hold 14000 0 3
+hold 14000 1 3
+hold 14000 0 3
+hold 14000 1 3
+hold 14000 0 3
+hold 14000 1 3
+hold 14000 0 3
+hold 14000 1 3
+hold 14000 0 3
+hold 14000 1 3
+hold 14000 0 3
