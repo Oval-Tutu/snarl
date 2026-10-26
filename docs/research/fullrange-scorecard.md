@@ -1,0 +1,395 @@
+# Full-range scorecard: snarl against engine-sim from idle to the limiter
+
+Measured on the branch `pop-model` at `7e9ac06` with the changes of this study in the working tree. The engine defaults, the profiles, the cycle tables and the pops did not change. snarl renders at 48 kHz, tier 1, with `--dyno --no-pops` (no idle wander in the dynamometer holds, no own pops), as `just scorecard` does. The tools are `tools/scorecard` and `snarl-compare --align` (`internal/analysis/align.go`, `internal/analysis/hiss.go`).
+
+## Answer
+
+The full-range scorecard covers the five engines at the five throttles of the cycle table grid: 770 holds every 250 rpm from idle to below the limiter, 149 full-throttle holds halfway between them, and the existing full-throttle sweep and overrun. Each new measure is calibrated against a second engine-sim render.
+
+In the holds, snarl does not have more noise above 2 kHz than engine-sim. Above 2 kHz, the worst third-octave band of each hold is within 1.5 dB of engine-sim at 464 of the 475 holds of `i4-vtec`, `v8-ls`, `f4-ej25` and `v12-merlin`. Only 7 of those holds have more high-frequency level than engine-sim, by at most 3.8 dB. snarl is never less tonal above 2 kHz than engine-sim by more than 1.2 dB. Where the noise between the firing pulses misses, snarl has less of it, not more. In the full-throttle sweeps, the worst band of a window is 1.5 to 2.7 dB from engine-sim on four engines, with signs that change from window to window, against 2.1 to 2.3 dB for engine-sim against itself.
+
+The real-time path of the harness gives the same samples, bit for bit, as `snarl-render` for the same snapshots. The hiss that the listener hears in the harness therefore does not come from the real-time path. It also does not show in the dynamometer holds and sweeps that this scorecard covers. Before the tuning phase, listen to the full-range pairs of section 8, or record a harness session, to find the condition that makes the hiss.
+
+The misses that remain, and their causes:
+
+| Engine | Where | Size | Cause |
+| --- | --- | --- | --- |
+| `v12-merlin` | throttle 0, 600 to 1000 rpm | bands above 2 kHz +1.6 to +3.8 dB, score 78.9 to 99.2 | residual noise model: too much high-frequency residual at closed-throttle idle |
+| `i4-vtec` | 1250 to 1500 rpm, throttle 0.25 to 1 | score 86.6 to 92.1, residual 3.6 to 4.5 dB too high at full throttle, all from 20 to 500 Hz | residual noise model: too much low-frequency residual |
+| `f4-ej25` | 1000 to 1250 rpm, all throttles | score 90.8 to 93.8, from the residual level | residual noise model |
+| `i4-vtec` | 9000 to 9250 rpm, above the top grid point at 8400 rpm | bands -4.0 dB at throttle 0.5, +2.5 to +2.6 dB at throttle 0.75 and 1 | table coverage: the tables end at 8400 rpm, and playback holds the edge point up to the limiter at 9400 rpm |
+| `v12-412` | full throttle halfway between grid points, 15125 to 15625 and 17625 to 18125 rpm | bands -4.3 to -6.8 dB, score 56.6 to 74.9 | blend between neighbouring RPM tables |
+| `i4-vtec`, `v8-ls`, `f4-ej25`, `v12-merlin` | full throttle halfway between the idle point and the next grid point | score 85.1 to 87.2, from the waveform, the residual and the spectrum | blend between neighbouring RPM tables, where the cycle shape changes most |
+| `v12-412` | throttle 0 at 3810 to 13250 rpm, throttle 0.25 to 0.75 above 15500 rpm | bands +1.8 to +3.0 dB below 7000 rpm, -1.5 to -4.7 dB above 8500 rpm | residual noise model, on an engine that misfires at random and differs from itself by up to 2.9 dB |
+
+The runtime, the resampler and the float16 storage of the tables cause none of these misses. The offline playback of the tables through the exact synthesiser port, at 44.1 kHz with an independent resampler, gives the same misses, and snarl against that playback scores 99.4 to 100.
+
+## 1. Coverage
+
+`tools/scorecard --write-fullrange` writes the scenarios `scenarios/upstream/<engine>/fullrange-t000.scn` to `fullrange-t100.scn` and `fullrange-mid-t100.scn` (`scenarios/upstream/README.md`). `just ref-fullrange` renders them with engine-sim. Idle is the first hold of `holds-t100.scn`. The top hold is the last multiple of 250 rpm below 0.998 of the limiter rpm of the profile, where the snarl limiter starts.
+
+| Engine | Idle (rpm) | Top hold (rpm) | Limiter (rpm) | Top grid point of the tables (rpm) | Holds per throttle | Mid holds |
+| --- | --- | --- | --- | --- | --- | --- |
+| `i4-vtec` | 770 | 9250 | 9400 | 8400 | 35 | 34 |
+| `v8-ls` | 690 | 6750 | 6800 | 6500 | 25 | 24 |
+| `f4-ej25` | 830 | 6250 | 6500 | 6400 | 23 | 22 |
+| `v12-412` | 3810 | 18250 | 18500 | 18000 | 59 | 58 |
+| `v12-merlin` | 600 | 3250 | 3500 | 3000 | 12 | 11 |
+
+Each hold is 0.5 s of settling and at least 24 whole cycles and 1 s, as in the grid of `tools/cycles scenarios`. A 0.25 s sweep joins two holds. The scorecard scores the hold windows only, after the 0.5 s of settling. One engine-sim render covers one throttle row of one engine. The holds on the multiples of 250 rpm are grid points of the cycle tables, so they test the tables at the points from which the tables were built. The mid holds test the blend between two points. The holds above the top grid point test playback outside the grid.
+
+`just ref-fullrange` renders each file twice with the settings of `just ref-upstream` (`--volume 0.5`, 48 kHz, the unchanged upstream script): with the 3 s pre-roll into `out/reference/upstream/<engine>/`, and with a 3.5 s pre-roll into `out/reference/upstream/calib/<engine>/`, the second render of the calibration. It also renders the calibration of `sweep-wot` and `overrun`. The 70 renders ran 16 at a time in 741 s. The first pass without the mid files and the sweep calibration ran 50 renders in 610 s.
+
+## 2. New measures
+
+`snarl-compare --align` and `tools/scorecard` have three new measures in every window (`internal/analysis/hiss.go`). B is the render and A the reference. The score counts each of them above its floor, in steps that each cost a tenth of the score, as the other measures do (`docs/research/alignment-scorecard.md` section 2.6).
+
+1. **Band level above 2 kHz.** The level of each third-octave band from 2 kHz to 16 kHz (10 bands at 48 kHz), relative to the K-weighted level of the window in each file. The distance is the size of the largest difference, B less A. The spectral distance of the existing scorecard cannot see these bands, because its floor at 60 dB below the strongest band of each frame removes them, and its loudness match spreads a band error over the whole spectrum.
+2. **Tonality above 2 kHz.** In the octave bands 2 to 4, 4 to 8 and 8 to 16 kHz of a hold, the band power over the power of the noise between the engine-order harmonics, in dB. In the crank angle domain, the harmonics are the synchronous average cycle and the noise is the residual, with the bias of the average removed. Noise only gives 0 dB, and engine harmonics give more. The distance is the mean absolute difference over the bands. A first form, the power of the harmonics alone over the noise, was not stable: engine-sim against itself differed by up to 8.8 dB in the bands where the harmonics are far below the noise.
+3. **Noise between the firing pulses above 2 kHz.** In the same octave bands of a hold, the mean band envelope over the cycle in 96 sectors of 2 ms frames, and the power of its quietest quarter of the sectors, relative to the K-weighted level of the window. The distance is the mean absolute difference over the bands.
+
+| Distance | Floor | Step |
+| --- | --- | --- |
+| Band level above 2 kHz | 1.6 dB | 1 dB |
+| Tonality above 2 kHz | 0.5 dB | 1 dB |
+| Gap between firings above 2 kHz | 2.2 dB | 1 dB |
+
+The tests `TestHissSelf`, `TestHissNoisier` and `TestHissTonality` check that two renders of one test engine with other noise differ by less than 0.5 dB in each measure, that ten times the noise raises the top bands by 14 to 21 dB, fills the gap by 12 dB or more and takes the tonality of the 2 to 4 kHz band below 1 dB, and that a tone on the engine cycle raises the tonality of its band by 8 dB or more.
+
+## 3. engine-sim against itself
+
+The reference against the second engine-sim render, over all the full-range holds of each engine:
+
+| Engine | Holds | Least score | Band level median / largest (dB) | Tonality median / largest (dB) | Gap median / largest (dB) |
+| --- | --- | --- | --- | --- | --- |
+| `i4-vtec` | 209 | 100.0 | 0.52 / 1.03 | 0.06 / 0.30 | 0.13 / 2.18 |
+| `v8-ls` | 149 | 99.2 | 0.64 / 1.42 | 0.04 / 0.17 | 0.19 / 1.66 |
+| `f4-ej25` | 137 | 100.0 | 0.65 / 1.54 | 0.05 / 0.30 | 0.15 / 2.09 |
+| `v12-412` | 353 | 85.1 | 0.61 / 2.88 | 0.05 / 1.17 | 0.19 / 3.06 |
+| `v12-merlin` | 71 | 100.0 | 0.51 / 1.40 | 0.02 / 0.22 | 0.17 / 0.81 |
+
+The floors of section 2 are at or above the largest value of `i4-vtec`, `v8-ls`, `f4-ej25` and `v12-merlin`, so engine-sim against itself scores 99.2 to 100 on those engines. `v12-412` misfires at random below 11000 rpm (`docs/research/reference-health.md`), and it differs from itself by more than the floors, as it does in the residual measure (`docs/research/cycle-tables.md` section 6.2).
+
+On the existing measures, the worst values of engine-sim against itself stay below their floors on the four healthy engines, except the burst Mod distance of `v8-ls` (1.45 dB against the floor of 1.3 dB). The cycle waveform error of `v12-412` falls to 10.8 dB against the floor of 14 dB.
+
+In the sweeps, engine-sim against itself has a worst band of 2.05 dB (`v8-ls`) and 2.26 dB (`i4-vtec`) above 2 kHz. In the overrun, it has 1.72 dB (`v8-ls`) and 2.41 dB (`v12-412`). Two sweeps of engine-sim pass the resonances at other times, as section 3.2 of `docs/research/alignment-scorecard.md` describes.
+
+## 4. Real-time against offline
+
+`TestSourceMatchesOfflineRender` (`cmd/snarl-harness/internal/stream/stream_test.go`) drives two `i4-vtec` engines with the same snapshot per 256-frame block: a full-throttle sweep from 1500 to 7500 rpm, then a closed-throttle overrun, with the own pops on. One engine plays through `stream.Source`, the audio source of the harness. The other renders in the loop of `snarl-render`: set the snapshot of the block, then render the block. The 153600 samples of both are the same, bit for bit, in both channels of the source, and both engines report the same number of pops.
+
+The two paths share `Engine.Set` and `Engine.Render` at the same block size, and the engine has no clock of its own. The output can differ in one way only: the harness sets the snapshot on its game tick at 60 Hz, and the audio goroutine reads it at the next block that it renders. A recording that `snarl-render --replay` plays back applies each snapshot at the first block that starts at or after its time. A snapshot can therefore land up to one player buffer earlier or later in the harness than in the replay. That moves control changes in time. It does not add noise.
+
+## 5. Results per engine
+
+The full tables are in section 9. Each cell holds the score, the worst band above 2 kHz, the tonality difference and the gap difference, with the misses marked: S for a score below 95, H for a band more than 1.5 dB from engine-sim, T and G for a tonality or gap distance above the largest of engine-sim against itself for that engine.
+
+The scenario totals, the mean of the hold scores:
+
+| Engine | t000 | t025 | t050 | t075 | t100 | mid-t100 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `i4-vtec` | 98.5 | 98.5 | 97.1 | 97.6 | 98.4 | 97.8 |
+| `v8-ls` | 100.0 | 100.0 | 100.0 | 99.9 | 99.9 | 97.5 |
+| `f4-ej25` | 98.0 | 99.2 | 99.0 | 99.4 | 98.9 | 96.8 |
+| `v12-412` | 95.3 | 97.8 | 98.8 | 99.7 | 99.7 | 97.0 |
+| `v12-merlin` | 93.5 | 99.7 | 100.0 | 100.0 | 100.0 | 94.8 |
+
+The misses of each engine, with the measure that costs the most steps at the worst point:
+
+- `i4-vtec`
+  - Score: 770 to 1000 rpm at throttle 0 (90.3, envelope), 770 rpm at throttle 0.5 and 0.75 (93.6 and 89.0), 1250 to 1500 rpm at throttle 0.25 to 1 (86.6 to 92.1, residual level), 9000 to 9250 rpm at throttle 0.5 (72.7, band level), 9250 rpm at throttle 0.75 and 1 (89.6 and 91.0, band level).
+  - Band level: 9000 to 9250 rpm at throttle 0.5 (-4.0 and -3.9 dB), 9250 rpm at throttle 0.75 and 1 (+2.6 and +2.5 dB).
+  - Tonality: 0.3 to 1.1 dB at 12 single holds, the largest at 9000 rpm, throttle 0.5.
+  - Gap: 3750 rpm at throttle 0 (2.6 dB, with less noise between the pulses than engine-sim).
+  - Mid holds: 885 rpm (85.5, residual level), 1375 rpm (94.3), 5875 rpm (86.4, band level -2.8 dB), 8875 and 9125 rpm (band level +2.1 dB).
+- `v8-ls`
+  - Score: no hold below 95.
+  - Band level: no hold beyond 1.5 dB. The largest is 1.2 dB.
+  - Tonality: 0.2 to 0.3 dB at 8 single holds.
+  - Gap: 3750 rpm at throttle 0.25 to 1 (1.7 to 2.0 dB, less noise between the pulses).
+  - Mid holds: 845 rpm (86.1, cycle waveform), tonality 0.3 to 0.8 dB at 2375 to 2625 and 4125 to 4875 rpm.
+- `f4-ej25`
+  - Score: 1000 to 1250 rpm at throttle 0 (91.7, residual level), 1250 rpm at throttle 0.25 to 1 (90.8 to 93.8, residual level).
+  - Band level: 2750 to 3000 rpm at throttle 0 (-1.6 and -2.0 dB), 2000 and 3250 rpm at throttle 1 (+1.5 and +1.7 dB).
+  - Tonality: 2750 rpm at throttle 0 (0.3 dB).
+  - Mid holds: 915 to 1375 rpm (87.2 to 94.3), 2625 rpm (90.8, tonality 1.2 dB), 3625 rpm (band level -1.6 dB), 1875 rpm (gap 2.4 dB, less noise between the pulses).
+- `v12-412`
+  - Score and band level, throttle 0: 3810 to 7000 rpm with bands +1.8 to +3.0 dB (score 86.0 to 97.7), 8500 to 13250 rpm with bands -1.5 to -4.7 dB (score 72.1 to 100), 18000 to 18250 rpm (+1.8 and +1.5 dB). 15000 rpm scores 88.6 from the gap (-3.0 dB).
+  - Score and band level, throttle 0.25: 10750 rpm (-4.0 dB, 77.9), 16250 to 18250 rpm (-3.3 to +3.3 dB, 78.6 to 97.2), 9750 and 13000 rpm (-1.9 and +1.6 dB).
+  - Score and band level, throttle 0.5 to 1: 15500 to 18250 rpm, bands -3.6 to +3.2 dB, score 81.3 to 100, and 14000 rpm at throttle 1 (-1.6 dB).
+  - Mid holds: 15125 to 15625 rpm (bands -4.3 to -6.8 dB, score 57.5 to 74.9), 17625 to 18125 rpm (bands +2.3, -6.0 and +2.2 dB, score 56.6 to 94.0), 13375 rpm (-2.2 dB), 10875 and 12125 rpm (-1.6 and -1.8 dB).
+- `v12-merlin`
+  - Score and band level: 600 to 1000 rpm at throttle 0 (bands +3.8, +3.0 and +1.6 dB, score 78.9, 85.0 and 99.2).
+  - Gap: 1500 and 3000 rpm at throttle 0.25 to 0.75 (0.8 and 0.9 dB, against the engine-sim largest of 0.81 dB).
+  - Mid holds: 675 and 875 rpm (85.5 and 85.1, cycle waveform), 1875 rpm (gap 1.0 dB).
+
+## 6. Sweeps, overrun and limiter
+
+The default scenarios of `tools/scorecard`, with the new measures in the score:
+
+| Engine | Holds t000 | Holds t050 | Holds t100 | Sweep | Overrun |
+| --- | --- | --- | --- | --- | --- |
+| `i4-vtec` | 98.5 | 99.2 | 99.4 | 98.8 | 98.7 |
+| `v8-ls` | 99.4 | 99.7 | 99.8 | 99.4 | 99.5 |
+| `f4-ej25` | 98.8 | 99.2 | 99.0 | 99.4 | 98.8 |
+| `v12-412` | 94.2 | 98.1 | 98.1 | 98.5 | 92.4 |
+| `v12-merlin` | 92.7 | 99.7 | 99.8 | 100.0 | 98.4 |
+
+engine-sim against itself scores 99.2 to 99.5 on the sweeps and 99.5 to 99.9 on the overruns.
+
+- **Full-throttle sweep.** The worst band above 2 kHz in a sweep window is 1.49 dB (`v12-merlin`), 2.08 dB (`v8-ls`), 2.21 dB (`f4-ej25`), 2.73 dB (`i4-vtec`) and 3.23 dB (`v12-412`). engine-sim against itself gives 2.05 to 2.26 dB. The signs change from window to window. Two windows are beyond the engine-sim spread: `i4-vtec` from 1470 to 1932 rpm (+2.7 dB) and `v12-412` from 15423 to 16282 rpm (-3.2 dB, less high-frequency level), the same range as the blend miss of the mid holds. The band detail of engine-sim against itself in the sweeps comes from `v8-ls` and `i4-vtec` only.
+- **Overrun.** The worst band is 2.62 to 3.79 dB, against 1.72 and 2.41 dB for engine-sim against itself. In the closed-throttle sweeps down from the top, snarl has 1.6 to 3.3 dB less high-frequency level than engine-sim on `i4-vtec`, `f4-ej25` and `v12-412`, except +2.1 dB on `v12-412` from 14009 to 12876 rpm. Near idle at the end of the sweep, it has more: `v8-ls` +2.6 dB from 1154 to 690 rpm, `v12-merlin` +2.1 to +3.8 dB from 983 to 600 rpm. The `v12-merlin` value matches the closed-throttle idle holds.
+- **Limiter.** In the limiter holds of `limiter-free`, the bands above 2 kHz are within 1.6 dB of engine-sim on `i4-vtec`, `v8-ls` and `f4-ej25`. `v12-412` is within 1.2 dB except -3.3 dB at 2 kHz. `v12-merlin` is 2.5 to 4.5 dB below engine-sim. The sweep into the limiter does not follow the free run of engine-sim, so its windows compare other RPM, and they give no evidence either way.
+
+## 7. Causes
+
+Each suspect was tested in a tool flag or a recipe argument, with the defaults unchanged:
+
+- `just fullrange-play play` plays the full-range scenarios from the same tables through the offline playback (`cycles.Player`) and the exact synthesiser port in float64 at 44.1 kHz. `tools/scorecard --against out/fullrange/play` scores the playback against engine-sim, with the 44.1 to 48 kHz conversion of `analysis.Resample`. This playback has no `esynth.Runtime`, no real-time player (`cycles.Live`), no runtime resampler and no snarl control path (RPM smoothing, limiter and idle).
+- `just fullrange-play play-noresidual all --no-residual` plays the same scenarios without the residual noise of the tables.
+- `tools/scorecard --ref out/fullrange/play --against out/fullrange/snarl` scores the snarl renders against the playback.
+
+| Suspect | Result | Evidence |
+| --- | --- | --- |
+| Residual noise model | cause of the closed-throttle idle misses of `v12-merlin`, the low-RPM residual misses of `i4-vtec` and `f4-ej25`, and part of the `v12-412` misses | `v12-merlin` at 600 rpm and throttle 0: bands +3.8 dB in snarl, +4.0 dB in the playback, -3.3 dB without the residual. The residual model adds about 7 dB above 2 kHz there, where engine-sim needs about 3.3 dB. `i4-vtec` at 1250 and 1500 rpm, full throttle: residual -28.9 and -30.0 dB in snarl against -32.5 and -34.5 dB in engine-sim, all of the excess from 20 to 500 Hz, and the residual from 2 kHz up within 0.2 dB. Without the residual, these holds score 95 or more. `v12-412` at throttle 0: without the residual, the bands at 3810 rpm fall from +2.9 to -7.8 dB and at 11750 rpm from -5.1 to -6.3 dB, so the residual model sets their level. |
+| Blend between neighbouring RPM tables | cause of the mid-hold misses | `v12-412` at full throttle: the grid points 15250, 15500 and 15750 rpm are within -1.2 to +0.6 dB above 2 kHz, the holds halfway between them are -4.3 to -6.8 dB. The playback gives -6.9 dB at 15625 rpm and -6.4 dB at 17875 rpm, so the blend of `cycles.Player` and of `cycles.Live`, which use the same weights, causes it. A linear blend of two cycles whose high harmonics have different phases cancels part of those harmonics. At low RPM, the mid holds between idle and the next point score 85.1 to 87.2 from the cycle waveform, the residual and the spectrum, where the cycle shape changes most from point to point (`docs/research/cycle-tables.md` section 3). |
+| Table coverage above the top grid point | cause of the `i4-vtec` misses at 9000 and 9250 rpm | The tables end at 8400 rpm and playback takes the edge point above it. The holds from 8500 to 8750 rpm pass. At 9000 and 9250 rpm, the playback gives the same band errors as snarl (-4.1 dB at throttle 0.5, +2.6 and +2.7 dB at throttle 0.75 and 1), with and without the residual. `v8-ls`, `v12-412` and `v12-merlin` have one hold 250 rpm above their top grid point, and `f4-ej25` none. `v8-ls` and `v12-merlin` pass there. `v12-412` misses at 18250 rpm by 1.5 to 2.8 dB, about as much as at 18000 rpm, which is a grid point. |
+| float16 storage of the tables | not a cause, from the format, not switched off | snarl and the playback read the same float16 tables, so their comparison does not test this suspect, and no test builds the tables without float16. The format stores each Fourier coefficient of the average cycle and each residual envelope value over the peak of its array as float16 (`internal/cycles/table.go`): a relative error of at most 2^-11, 66 dB below each value, for values down to 2^-14 of the peak, and an absolute error of at most 2^-24 of the peak below that. That changes each harmonic by less than 0.01 dB, far below the 1.5 dB of the misses. |
+| Resampler | not a cause | The playback uses `analysis.Resample` (64-tap Blackman) in place of the runtime resampler (`dsp.Resampler`), and it gives the same misses. |
+| Runtime | not a cause | snarl against the playback scores 99.4 to 100 in every full-range scenario. The worst band above 2 kHz differs by at most 1.7 dB, at single holds, with no run of misses. The real-time path of the harness is the same as `snarl-render` (section 4). |
+| engine-sim itself | part of the `v12-412` misses | `v12-412` differs from itself by up to 2.88 dB above 2 kHz, from its random misfires, so a band error below that on this engine is not a miss of snarl. |
+
+## 8. What this means for the hiss
+
+The scorecard finds no condition in which snarl has broadly more high-frequency noise than engine-sim. In the holds, the high-frequency misses of the healthy engines are mostly below engine-sim, and the gap between the firing pulses is quieter in snarl where it misses. The largest excess is the closed-throttle idle of `v12-merlin`, which is not the rev-up that the listener describes.
+
+The conditions that the listener uses and that this scorecard does not cover:
+
+- The own pops and the crackle model, which the harness plays by default and the scorecard turns off (`--no-pops`).
+- Fast RPM changes in a free run with gear changes. The sweeps here take 8 s from idle to the top.
+- The limiter bounce in the harness, which follows the harness drive model and not a dynamometer.
+
+Recommendation: before the tuning phase, the listener compares the full-range pairs at the high-RPM holds, `out/reference/upstream/<engine>/fullrange-t100.wav` against `out/fullrange/snarl/<engine>/fullrange-t100.wav`. When the hiss is in those pairs, the new measures do not see it, and the next step is a measure of what the listener hears there. When it is not, the next step is a harness recording with the pops on and off, replayed with `snarl-render --replay`, to find the condition.
+
+## 9. Full-range tables
+
+Each cell: score, band level of the worst band above 2 kHz (snarl less engine-sim, dB), tonality (mean difference, negative is noisier), gap between firings (mean difference, positive is more noise), and the misses: S score below 95, H band beyond 1.5 dB, T tonality and G gap distance above the engine-sim largest of the engine. The mid holds are in section 5.
+
+### i4-vtec
+
+| RPM | t000 | t025 | t050 | t075 | t100 |
+| --- | --- | --- | --- | --- | --- |
+| 770 | 90.3 -1.0 +0.0 +0.1 S | 95.1 +0.5 +0.1 +0.2 | 93.6 +0.4 +0.1 +0.4 S | 89.0 +0.7 +0.1 +0.3 S | 95.5 +0.6 +0.1 +0.0 |
+| 1000 | 94.6 -0.5 +0.0 -0.1 S | 100.0 +0.4 +0.3 +0.1 T | 100.0 -0.4 +0.2 -0.0 | 97.2 +0.5 +0.2 +0.0 | 100.0 +0.3 +0.3 +0.1 |
+| 1250 | 95.9 -0.6 +0.0 -1.5 | 92.1 +0.5 +0.2 -0.0 S | 92.1 -0.6 +0.1 +0.1 S | 91.7 -0.8 +0.1 -0.0 S | 91.6 +0.6 +0.2 -0.1 S |
+| 1500 | 100.0 -0.4 -0.0 -1.8 | 88.4 +0.7 +0.1 -0.0 S | 86.6 +0.5 -0.0 +0.1 S | 87.1 -0.7 +0.0 +0.1 S | 87.9 -0.7 +0.0 +0.1 S |
+| 1750 | 100.0 -0.4 -0.2 -0.1 | 98.5 -0.6 +0.0 +0.1 | 100.0 +0.6 +0.1 +0.1 | 100.0 +0.5 +0.1 -0.0 | 100.0 -0.7 +0.0 -0.1 |
+| 2000 | 100.0 -0.7 -0.0 -0.1 | 100.0 -0.7 -0.1 -0.7 | 100.0 +0.8 -0.0 -0.0 | 100.0 +0.7 -0.1 -0.7 | 100.0 -0.7 -0.0 -0.6 |
+| 2250 | 99.7 -0.7 -0.1 +0.2 | 100.0 -1.0 -0.1 +0.0 | 100.0 -0.5 -0.0 +0.1 | 100.0 -0.8 -0.1 -0.2 | 100.0 -1.2 -0.2 +0.0 |
+| 2500 | 100.0 -0.7 +0.1 -2.0 | 100.0 -0.6 -0.0 -2.1 | 100.0 -0.3 +0.1 -2.1 | 100.0 -0.7 +0.1 -0.0 | 100.0 +0.4 +0.1 -0.0 |
+| 2750 | 100.0 -0.7 -0.0 -0.0 | 100.0 +0.7 +0.2 +0.3 T | 100.0 +0.9 +0.2 +0.0 | 100.0 +0.7 +0.1 +0.1 | 100.0 +0.6 +0.0 +0.2 |
+| 3000 | 100.0 +0.3 -0.0 -1.2 | 100.0 -1.4 -0.1 -1.5 | 100.0 -0.5 -0.1 -1.6 | 100.0 -0.8 -0.1 -0.1 | 100.0 -0.5 -0.1 +0.1 |
+| 3250 | 99.6 +0.7 -0.1 -0.0 | 100.0 +0.6 -0.0 -0.0 | 100.0 -0.6 +0.1 -0.1 | 100.0 +0.4 +0.1 -0.1 | 100.0 -0.5 +0.1 -0.2 |
+| 3500 | 100.0 +0.4 -0.2 +0.0 | 100.0 -1.0 +0.1 +0.2 | 100.0 -0.8 +0.2 +0.1 | 100.0 -0.7 +0.1 -0.0 | 100.0 -0.9 +0.1 -0.1 |
+| 3750 | 95.8 +0.8 +0.1 -2.6 G | 100.0 -0.7 -0.0 +0.0 | 100.0 -0.7 -0.0 +0.0 | 100.0 -0.7 -0.1 -2.1 | 100.0 -0.8 +0.0 -2.1 |
+| 4000 | 100.0 -0.5 -0.0 -0.4 | 100.0 -0.6 +0.0 -0.1 | 100.0 +0.6 -0.0 +0.0 | 100.0 -0.6 +0.1 -0.2 | 100.0 -0.5 -0.0 -0.2 |
+| 4250 | 100.0 -0.8 +0.0 +0.1 | 100.0 +0.8 +0.0 -0.0 | 100.0 -0.6 +0.1 -0.1 | 100.0 +1.0 +0.0 +0.1 | 100.0 +0.6 -0.1 -0.1 |
+| 4500 | 100.0 -0.9 +0.0 -0.1 | 100.0 -0.8 +0.1 +0.1 | 100.0 -0.8 +0.0 +0.0 | 100.0 -0.7 +0.1 -0.0 | 100.0 -0.6 +0.0 -0.0 |
+| 4750 | 100.0 -0.6 -0.0 +0.1 | 100.0 -0.3 +0.0 -0.0 | 100.0 -0.5 +0.0 +0.1 | 100.0 +0.7 +0.1 -0.0 | 100.0 -0.5 +0.0 +0.0 |
+| 5000 | 100.0 -0.4 -0.2 -1.9 | 100.0 -0.5 -0.1 +0.1 | 100.0 -0.3 +0.1 -1.4 | 100.0 -0.3 -0.1 -1.5 | 100.0 -0.6 -0.1 -1.6 |
+| 5250 | 100.0 -0.4 -0.4 -0.0 T | 100.0 -0.6 +0.0 +0.1 | 100.0 -0.3 -0.1 +0.1 | 100.0 +0.7 -0.2 -0.1 | 100.0 -0.4 -0.1 +0.0 |
+| 5500 | 100.0 +0.3 +0.1 -0.1 | 100.0 -0.6 -0.0 -0.0 | 100.0 +0.5 +0.2 +0.1 | 100.0 -0.5 +0.1 +0.1 | 100.0 -0.8 +0.1 +0.0 |
+| 5750 | 100.0 -0.5 -0.0 +0.0 | 100.0 -0.6 +0.0 +0.2 | 100.0 -0.5 +0.0 +0.0 | 100.0 -0.5 +0.1 +0.1 | 100.0 +0.5 +0.0 +0.1 |
+| 6000 | 100.0 -0.4 +0.1 -1.7 | 100.0 +0.4 -0.0 -1.5 | 100.0 +0.4 -0.0 -0.0 | 100.0 -0.5 +0.0 -0.1 | 100.0 +0.5 +0.0 -1.6 |
+| 6250 | 100.0 -0.3 +0.0 +0.2 | 100.0 +0.3 +0.1 +0.2 | 100.0 -0.5 +0.0 +0.1 | 100.0 -0.7 -0.1 -0.0 | 100.0 -0.6 +0.1 +0.2 |
+| 6500 | 100.0 -0.5 -0.1 -0.0 | 100.0 -0.3 -0.0 +0.0 | 100.0 -0.8 +0.0 +0.1 | 100.0 -1.0 +0.1 -0.1 | 100.0 -0.6 +0.1 +0.2 |
+| 6750 | 100.0 +0.6 +0.1 -0.1 | 100.0 +0.4 -0.0 +0.0 | 100.0 +0.5 -0.0 -0.0 | 100.0 +0.5 +0.0 -0.0 | 100.0 +0.3 +0.1 -0.1 |
+| 7000 | 100.0 +0.3 +0.0 +0.0 | 100.0 +0.3 +0.1 +0.2 | 100.0 -0.6 +0.1 +0.2 | 100.0 +0.4 -0.1 +0.2 | 100.0 +0.6 -0.0 +0.2 |
+| 7250 | 100.0 -0.4 +0.0 -0.0 | 100.0 +0.4 +0.0 +0.0 | 100.0 +0.5 -0.1 +0.0 | 100.0 -0.6 -0.0 +0.1 | 100.0 +0.5 +0.1 +0.2 |
+| 7500 | 100.0 +0.5 -0.4 -1.8 T | 100.0 +0.3 -0.1 -0.1 | 100.0 +0.4 -0.0 -0.2 | 100.0 +0.5 -0.1 -1.3 | 100.0 +0.5 -0.2 -1.3 |
+| 7750 | 100.0 -0.4 +0.0 +0.2 | 100.0 -0.7 +0.1 +0.1 | 100.0 -0.2 +0.1 +0.1 | 100.0 +0.4 -0.1 +0.1 | 100.0 +0.6 +0.1 -0.0 |
+| 8000 | 100.0 -0.5 +0.0 -0.2 | 100.0 +0.6 +0.1 -0.2 | 100.0 -0.5 +0.0 -0.2 | 100.0 -0.6 -0.1 +0.0 | 100.0 +0.9 +0.0 -0.1 |
+| 8250 | 100.0 +0.7 -0.1 -0.1 | 100.0 -0.5 +0.0 -0.0 | 100.0 +0.4 -0.0 -0.0 | 100.0 -0.6 +0.0 -0.0 | 100.0 +0.5 +0.1 +0.0 |
+| 8500 | 100.0 +0.6 +0.1 +0.2 | 100.0 -1.1 +0.0 -0.0 | 100.0 +0.5 -0.2 +0.1 | 100.0 +0.8 -0.1 +0.0 | 99.4 +1.3 -0.1 +0.0 |
+| 8750 | 100.0 -0.3 -0.2 +0.0 | 100.0 -1.0 +0.3 -0.0 T | 95.7 +0.5 -0.9 -0.0 T | 100.0 +1.2 +0.0 -0.0 | 100.0 +1.0 -0.2 +0.0 |
+| 9000 | 100.0 -0.4 -0.1 -0.0 | 100.0 -1.3 +0.0 +0.1 | 72.7 -4.0 -1.1 +0.1 SHT | 100.0 +0.7 +0.3 +0.2 | 100.0 +1.1 +0.2 +0.2 |
+| 9250 | 100.0 -0.6 -0.2 +0.2 T | 98.8 -1.0 +0.6 -0.1 T | 75.9 -3.9 -0.8 -0.0 SHT | 89.6 +2.6 +0.3 +0.3 SHT | 91.0 +2.5 +0.3 +0.3 SHT |
+
+### v8-ls
+
+| RPM | t000 | t025 | t050 | t075 | t100 |
+| --- | --- | --- | --- | --- | --- |
+| 690 | 100.0 -0.3 +0.0 +1.0 | 100.0 +0.3 -0.0 +0.1 | 100.0 +0.3 -0.0 +0.0 | 100.0 +0.3 -0.0 +0.0 | 100.0 +0.3 -0.0 +0.1 |
+| 1000 | 100.0 +0.6 +0.1 +0.0 | 100.0 -0.4 +0.0 -0.7 | 100.0 +0.3 +0.0 -0.6 | 100.0 +0.3 +0.0 -0.6 | 100.0 +0.3 +0.0 -0.6 |
+| 1250 | 100.0 -0.7 -0.0 +0.1 | 100.0 -0.5 +0.0 -0.1 | 100.0 -0.6 +0.1 -0.1 | 100.0 +0.6 +0.1 -0.2 | 100.0 +0.5 +0.1 -0.2 |
+| 1500 | 99.1 -0.5 -0.0 -0.2 | 100.0 +1.1 -0.0 -0.1 | 99.8 +1.0 -0.0 -0.1 | 99.0 +1.1 +0.0 -1.4 | 98.6 +1.1 +0.0 -1.4 |
+| 1750 | 100.0 -0.4 -0.0 -0.0 | 100.0 -0.4 +0.0 -0.1 | 100.0 -0.5 +0.0 -0.1 | 100.0 +0.5 +0.0 -0.1 | 100.0 +0.6 +0.0 -0.1 |
+| 2000 | 100.0 +0.7 -0.0 -0.1 | 100.0 +0.6 +0.0 +0.1 | 100.0 +0.5 +0.1 -0.0 | 100.0 +0.4 +0.1 -0.0 | 100.0 +0.4 +0.1 -0.0 |
+| 2250 | 100.0 -0.5 -0.1 -0.1 | 100.0 -0.6 +0.0 +0.1 | 100.0 -0.7 +0.0 +0.1 | 100.0 -0.7 +0.0 +0.1 | 100.0 -0.8 +0.0 +0.1 |
+| 2500 | 100.0 -0.5 -0.0 +0.0 | 100.0 +0.5 -0.0 -0.9 | 100.0 +0.5 -0.0 -0.8 | 100.0 +0.5 -0.0 -0.8 | 100.0 +0.5 -0.0 -0.8 |
+| 2750 | 100.0 -0.4 +0.1 -0.2 | 100.0 -0.8 -0.0 +0.2 | 100.0 -0.7 -0.2 +0.2 T | 100.0 -0.7 -0.2 +0.2 T | 100.0 -0.6 -0.2 +0.2 T |
+| 3000 | 100.0 -0.4 +0.0 -1.1 | 100.0 -0.8 -0.0 -0.9 | 100.0 -0.9 -0.0 -1.1 | 100.0 -0.9 -0.1 -1.0 | 100.0 -0.8 -0.1 -1.0 |
+| 3250 | 100.0 -0.5 +0.0 +0.0 | 100.0 +0.4 -0.0 +0.2 | 100.0 -0.7 +0.0 +0.1 | 100.0 -0.6 +0.0 +0.1 | 100.0 -0.6 +0.0 +0.1 |
+| 3500 | 100.0 -0.8 +0.0 -0.1 | 100.0 -0.7 -0.0 -0.0 | 100.0 -0.5 -0.0 -0.1 | 100.0 -0.4 +0.0 -0.1 | 100.0 -0.4 +0.0 -0.1 |
+| 3750 | 100.0 -0.7 +0.1 -1.4 | 100.0 -0.7 +0.0 -1.7 G | 100.0 +0.8 +0.0 -1.9 G | 100.0 -0.7 -0.0 -1.9 G | 100.0 -0.7 -0.0 -2.0 G |
+| 4000 | 100.0 +0.5 +0.0 +0.0 | 100.0 +0.9 +0.0 +0.0 | 100.0 +1.1 +0.1 +0.1 | 100.0 +1.1 +0.2 -0.0 | 100.0 +1.1 +0.2 -0.0 |
+| 4250 | 100.0 +0.4 -0.2 +0.2 | 100.0 +0.6 +0.0 +0.0 | 100.0 +0.7 -0.2 +0.2 | 100.0 +1.0 -0.2 +0.2 T | 100.0 +0.8 -0.2 +0.2 T |
+| 4500 | 100.0 -0.6 +0.0 -0.0 | 100.0 +0.7 +0.2 -0.2 | 100.0 -0.7 +0.1 -0.4 | 100.0 -0.5 +0.1 -0.3 | 100.0 +0.5 +0.1 -0.3 |
+| 4750 | 100.0 -0.3 +0.0 -0.1 | 100.0 -1.2 -0.0 +0.0 | 100.0 -1.1 -0.1 +0.0 | 100.0 -1.2 -0.1 -0.1 | 100.0 -1.2 -0.1 -0.1 |
+| 5000 | 100.0 +0.4 +0.1 +0.0 | 100.0 +0.7 -0.1 +0.2 | 100.0 +0.7 -0.1 +0.1 | 100.0 +0.9 -0.1 +0.2 | 100.0 +0.9 -0.1 +0.2 |
+| 5250 | 100.0 -0.6 +0.1 -0.2 | 100.0 +0.9 +0.0 +0.2 | 100.0 +0.7 -0.3 -0.0 T | 100.0 +0.9 -0.1 +0.1 | 100.0 +0.9 -0.1 +0.1 |
+| 5500 | 100.0 -0.9 +0.2 -0.0 T | 100.0 -1.0 -0.0 -0.0 | 100.0 -0.6 -0.0 -0.2 | 100.0 -0.5 -0.1 -0.1 | 100.0 -0.5 -0.1 -0.1 |
+| 5750 | 100.0 -1.0 +0.0 +0.2 | 100.0 +0.3 +0.0 +0.1 | 100.0 -0.5 +0.0 +0.1 | 100.0 -0.3 -0.0 +0.0 | 100.0 +0.3 -0.0 +0.0 |
+| 6000 | 100.0 +0.8 -0.0 -1.3 | 100.0 -0.5 -0.1 -0.1 | 100.0 -0.4 +0.0 -1.2 | 100.0 +0.4 +0.0 -1.2 | 100.0 +0.5 +0.0 -1.2 |
+| 6250 | 100.0 +0.9 -0.0 +0.2 | 100.0 +0.5 -0.0 +0.1 | 100.0 +0.5 -0.0 +0.1 | 100.0 +0.6 -0.0 +0.2 | 100.0 +0.6 -0.0 +0.2 |
+| 6500 | 100.0 +0.9 +0.0 +0.1 | 100.0 +0.8 -0.0 +0.2 | 100.0 +0.8 +0.0 +0.3 | 100.0 +0.8 -0.0 +0.3 | 100.0 +0.8 -0.0 +0.3 |
+| 6750 | 100.0 -0.7 -0.2 +0.1 T | 100.0 +0.6 -0.0 -0.0 | 100.0 +0.8 +0.2 +0.0 | 100.0 +0.8 -0.0 -0.2 | 100.0 +0.8 -0.0 -0.3 |
+
+### f4-ej25
+
+| RPM | t000 | t025 | t050 | t075 | t100 |
+| --- | --- | --- | --- | --- | --- |
+| 830 | 95.9 -0.3 +0.0 +0.1 | 100.0 -0.7 +0.0 +0.2 | 96.6 -0.4 -0.0 -0.2 | 100.0 +0.4 -0.0 -0.1 | 95.2 +0.5 -0.0 -0.1 |
+| 1000 | 91.7 +0.4 +0.0 +0.3 S | 100.0 -0.6 -0.0 +0.1 | 100.0 -1.1 +0.0 -0.1 | 100.0 -0.4 +0.0 +0.1 | 99.1 -0.4 +0.0 +0.2 |
+| 1250 | 93.2 +0.7 +0.1 -0.8 S | 90.8 -0.4 -0.0 -0.0 S | 91.7 -0.4 -0.1 +0.1 S | 93.8 -0.4 -0.0 -0.0 S | 93.7 -0.5 +0.0 +0.0 S |
+| 1500 | 98.8 -0.7 -0.0 -1.1 | 98.3 -0.6 -0.1 -0.1 | 100.0 -0.6 -0.0 +0.1 | 100.0 -0.7 -0.0 +0.1 | 99.4 -1.0 +0.0 -0.1 |
+| 1750 | 100.0 -0.7 -0.0 +0.2 | 100.0 -0.8 -0.0 -0.1 | 100.0 -0.5 +0.0 -0.1 | 97.5 -0.8 +0.0 +0.1 | 100.0 -0.9 +0.0 -0.0 |
+| 2000 | 100.0 -0.4 -0.0 -0.2 | 100.0 +0.8 +0.0 -0.4 | 100.0 +1.1 -0.0 +0.1 | 100.0 +0.8 -0.0 +0.1 | 100.0 +1.5 +0.0 -0.1 H |
+| 2250 | 100.0 -1.3 -0.1 +0.0 | 100.0 -0.5 +0.1 -0.3 | 100.0 -0.7 -0.1 -0.1 | 100.0 -0.7 -0.1 -0.2 | 100.0 +0.4 -0.1 -0.1 |
+| 2500 | 100.0 -0.6 +0.0 -0.9 | 100.0 +0.4 -0.1 -0.2 | 100.0 -0.9 +0.2 -1.5 | 100.0 -0.6 +0.0 -1.5 | 100.0 -0.6 +0.1 -0.2 |
+| 2750 | 98.3 -1.6 +0.3 -0.3 HT | 100.0 +0.7 -0.0 +0.1 | 100.0 +1.1 -0.3 +0.1 | 100.0 -0.4 -0.0 -0.1 | 100.0 -0.9 +0.0 +0.0 |
+| 3000 | 95.9 -2.0 -0.0 -1.1 H | 100.0 -0.9 +0.0 +0.0 | 100.0 -0.7 -0.0 -1.1 | 100.0 +1.2 +0.0 +0.1 | 100.0 +0.8 +0.0 -0.1 |
+| 3250 | 100.0 -1.3 +0.1 +0.0 | 100.0 +0.7 -0.1 +0.2 | 100.0 -0.6 +0.1 -0.2 | 100.0 +0.5 +0.1 +0.0 | 99.4 +1.7 +0.1 +0.1 H |
+| 3500 | 100.0 +1.0 +0.1 -0.1 | 100.0 -0.6 -0.1 -0.1 | 100.0 -0.6 +0.0 -0.1 | 100.0 -0.9 -0.0 +0.1 | 100.0 -0.8 +0.0 -0.1 |
+| 3750 | 100.0 -1.1 +0.0 -1.7 | 100.0 +0.9 +0.2 +0.0 | 100.0 +1.0 +0.0 -1.8 | 100.0 +0.6 -0.0 -0.1 | 100.0 +1.1 +0.0 -1.8 |
+| 4000 | 100.0 +0.6 +0.2 -0.2 | 100.0 +0.5 +0.1 +0.2 | 100.0 -0.5 +0.1 -0.3 | 100.0 +0.5 +0.1 -0.2 | 100.0 -0.5 +0.0 -0.2 |
+| 4250 | 100.0 -0.6 -0.1 -0.0 | 100.0 -0.4 -0.0 +0.1 | 100.0 +0.7 +0.0 +0.1 | 100.0 +0.8 -0.0 +0.1 | 100.0 +0.5 -0.1 +0.1 |
+| 4500 | 100.0 -0.5 -0.1 -0.1 | 100.0 -0.8 +0.1 +0.0 | 100.0 -0.5 +0.0 +0.1 | 100.0 -0.7 +0.0 +0.0 | 100.0 -0.6 +0.0 +0.0 |
+| 4750 | 100.0 +0.6 -0.0 +0.1 | 100.0 -0.4 -0.1 -0.2 | 100.0 +0.6 -0.1 -0.0 | 100.0 +0.6 -0.1 -0.0 | 100.0 -0.5 -0.1 +0.1 |
+| 5000 | 100.0 -0.8 -0.0 -1.5 | 100.0 -0.7 -0.0 +0.1 | 100.0 -0.5 +0.2 +0.1 | 100.0 -0.5 -0.0 -1.1 | 100.0 -0.9 +0.1 +0.0 |
+| 5250 | 100.0 +0.4 -0.2 -0.2 | 100.0 -0.9 +0.0 -0.1 | 100.0 -1.0 -0.0 +0.0 | 100.0 -0.9 -0.1 -0.1 | 100.0 -0.5 -0.0 -0.1 |
+| 5500 | 100.0 -0.9 -0.1 -0.1 | 100.0 +0.7 +0.2 -0.0 | 100.0 +0.3 +0.1 -0.1 | 100.0 +0.5 +0.0 -0.1 | 100.0 +0.4 +0.1 -0.1 |
+| 5750 | 100.0 +0.4 -0.0 +0.1 | 100.0 -0.6 +0.0 -0.1 | 100.0 -0.5 -0.0 +0.1 | 100.0 -0.4 -0.0 +0.1 | 100.0 +0.2 -0.0 +0.0 |
+| 6000 | 100.0 +0.6 +0.0 -1.0 | 100.0 +0.4 -0.0 -1.3 | 100.0 +0.3 -0.0 +0.0 | 100.0 -0.3 -0.0 +0.1 | 100.0 +0.7 +0.0 -1.1 |
+| 6250 | 100.0 +0.4 -0.0 -0.2 | 100.0 +0.4 -0.0 +0.1 | 100.0 -0.5 +0.1 -0.0 | 100.0 -0.5 +0.1 -0.1 | 100.0 -0.5 +0.0 +0.1 |
+
+### v12-412
+
+| RPM | t000 | t025 | t050 | t075 | t100 |
+| --- | --- | --- | --- | --- | --- |
+| 3810 | 97.7 +1.8 -0.1 +0.5 H | 100.0 +0.5 -0.0 -0.1 | 100.0 +0.7 +0.0 -0.5 | 100.0 +1.4 +0.1 -0.2 | 100.0 -0.8 +0.1 -0.2 |
+| 4000 | 86.0 +2.9 +0.0 +0.3 SH | 100.0 -1.0 -0.1 +0.3 | 99.2 +1.0 -0.1 +0.0 | 100.0 -1.3 -0.1 -0.1 | 100.0 -0.8 -0.0 -0.0 |
+| 4250 | 92.6 +2.3 -0.1 +0.7 SH | 100.0 +0.5 +0.1 +0.0 | 100.0 +0.8 -0.1 -0.2 | 100.0 -0.6 -0.0 -0.2 | 100.0 +1.0 -0.0 +0.0 |
+| 4500 | 100.0 +1.2 +0.0 +0.4 | 100.0 -1.0 +0.0 +0.1 | 100.0 -0.9 -0.0 +0.0 | 100.0 +0.5 -0.1 +0.1 | 100.0 +0.5 +0.0 +0.0 |
+| 4750 | 99.0 +1.3 +0.0 +0.0 | 100.0 +1.4 -0.1 +0.6 | 100.0 +0.7 -0.1 +0.3 | 100.0 +0.8 -0.0 +0.0 | 100.0 +0.7 -0.1 +0.2 |
+| 5000 | 86.4 +3.0 +0.0 +0.6 SH | 100.0 +1.0 -0.0 +0.3 | 100.0 -0.9 -0.1 -0.1 | 100.0 -0.8 -0.0 -0.4 | 100.0 -0.6 -0.2 -0.2 |
+| 5250 | 100.0 +1.2 +0.0 +0.2 | 100.0 +1.2 +0.2 +0.6 | 100.0 +1.0 -0.1 +0.1 | 100.0 -0.5 -0.1 +0.1 | 100.0 +0.6 -0.1 +0.2 |
+| 5500 | 100.0 +1.2 -0.0 +0.3 | 100.0 -0.5 +0.5 -0.3 | 100.0 -0.8 -0.4 -0.0 | 100.0 -0.6 -0.4 -0.0 | 100.0 +0.5 -0.3 -0.1 |
+| 5750 | 100.0 +1.3 -0.1 +0.2 | 100.0 +0.9 -0.0 +0.4 | 100.0 +0.9 +0.0 +0.1 | 100.0 +0.6 +0.0 +0.2 | 100.0 +0.7 +0.0 +0.0 |
+| 6000 | 100.0 +1.3 -0.1 -1.1 | 100.0 -0.8 -0.0 +0.0 | 100.0 -0.9 +0.0 -0.6 | 100.0 -0.6 +0.0 -0.4 | 100.0 -0.6 +0.0 -0.0 |
+| 6250 | 95.1 +2.1 -0.2 +0.1 H | 100.0 +0.4 -0.1 -0.0 | 100.0 +1.0 -0.0 -0.1 | 100.0 +0.6 -0.0 -0.2 | 100.0 +0.8 -0.0 -0.3 |
+| 6500 | 97.6 +1.8 +0.0 +0.0 H | 100.0 +0.9 -0.0 -0.0 | 100.0 -0.5 -0.0 -0.3 | 100.0 +0.7 -0.0 -0.1 | 100.0 +0.4 -0.0 -0.1 |
+| 6750 | 95.4 +2.1 -0.1 +0.1 H | 100.0 +0.6 +0.0 +0.1 | 100.0 -1.1 +0.1 -0.1 | 100.0 -1.1 +0.1 -0.2 | 100.0 -0.3 +0.1 -0.1 |
+| 7000 | 91.2 +2.5 -0.4 +0.1 SH | 100.0 +0.6 -0.1 +0.0 | 100.0 +0.3 -0.1 +0.1 | 100.0 +0.6 -0.1 -0.0 | 100.0 +0.8 -0.2 +0.1 |
+| 7250 | 100.0 +1.4 +0.0 +0.3 | 100.0 +0.9 -0.1 +0.0 | 100.0 -0.6 -0.0 -0.1 | 100.0 -0.4 +0.0 +0.0 | 100.0 -0.4 -0.0 -0.1 |
+| 7500 | 99.5 +0.7 +0.0 -2.2 | 100.0 +0.4 -0.4 -0.8 | 100.0 -0.4 +0.1 +0.1 | 100.0 -0.4 +0.1 -0.1 | 100.0 +0.4 +0.1 -0.0 |
+| 7750 | 100.0 +0.6 -0.1 +0.0 | 100.0 +0.8 -0.1 +0.2 | 100.0 +0.7 +0.0 +0.3 | 100.0 +0.4 +0.1 -0.0 | 100.0 -0.5 +0.1 +0.2 |
+| 8000 | 100.0 -0.4 +0.1 -0.0 | 100.0 +0.4 +0.1 +0.0 | 100.0 -0.7 -0.1 +0.0 | 100.0 +0.4 +0.1 +0.0 | 100.0 -0.7 -0.1 -0.1 |
+| 8250 | 100.0 +0.8 -0.0 -0.1 | 100.0 +0.3 +0.0 -0.0 | 100.0 -0.4 +0.0 -0.1 | 100.0 +0.4 -0.0 -0.1 | 100.0 +0.5 +0.1 -0.1 |
+| 8500 | 94.2 -2.2 -0.1 -0.1 SH | 100.0 -0.2 +0.1 +0.0 | 100.0 +0.6 -0.0 +0.1 | 100.0 -0.5 +0.0 -0.0 | 100.0 +0.5 -0.0 +0.0 |
+| 8750 | 100.0 -1.6 -0.2 -0.3 H | 100.0 -0.9 +0.2 +0.0 | 100.0 -0.6 +0.0 +0.2 | 100.0 -1.0 +0.1 -0.2 | 100.0 +0.7 +0.1 +0.0 |
+| 9000 | 99.2 -1.7 -0.4 -0.1 H | 100.0 -0.6 -0.1 +0.1 | 100.0 +0.5 -0.2 +0.0 | 100.0 -0.5 -0.3 +0.4 | 100.0 -0.3 -0.2 +0.1 |
+| 9250 | 100.0 -1.3 -0.3 -0.2 | 100.0 -1.4 +0.3 -0.2 | 100.0 +0.6 +0.0 -0.0 | 100.0 -0.7 -0.0 -0.0 | 100.0 +1.0 +0.1 +0.1 |
+| 9500 | 80.9 -3.6 +0.1 -0.5 SH | 100.0 -0.6 +0.0 +0.2 | 100.0 -0.3 -0.0 +0.1 | 100.0 -0.5 -0.0 +0.1 | 100.0 -0.8 -0.0 -0.0 |
+| 9750 | 92.1 -2.4 -0.1 +0.1 SH | 97.3 -1.9 +0.3 -0.0 H | 100.0 -0.7 +0.2 -0.0 | 100.0 -1.0 +0.1 -0.1 | 100.0 -0.6 +0.2 -0.0 |
+| 10000 | 92.1 -2.4 -0.2 -1.4 SH | 100.0 +0.5 -0.1 +0.0 | 100.0 +0.6 -0.2 +0.0 | 100.0 +0.4 -0.2 -0.3 | 100.0 +0.4 -0.2 -0.2 |
+| 10250 | 76.2 -4.2 -0.3 -0.7 SH | 100.0 -0.9 -0.2 -0.0 | 100.0 -0.8 -0.2 -0.1 | 100.0 -1.1 -0.1 -0.1 | 100.0 -0.7 -0.2 -0.1 |
+| 10500 | 79.5 -3.8 -0.4 -0.6 SH | 100.0 -1.1 +0.0 +0.0 | 100.0 -0.5 +0.1 +0.3 | 100.0 +0.5 +0.1 -0.0 | 100.0 +0.8 +0.2 +0.2 |
+| 10750 | 86.5 -2.8 -0.6 -0.7 SH | 77.9 -4.0 +0.0 -0.5 SH | 100.0 -0.8 -0.3 -0.2 | 100.0 -0.7 -0.3 -0.1 | 100.0 -1.1 -0.3 -0.2 |
+| 11000 | 86.3 -3.0 -0.5 -0.6 SH | 100.0 -1.5 -0.1 -0.3 | 100.0 -1.0 -0.2 -0.4 | 100.0 -0.9 -0.2 -0.1 | 100.0 -0.7 -0.2 -0.3 |
+| 11250 | 84.2 -3.2 -0.4 -0.6 SH | 100.0 +1.1 -0.2 -0.1 | 99.9 -0.4 -0.5 -0.1 | 97.8 -0.7 -0.7 -0.3 | 99.9 -0.6 -0.5 -0.1 |
+| 11500 | 83.6 -3.3 +0.0 -0.5 SH | 100.0 -0.5 -0.0 -0.1 | 100.0 -0.7 +0.0 -0.1 | 100.0 -0.4 -0.0 +0.0 | 100.0 -0.5 +0.0 -0.1 |
+| 11750 | 72.1 -4.7 +0.0 -0.4 SH | 100.0 +1.3 -0.0 +0.4 | 100.0 -0.7 -0.0 +0.1 | 100.0 +0.4 -0.0 +0.0 | 100.0 +0.7 +0.0 +0.2 |
+| 12000 | 88.3 -2.8 +0.1 -1.7 SH | 100.0 +0.8 -0.1 -0.4 | 100.0 +0.4 +0.0 +0.2 | 100.0 +0.8 -0.1 -0.1 | 100.0 -0.3 -0.0 -0.0 |
+| 12250 | 94.1 -2.2 +0.1 -0.5 SH | 100.0 -0.5 +0.0 +0.3 | 100.0 -0.9 -0.0 +0.0 | 100.0 -1.4 -0.1 +0.1 | 100.0 -1.2 -0.1 -0.1 |
+| 12500 | 100.0 -1.4 +0.4 -0.2 | 100.0 -0.6 -0.2 +0.2 | 100.0 -0.6 +0.0 -0.1 | 100.0 +0.4 -0.0 +0.0 | 100.0 +0.5 -0.0 +0.1 |
+| 12750 | 100.0 -1.5 +0.3 -0.1 H | 100.0 +0.4 -0.2 -0.1 | 100.0 -0.7 -0.0 +0.0 | 100.0 -0.8 -0.0 -0.1 | 100.0 -1.2 -0.0 -0.0 |
+| 13000 | 85.9 -3.0 +0.4 -0.6 SH | 100.0 +1.6 +0.1 -0.1 H | 100.0 +0.5 +0.0 -0.0 | 100.0 -0.6 +0.0 -0.1 | 100.0 +0.4 +0.0 +0.1 |
+| 13250 | 97.7 -1.8 +0.4 -0.3 H | 100.0 +1.1 -0.2 -0.0 | 100.0 -0.5 -0.1 -0.1 | 100.0 -0.7 -0.0 +0.1 | 100.0 -0.7 -0.1 -0.0 |
+| 13500 | 100.0 -0.5 +0.2 -0.1 | 100.0 +1.2 +0.0 +0.1 | 100.0 +0.5 +0.1 -0.1 | 100.0 +0.3 +0.0 +0.0 | 100.0 +0.7 +0.1 -0.1 |
+| 13750 | 100.0 -1.1 +0.2 -0.4 | 100.0 +1.0 -0.1 +0.1 | 100.0 -0.7 -0.0 -0.2 | 100.0 -1.2 +0.1 -0.3 | 100.0 -0.6 -0.0 -0.3 |
+| 14000 | 100.0 -0.5 +0.1 +0.1 | 100.0 +0.9 -0.2 -0.2 | 100.0 -0.4 +0.0 -0.2 | 100.0 -1.2 -0.0 -0.3 | 99.8 -1.6 +0.0 -0.1 H |
+| 14250 | 100.0 -0.4 +0.3 -0.2 | 100.0 -0.8 -0.2 -0.1 | 100.0 -1.1 -0.1 -0.2 | 100.0 -0.8 +0.1 -0.2 | 100.0 -1.0 +0.1 -0.4 |
+| 14500 | 100.0 +0.6 -0.1 +0.2 | 100.0 -0.6 -0.0 +0.1 | 100.0 +0.3 -0.1 -0.1 | 100.0 -0.5 +0.0 -0.2 | 100.0 -1.2 -0.0 -0.2 |
+| 14750 | 100.0 +1.0 +0.1 +0.1 | 100.0 -0.4 +0.2 -0.3 | 100.0 -0.7 +0.1 -0.2 | 100.0 -0.7 +0.3 -0.3 | 100.0 -0.8 +0.1 -0.1 |
+| 15000 | 88.6 -0.5 -0.9 -3.0 S | 100.0 +0.9 +0.1 -0.8 | 100.0 -0.5 -0.0 -0.1 | 100.0 -0.8 -0.0 -0.6 | 100.0 -0.6 +0.0 -0.1 |
+| 15250 | 100.0 +0.3 +0.3 +0.1 | 100.0 +0.3 -0.4 +0.2 | 100.0 +0.6 -0.2 +0.1 | 100.0 -1.3 -0.0 -0.1 | 100.0 +0.6 -0.0 -0.0 |
+| 15500 | 100.0 -1.2 -0.0 +0.2 | 100.0 +0.8 -0.5 -0.0 | 83.7 +3.2 -0.6 +0.0 SH | 100.0 -1.0 -0.0 -0.2 | 100.0 -1.0 -0.1 -0.1 |
+| 15750 | 100.0 -0.8 +0.1 +0.1 | 100.0 -1.1 -0.2 -0.1 | 100.0 +0.7 -0.4 +0.3 | 100.0 -1.5 -0.1 +0.1 H | 100.0 -1.2 -0.1 +0.3 |
+| 16000 | 100.0 -1.0 +0.0 +0.0 | 100.0 -1.4 -0.3 -0.1 | 81.3 -3.6 -0.1 -0.3 SH | 94.3 -2.2 -0.0 +0.0 SH | 87.9 -2.8 +0.1 +0.0 SH |
+| 16250 | 100.0 -0.8 +0.1 -0.1 | 93.4 -2.3 +0.0 -0.0 SH | 94.5 -2.1 +0.2 +0.1 SH | 99.5 -0.6 +0.1 -0.1 | 98.7 -0.9 +0.1 +0.0 |
+| 16500 | 100.0 +0.9 +0.0 -0.1 | 94.9 -2.1 -0.3 +0.1 SH | 100.0 -0.6 -0.1 +0.2 | 100.0 -0.7 -0.0 +0.1 | 100.0 +0.4 -0.1 +0.2 |
+| 16750 | 100.0 +0.8 +0.1 -0.0 | 80.3 +3.3 -0.9 +0.4 SH | 100.0 +1.2 +0.0 +0.3 | 100.0 -0.7 -0.0 +0.2 | 100.0 -1.1 +0.1 +0.3 |
+| 17000 | 100.0 +0.9 +0.2 +0.2 | 83.2 -3.3 -0.4 -0.1 SH | 100.0 -1.3 +0.0 +0.1 | 99.2 +1.7 +0.1 +0.2 H | 100.0 +1.4 +0.2 +0.3 |
+| 17250 | 100.0 -0.8 +0.0 -0.0 | 83.4 -3.3 -0.5 +0.1 SH | 91.3 -2.5 -0.2 +0.0 SH | 98.2 -1.8 -0.1 +0.1 H | 100.0 -1.6 -0.2 +0.1 H |
+| 17500 | 100.0 +1.3 +0.1 -0.1 | 78.6 -3.3 -1.1 +0.0 SH | 87.7 -2.8 -0.6 +0.1 SH | 97.7 -1.7 -0.6 -0.1 H | 97.0 +1.9 -0.4 +0.2 H |
+| 17750 | 100.0 +1.1 +0.0 +0.2 | 97.2 -1.6 -0.8 -0.1 H | 96.6 +1.9 -0.3 +0.0 H | 97.8 +1.5 -0.7 -0.1 | 99.7 +1.0 -0.5 +0.0 |
+| 18000 | 98.3 +1.8 +0.1 -0.3 H | 96.2 -1.9 -0.5 +0.1 H | 99.5 +0.6 +0.5 +0.2 | 99.3 +0.4 +0.5 +0.1 | 100.0 -0.7 +0.4 +0.2 |
+| 18250 | 99.9 +1.5 +0.5 +0.2 H | 88.3 -2.8 -0.3 -0.0 SH | 94.3 +2.2 +0.1 -0.1 SH | 96.8 +1.9 +0.1 +0.1 H | 99.0 +1.7 -0.1 -0.1 H |
+
+The tonality and gap marks of `v12-412` count against its own spread of 1.17 and 3.06 dB, so no tonality or gap mark shows. The score of 88.6 at 15000 rpm and throttle 0 comes from the gap, 3.0 dB against the floor of 2.2 dB.
+
+### v12-merlin
+
+| RPM | t000 | t025 | t050 | t075 | t100 |
+| --- | --- | --- | --- | --- | --- |
+| 600 | 78.9 +3.8 -0.0 -0.0 SH | 100.0 -0.3 +0.0 -0.3 | 100.0 -0.2 +0.0 -0.1 | 100.0 +0.2 +0.0 -0.4 | 100.0 +0.3 +0.0 -0.3 |
+| 750 | 85.0 +3.0 +0.0 -0.4 SH | 98.8 -0.3 -0.0 -0.1 | 100.0 -0.3 -0.0 +0.0 | 100.0 -0.2 -0.0 +0.0 | 100.0 -0.2 -0.0 +0.0 |
+| 1000 | 99.2 +1.6 +0.0 +0.0 H | 100.0 -0.4 +0.0 -0.2 | 100.0 -0.4 +0.0 +0.0 | 100.0 -0.4 +0.0 +0.1 | 100.0 -0.4 +0.0 +0.1 |
+| 1250 | 100.0 +0.5 -0.0 -0.3 | 100.0 -0.3 +0.0 -0.3 | 100.0 -0.3 +0.0 -0.2 | 100.0 -0.3 -0.0 -0.2 | 100.0 -0.3 -0.0 -0.2 |
+| 1500 | 100.0 -0.5 -0.0 -0.4 | 100.0 -0.6 -0.0 -0.2 G | 100.0 -0.5 -0.0 -0.3 | 100.0 -0.5 -0.0 -0.3 | 100.0 +0.5 -0.0 -0.3 |
+| 1750 | 100.0 -0.8 +0.1 -0.3 | 100.0 -0.3 +0.0 -0.0 | 100.0 -0.5 +0.0 -0.1 | 100.0 -0.4 -0.0 -0.1 | 100.0 -0.4 -0.0 -0.0 |
+| 2000 | 100.0 +0.3 +0.0 +0.0 | 100.0 +0.7 -0.0 -0.2 | 100.0 +0.4 -0.0 -0.0 | 100.0 -0.3 -0.0 -0.0 | 100.0 -0.4 -0.0 -0.0 |
+| 2250 | 100.0 -0.7 -0.0 -0.1 | 100.0 -0.6 +0.0 +0.0 | 100.0 -0.5 +0.1 -0.1 | 100.0 -0.6 +0.1 -0.1 | 100.0 -0.6 +0.1 -0.1 |
+| 2500 | 100.0 +0.5 -0.1 -0.4 | 100.0 +0.3 +0.0 -0.2 | 100.0 -0.6 +0.0 +0.1 | 100.0 +0.6 +0.0 +0.1 | 100.0 +0.6 +0.0 +0.0 |
+| 2750 | 100.0 +1.0 -0.0 +0.2 | 100.0 -0.6 -0.1 +0.1 | 100.0 +0.5 -0.0 -0.1 | 100.0 +0.6 -0.0 -0.2 | 100.0 +0.6 -0.0 -0.1 |
+| 3000 | 100.0 +0.2 +0.0 -0.3 | 100.0 +0.3 +0.0 -0.2 G | 100.0 +0.1 -0.0 -0.2 G | 100.0 +0.2 -0.0 -0.2 G | 100.0 +0.2 -0.0 -0.1 |
+| 3250 | 100.0 -1.0 -0.0 -0.1 | 96.6 -1.0 -0.0 -0.5 | 100.0 -0.4 +0.0 -0.3 | 100.0 -0.5 +0.0 -0.3 | 100.0 -0.6 +0.0 -0.4 |
+
+The gap column is the mean signed difference over the three bands. A G mark counts the mean absolute difference, so a cell can show a small signed value with a G.
+
+## 10. Reproduce
+
+```sh
+# Write the full-range scenarios and render the engine-sim references and the calibration (about 12 minutes on 16 cores).
+just ref-fullrange
+
+# Score snarl against engine-sim, with the self spread of engine-sim and the matrix of the holds.
+go run ./tools/scorecard --scenarios fullrange-t000,fullrange-t025,fullrange-t050,fullrange-t075,fullrange-t100,fullrange-mid-t100 \
+  --dyno --no-pops --calib out/reference/upstream/calib --matrix --out out/fullrange/snarl > out/fullrange/score.md
+
+# The default scenarios, with the new measures and the sweep and overrun calibration.
+go run ./tools/scorecard --dyno --no-pops --calib out/reference/upstream/calib --out out/fullrange/snarl-default
+
+# Suspects: the tables through the exact port, with and without the residual, then scored.
+just fullrange-play play
+just fullrange-play play-noresidual all --no-residual
+go run ./tools/scorecard --scenarios fullrange-t000,fullrange-t025,fullrange-t050,fullrange-t075,fullrange-t100,fullrange-mid-t100 \
+  --dyno --no-pops --against out/fullrange/play --calib out/reference/upstream/calib --matrix --out out/fullrange/unused
+go run ./tools/scorecard --scenarios fullrange-t000,fullrange-t025,fullrange-t050,fullrange-t075,fullrange-t100,fullrange-mid-t100 \
+  --dyno --no-pops --ref out/fullrange/play --against out/fullrange/snarl --matrix --out out/fullrange/unused
+
+# The band detail of one window, for example the sweep.
+go run ./cmd/snarl-compare --align --scenario scenarios/upstream/v8-ls/sweep-wot.scn \
+  out/reference/upstream/v8-ls/sweep-wot.wav out/fullrange/snarl-default/v8-ls/sweep-wot.wav
+```
+
+The full-range scorecard takes about 15 minutes. The outputs of this study are in `out/fullrange/`: `score.md`, `score-default.md`, `score-play.md`, `score-play-noresidual.md`, `score-snarl-vs-play.md`, the snarl renders in `snarl/` and `snarl-default/`, and the playbacks in `play/` and `play-noresidual/`.
+
+## 11. Limits
+
+- The holds on the grid RPM are the points from which the tables were built, and engine-sim renders the same scenario the same way. The holds therefore test the tables at their own points. The mid holds and the holds above the top grid point test playback away from them.
+- The calibration is one second render per scenario with another pre-roll. It does not cover other seeds of engine-sim, which has no seed option.
+- The miss limit of the tonality and the gap is the largest value of engine-sim against itself for the engine. A single outlier hold of engine-sim sets it, for example the gap of `i4-vtec` at 2.18 dB, where the median is 0.13 dB.
+- The scorecard covers dynamometer holds, sweeps and the limiter free run, with the own pops off. It does not cover the harness drive model, the gear changes or the pops.
+- The residual bands of `i4-vtec` at 1250 and 1500 rpm come from `snarl-compare --residual` at full throttle only.
