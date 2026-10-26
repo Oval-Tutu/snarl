@@ -77,6 +77,52 @@ func TestReadReturnsOneBlock(t *testing.T) {
 	}
 }
 
+// TestSourceMatchesOfflineRender checks that the source plays, bit for bit
+// in both channels, the samples that snarl-render (cmd/snarl-render) writes
+// for the same snapshots: the offline loop sets the snapshot of each block
+// and renders the block into a buffer of Block frames. The snapshots sweep
+// up at full throttle with the pops on, then close the throttle on
+// overrun.
+func TestSourceMatchesOfflineRender(t *testing.T) {
+	const blocks = 600
+	snap := func(k int) snarl.Snapshot {
+		f := float32(k) / blocks
+		s := snarl.Snapshot{RPM: 1500 + 9000*f, Throttle: 1, Load: 1, Flags: snarl.FlagRunning}
+		if k >= 2*blocks/3 {
+			s = snarl.Snapshot{RPM: 7500 - 3000*(f-0.66), Flags: snarl.FlagRunning | snarl.FlagOverrun}
+		}
+		return s
+	}
+	offline, live := newEngine(t, "i4-vtec"), newEngine(t, "i4-vtec")
+	s := New()
+	s.SetEngine(live)
+	buf := make([]float32, Block)
+	out := make([]byte, BlockBytes)
+	peak := 0.0
+	for k := range blocks {
+		offline.Set(snap(k))
+		offline.Render(buf)
+		live.Set(snap(k))
+		if n, _ := s.Read(out); n != BlockBytes {
+			t.Fatalf("Read = %d", n)
+		}
+		for i, v := range buf {
+			b := math.Float32bits(v)
+			if l, r := binary.LittleEndian.Uint32(out[8*i:]), binary.LittleEndian.Uint32(out[8*i+4:]); l != b || r != b {
+				t.Fatalf("block %d frame %d: source %v and %v, offline %v", k, i,
+					math.Float32frombits(l), math.Float32frombits(r), v)
+			}
+			peak = max(peak, math.Abs(float64(v)))
+		}
+	}
+	if peak == 0 {
+		t.Error("silence from a running engine")
+	}
+	if offline.Pops().Count != live.Pops().Count {
+		t.Errorf("pops: offline %d, source %d", offline.Pops().Count, live.Pops().Count)
+	}
+}
+
 func TestReadShortSlices(t *testing.T) {
 	s := New()
 	s.SetEngine(newEngine(t, "i4-vtec"))
