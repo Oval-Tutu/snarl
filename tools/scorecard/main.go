@@ -19,9 +19,17 @@
 // it, and a hold there, where the snarl limiter bounces. The limiter
 // windows have no cycle measures, because the RPM of both files bounces.
 //
+// The full-range scenarios fullrange-t000 to fullrange-t100, which
+// --write-fullrange writes and just ref-fullrange renders, hold each
+// throttle row of the cycle tables every 250 rpm from idle to below the
+// limiter. Their hold windows count, after a settle time of 0.5 s, and
+// --matrix prints them by RPM and throttle against the self spread of
+// engine-sim from --calib (docs/research/fullrange-scorecard.md).
+//
 // Usage:
 //
 //	go run ./tools/scorecard [--engines LIST] [--scenarios LIST] [--dyno] [--no-pops] [--set key=value ...] [--windows]
+//	    [--against DIR] [--calib DIR] [--matrix] [--write-fullrange]
 package main
 
 import (
@@ -73,7 +81,8 @@ type config struct {
 	ref, scn, out      string
 	settle             float64
 	dyno, noPops       bool
-	windows            bool
+	windows, matrix    bool
+	against, calib     string
 	sets               []string
 }
 
@@ -89,6 +98,10 @@ func run(args []string, w io.Writer) error {
 	fs.BoolVar(&c.dyno, "dyno", false, "turn the idle wander off in the scenarios that the dynamometer holds, as engine-sim holds the RPM there; idle-free keeps it")
 	fs.BoolVar(&c.noPops, "no-pops", false, "set FlagNoPops, so that the engine makes no own pops; engine-sim has none")
 	fs.BoolVar(&c.windows, "windows", false, "print the score of every window")
+	writeFull := fs.Bool("write-fullrange", false, "write the full-range scenarios fullrange-t000 to fullrange-t100 of each engine into the scenario directory, and render nothing")
+	fs.StringVar(&c.against, "against", "", "score the WAV files <dir>/<engine>/<scenario>.wav in place of the snarl renders, for example a second engine-sim render or a playback of the tables")
+	fs.StringVar(&c.calib, "calib", "", "also score the second engine-sim renders <dir>/<engine>/<scenario>.wav that exist, the self spread of engine-sim for --matrix")
+	fs.BoolVar(&c.matrix, "matrix", false, "print the hold windows of the full-range scenarios of each engine by RPM and throttle, with the misses and their RPM ranges")
 	fs.Func("set", "override a profile value, as `section.key=value` (repeatable)", func(v string) error {
 		c.sets = append(c.sets, v)
 		return nil
@@ -100,17 +113,42 @@ func run(args []string, w io.Writer) error {
 		return errors.New("no arguments are taken, and --settle must not be negative")
 	}
 	c.engines, c.scenarios = strings.Split(*engines, ","), strings.Split(*scenarios, ",")
-	type result struct {
-		text string
-		err  error
+	if *writeFull {
+		for _, e := range c.engines {
+			if err := c.writeFullRange(e); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
-	res := make([][]result, len(c.engines))
+	type result struct {
+		text   string
+		points []point
+		err    error
+		skip   bool
+	}
+	// Each engine and scenario has the job of the render, and with
+	// --calib the job of the second engine-sim render.
+	res := make([][][2]result, len(c.engines))
 	var wg sync.WaitGroup
 	for i, e := range c.engines {
-		res[i] = make([]result, len(c.scenarios))
+		res[i] = make([][2]result, len(c.scenarios))
 		for j, s := range c.scenarios {
 			wg.Go(func() {
-				res[i][j].text, res[i][j].err = c.score(e, s)
+				r := &res[i][j][0]
+				r.text, r.points, r.err = c.score(e, s, c.against)
+			})
+			if c.calib == "" {
+				res[i][j][1].skip = true
+				continue
+			}
+			wg.Go(func() {
+				r := &res[i][j][1]
+				if _, err := os.Stat(filepath.Join(c.calib, e, s+".wav")); err != nil {
+					r.skip = true
+					return
+				}
+				r.text, r.points, r.err = c.score(e, s, c.calib)
 			})
 		}
 	}
@@ -118,76 +156,125 @@ func run(args []string, w io.Writer) error {
 	fmt.Fprintln(w, "| Engine | Scenario | Score | Lowest window | Lowest score |")
 	fmt.Fprintln(w, "| --- | --- | --- | --- | --- |")
 	var errs []error
+	var renders, calibs []point
 	for i := range res {
 		for j := range res[i] {
-			if res[i][j].err != nil {
-				errs = append(errs, fmt.Errorf("%s %s: %w", c.engines[i], c.scenarios[j], res[i][j].err))
-				continue
+			for k, r := range res[i][j] {
+				switch {
+				case r.skip:
+				case r.err != nil:
+					errs = append(errs, fmt.Errorf("%s %s: %w", c.engines[i], c.scenarios[j], r.err))
+				default:
+					fmt.Fprint(w, r.text)
+					if k == 0 {
+						renders = append(renders, r.points...)
+					} else {
+						calibs = append(calibs, r.points...)
+					}
+				}
 			}
-			fmt.Fprint(w, res[i][j].text)
 		}
+	}
+	if c.matrix {
+		writeMatrix(w, c.engines, renders, calibs)
 	}
 	return errors.Join(errs...)
 }
 
-// score renders one scenario of one engine and returns its table rows.
-func (c *config) score(engine, name string) (string, error) {
+// point is the result of one window of a scenario.
+type point struct {
+	engine, scenario string
+	win              analysis.Window
+	r                analysis.AlignResult
+}
+
+// score renders one scenario of one engine, or with a directory in against
+// reads <against>/<engine>/<scenario>.wav in place of the render, and
+// returns its table rows and the result of each window. A full-range
+// scenario has its hold windows only, after fullRangeSettle.
+func (c *config) score(engine, name, against string) (string, []point, error) {
 	sets := c.sets
 	if c.dyno && name != "idle-free" || name == idleReplay {
 		sets = append(slices.Clone(sets), "idle.hunt=0")
 	}
 	p, err := snarl.LoadProfileWith(engine, sets...)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	sc, cycles, track, err := c.scenario(engine, name, p)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	x, err := c.render(p, sc, track)
-	if err != nil {
-		return "", err
-	}
-	dir := filepath.Join(c.out, engine)
-	if err := writeWAV(filepath.Join(dir, name+".wav"), x); err != nil {
-		return "", err
+	var x []float64
+	label := name
+	if against == "" {
+		y, err := c.render(p, sc, track)
+		if err != nil {
+			return "", nil, err
+		}
+		if err := writeWAV(filepath.Join(c.out, engine, name+".wav"), y); err != nil {
+			return "", nil, err
+		}
+		x = make([]float64, len(y))
+		for i, v := range y {
+			x[i] = float64(v)
+		}
+	} else {
+		if x, err = readMono(filepath.Join(against, engine, name+".wav")); err != nil {
+			return "", nil, err
+		}
+		label = fmt.Sprintf("%s (%s)", name, against)
 	}
 	refName := name
 	if name == idleReplay {
 		refName = "idle-free"
 	}
-	a, err := wav.ReadFile(filepath.Join(c.ref, engine, refName+".wav"))
+	ref, err := readMono(filepath.Join(c.ref, engine, refName+".wav"))
 	if err != nil {
-		return "", err
-	}
-	ref := a.Mono()
-	if a.SampleRate != rate {
-		ref = analysis.Resample(ref, a.SampleRate, rate)
+		return "", nil, err
 	}
 	n := min(len(ref), len(x))
-	y := make([]float64, n)
-	for i := range y {
-		y[i] = float64(x[i])
+	settle, holdsOnly := 0.25, strings.HasPrefix(name, "fullrange-")
+	if holdsOnly {
+		settle = fullRangeSettle
 	}
-	windows := analysis.Windows(sc, float64(n)/rate, analysis.Options{Settle: 0.25, Window: 0.5})
+	windows := analysis.Windows(sc, float64(n)/rate, analysis.Options{Settle: settle, Window: 0.5})
 	var rs []analysis.AlignResult
 	var weights []float64
+	var pts []point
 	var b strings.Builder
 	low, lowLabel := math.Inf(1), ""
 	for _, win := range windows {
+		if holdsOnly && win.Kind != "hold" {
+			continue
+		}
 		i0, i1 := int(win.Start*rate), min(int(win.End*rate), n)
-		r := analysis.Align(ref[i0:i1], y[i0:i1], rate, win.RPMStart, win.Kind == "hold", cycles)
+		r := analysis.Align(ref[i0:i1], x[i0:i1], rate, win.RPMStart, win.Kind == "hold", cycles)
 		rs = append(rs, r)
 		weights = append(weights, float64(i1-i0)/rate)
+		pts = append(pts, point{engine: engine, scenario: name, win: win, r: r})
 		if r.Score < low {
 			low, lowLabel = r.Score, win.Label
 		}
 		if c.windows {
-			fmt.Fprintf(&b, "| %s | %s | | %s | %.1f |\n", engine, name, win.Label, r.Score)
+			fmt.Fprintf(&b, "| %s | %s | | %s | %.1f |\n", engine, label, win.Label, r.Score)
 		}
 	}
 	total, _ := analysis.AlignTotal(rs, weights)
-	return fmt.Sprintf("| %s | %s | %.1f | %s | %.1f |\n", engine, name, total, lowLabel, low) + b.String(), nil
+	return fmt.Sprintf("| %s | %s | %.1f | %s | %.1f |\n", engine, label, total, lowLabel, low) + b.String(), pts, nil
+}
+
+// readMono reads a WAV file as mono at rate.
+func readMono(path string) ([]float64, error) {
+	a, err := wav.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	x := a.Mono()
+	if a.SampleRate != rate {
+		x = analysis.Resample(x, a.SampleRate, rate)
+	}
+	return x, nil
 }
 
 // idleReplay is the scenario name of the free run at idle with the RPM of

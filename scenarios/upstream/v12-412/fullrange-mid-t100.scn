@@ -1,0 +1,118 @@
+# v12-412: written by tools/scorecard --write-fullrange. Holds at throttle 1 halfway between those of the other files
+# from idle (the first hold of holds-t100.scn) to below the limiter at 18500 rpm.
+# Each hold is 0.5 s of settling and at least 24 whole cycles and 1 s; 0.25 s sweeps join the holds.
+hold 3905 1 1.5
+sweep 3905 4125 1 0.25
+hold 4125 1 1.5
+sweep 4125 4375 1 0.25
+hold 4375 1 1.5
+sweep 4375 4625 1 0.25
+hold 4625 1 1.5
+sweep 4625 4875 1 0.25
+hold 4875 1 1.5
+sweep 4875 5125 1 0.25
+hold 5125 1 1.5
+sweep 5125 5375 1 0.25
+hold 5375 1 1.5
+sweep 5375 5625 1 0.25
+hold 5625 1 1.5
+sweep 5625 5875 1 0.25
+hold 5875 1 1.5
+sweep 5875 6125 1 0.25
+hold 6125 1 1.5
+sweep 6125 6375 1 0.25
+hold 6375 1 1.5
+sweep 6375 6625 1 0.25
+hold 6625 1 1.5
+sweep 6625 6875 1 0.25
+hold 6875 1 1.5
+sweep 6875 7125 1 0.25
+hold 7125 1 1.5
+sweep 7125 7375 1 0.25
+hold 7375 1 1.5
+sweep 7375 7625 1 0.25
+hold 7625 1 1.5
+sweep 7625 7875 1 0.25
+hold 7875 1 1.5
+sweep 7875 8125 1 0.25
+hold 8125 1 1.5
+sweep 8125 8375 1 0.25
+hold 8375 1 1.5
+sweep 8375 8625 1 0.25
+hold 8625 1 1.5
+sweep 8625 8875 1 0.25
+hold 8875 1 1.5
+sweep 8875 9125 1 0.25
+hold 9125 1 1.5
+sweep 9125 9375 1 0.25
+hold 9375 1 1.5
+sweep 9375 9625 1 0.25
+hold 9625 1 1.5
+sweep 9625 9875 1 0.25
+hold 9875 1 1.5
+sweep 9875 10125 1 0.25
+hold 10125 1 1.5
+sweep 10125 10375 1 0.25
+hold 10375 1 1.5
+sweep 10375 10625 1 0.25
+hold 10625 1 1.5
+sweep 10625 10875 1 0.25
+hold 10875 1 1.5
+sweep 10875 11125 1 0.25
+hold 11125 1 1.5
+sweep 11125 11375 1 0.25
+hold 11375 1 1.5
+sweep 11375 11625 1 0.25
+hold 11625 1 1.5
+sweep 11625 11875 1 0.25
+hold 11875 1 1.5
+sweep 11875 12125 1 0.25
+hold 12125 1 1.5
+sweep 12125 12375 1 0.25
+hold 12375 1 1.5
+sweep 12375 12625 1 0.25
+hold 12625 1 1.5
+sweep 12625 12875 1 0.25
+hold 12875 1 1.5
+sweep 12875 13125 1 0.25
+hold 13125 1 1.5
+sweep 13125 13375 1 0.25
+hold 13375 1 1.5
+sweep 13375 13625 1 0.25
+hold 13625 1 1.5
+sweep 13625 13875 1 0.25
+hold 13875 1 1.5
+sweep 13875 14125 1 0.25
+hold 14125 1 1.5
+sweep 14125 14375 1 0.25
+hold 14375 1 1.5
+sweep 14375 14625 1 0.25
+hold 14625 1 1.5
+sweep 14625 14875 1 0.25
+hold 14875 1 1.5
+sweep 14875 15125 1 0.25
+hold 15125 1 1.5
+sweep 15125 15375 1 0.25
+hold 15375 1 1.5
+sweep 15375 15625 1 0.25
+hold 15625 1 1.5
+sweep 15625 15875 1 0.25
+hold 15875 1 1.5
+sweep 15875 16125 1 0.25
+hold 16125 1 1.5
+sweep 16125 16375 1 0.25
+hold 16375 1 1.5
+sweep 16375 16625 1 0.25
+hold 16625 1 1.5
+sweep 16625 16875 1 0.25
+hold 16875 1 1.5
+sweep 16875 17125 1 0.25
+hold 17125 1 1.5
+sweep 17125 17375 1 0.25
+hold 17375 1 1.5
+sweep 17375 17625 1 0.25
+hold 17625 1 1.5
+sweep 17625 17875 1 0.25
+hold 17875 1 1.5
+sweep 17875 18125 1 0.25
+hold 18125 1 1.5

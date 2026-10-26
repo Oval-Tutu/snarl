@@ -1,0 +1,26 @@
+# v12-merlin: written by tools/scorecard --write-fullrange. Holds at throttle 0 every 250 rpm
+# from idle (the first hold of holds-t100.scn) to below the limiter at 3500 rpm.
+# Each hold is 0.5 s of settling and at least 24 whole cycles and 1 s; 0.25 s sweeps join the holds.
+hold 600 0 5.3
+sweep 600 750 0 0.25
+hold 750 0 4.4
+sweep 750 1000 0 0.25
+hold 1000 0 3.4
+sweep 1000 1250 0 0.25
+hold 1250 0 2.9
+sweep 1250 1500 0 0.25
+hold 1500 0 2.5
+sweep 1500 1750 0 0.25
+hold 1750 0 2.2
+sweep 1750 2000 0 0.25
+hold 2000 0 2
+sweep 2000 2250 0 0.25
+hold 2250 0 1.8
+sweep 2250 2500 0 0.25
+hold 2500 0 1.7
+sweep 2500 2750 0 0.25
+hold 2750 0 1.6
+sweep 2750 3000 0 0.25
+hold 3000 0 1.5
+sweep 3000 3250 0 0.25
+hold 3250 0 1.5

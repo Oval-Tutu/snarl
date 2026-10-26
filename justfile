@@ -355,6 +355,109 @@ ref-upstream engine="":
         echo "Wrote ${out}"
     done
 
+# Render the full-range references of the five upstream engine-sim engines
+# (docs/research/fullrange-scorecard.md), for one engine or for all when
+# none is given. tools/scorecard --write-fullrange writes
+# scenarios/upstream/<engine>/fullrange-t000.scn to fullrange-t100.scn:
+# holds at each throttle row of the cycle table grid every 250 rpm from
+# idle to below the limiter, and fullrange-mid-t100.scn: full-throttle
+# holds halfway between those RPM. The renderer runs each file twice with the
+# settings of just ref-upstream, at the 3 s pre-roll into
+# out/reference/upstream/<engine>/ and at a 3.5 s pre-roll into
+# out/reference/upstream/calib/<engine>/, the second engine-sim render of
+# the calibration (tools/scorecard --calib). The calibration also renders
+# sweep-wot and overrun, whose references just ref-upstream renders. The
+# renders run in parallel, at most one per CPU.
+ref-fullrange engine="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    r="$(nix build -f reference/engine-sim --print-out-paths --no-link)"
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "${tmp}"' EXIT
+    declare -A scripts=(
+        [i4-vtec]=atg-video-1/05_honda_vtec.mr
+        [v8-ls]=atg-video-2/07_gm_ls.mr
+        [f4-ej25]=atg-video-1/06_subaru_ej25.mr
+        [v12-412]=atg-video-2/12_ferrari_412_t2.mr
+        [v12-merlin]=atg-video-2/11_merlin_v12.mr
+    )
+    # Sets segments to the renderer flags of the scenario file $1.
+    parse() {
+        segments=()
+        while IFS= read -r line; do
+            read -r kind a b c d extra <<< "${line%%#*}" || true
+            case "${kind:-}" in
+                "") continue ;;
+                hold) [[ -n "${c}" && -z "${d}" ]] && segments+=(--hold "${a}:${b}:${c}") && continue ;;
+                sweep) [[ -n "${d}" && -z "${extra}" ]] && segments+=(--sweep "${a}:${b}:${c}:${d}") && continue ;;
+            esac
+            echo "Error: $1: bad segment '${line}'" >&2
+            exit 1
+        done < "$1"
+    }
+    engines=({{ if engine == "" { "i4-vtec v8-ls f4-ej25 v12-412 v12-merlin" } else { engine } }})
+    start=${SECONDS}
+    jobs=0
+    for e in "${engines[@]}"; do
+        if [[ -z "${scripts[${e}]:-}" ]]; then
+            echo "Error: unknown engine '${e}'. Use i4-vtec, v8-ls, f4-ej25, v12-412 or v12-merlin." >&2
+            exit 1
+        fi
+        script="$(tools/import/engine-sim-main.sh "${r}/share/engine-sim/engines/${scripts[${e}]}" "${tmp}")"
+        go run ./tools/scorecard --write-fullrange --engines "${e}"
+        out="out/reference/upstream/${e}"
+        calib="out/reference/upstream/calib/${e}"
+        mkdir -p "${out}" "${calib}"
+        for f in scenarios/upstream/"${e}"/{fullrange-t000,fullrange-t025,fullrange-t050,fullrange-t075,fullrange-t100,fullrange-mid-t100,sweep-wot,overrun}.scn; do
+            name="$(basename "${f}" .scn)"
+            parse "${f}"
+            runs=("${out}:3" "${calib}:3.5")
+            # just ref-upstream renders the reference of these two.
+            [[ "${name}" == sweep-wot || "${name}" == overrun ]] && runs=("${calib}:3.5")
+            for run in "${runs[@]}"; do
+                dir="${run%:*}"
+                if (( jobs >= $(nproc) )); then
+                    wait -n
+                    jobs=$((jobs - 1))
+                fi
+                "${r}/bin/engine-sim-render" --script "${script}" "${segments[@]}" --volume 0.5 --settle "${run##*:}" \
+                    --out "${dir}/${name}.wav" --csv "${dir}/${name}.csv" --csv-every 100 > "${dir}/${name}.log" 2>&1 &
+                jobs=$((jobs + 1))
+            done
+        done
+    done
+    while (( jobs > 0 )); do
+        wait -n
+        jobs=$((jobs - 1))
+    done
+    echo "Rendered the full-range references of ${engines[*]} in $((SECONDS - start)) s"
+
+# Play the full-range scenarios of just ref-fullrange from the cycle tables
+# through the exact synthesiser port with tools/cycles play, for one engine
+# or for all when engine is "all", into out/fullrange/<name>/<engine>/, so
+# that tools/scorecard --against out/fullrange/<name> scores them against
+# engine-sim (docs/research/fullrange-scorecard.md). args go to tools/cycles
+# play, for example --no-residual. The engines play in parallel.
+fullrange-play name engine="all" *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    r="$(nix build -f reference/engine-sim --print-out-paths --no-link)"
+    engines=({{ if engine == "all" { "i4-vtec v8-ls f4-ej25 v12-412 v12-merlin" } else { engine } }})
+    start=${SECONDS}
+    go build -o "out/fullrange/cycles" ./tools/cycles
+    pids=()
+    for e in "${engines[@]}"; do
+        for f in scenarios/upstream/"${e}"/fullrange-*.scn; do
+            out/fullrange/cycles play --tables "profiles/cycles/${e}.bin" --es "${r}/share/engine-sim/es" \
+                --out-dir "out/fullrange/{{ name }}/${e}" {{ args }} "${f}" > /dev/null &
+            pids+=($!)
+        done
+    done
+    for p in "${pids[@]}"; do
+        wait "${p}"
+    done
+    echo "Played the full-range scenarios of ${engines[*]} into out/fullrange/{{ name }} in $((SECONDS - start)) s"
+
 # Build the cycle tables of the five upstream engine-sim engines
 # (docs/research/cycle-tables.md), for one engine or for all when none is
 # given. tools/cycles scenarios writes the grid scenarios into

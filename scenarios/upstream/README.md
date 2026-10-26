@@ -33,6 +33,15 @@ Idle is the idle rpm of the dump rounded to 10 rpm. For an engine that stalls at
 
 Only the renderer recipe reads `cut.scn`. `snarl-render` and `snarl-compare` do not read the `cut` segment.
 
+## Full-range holds
+
+`just ref-fullrange` writes `fullrange-*.scn` in each engine directory with `tools/scorecard --write-fullrange` (`docs/research/fullrange-scorecard.md`). Do not edit these files by hand: run the recipe again.
+
+- `fullrange-t000.scn` to `fullrange-t100.scn`: one file per throttle row of the cycle table grid, with a hold at idle (the first hold of `holds-t100.scn`) and at every multiple of 250 rpm below 0.998 of the limiter rpm of the profile. Each hold is 0.5 s of settling and at least 24 whole engine cycles and 1 s, and 0.25 s sweeps join the holds.
+- `fullrange-mid-t100.scn`: full-throttle holds halfway between the rpm of the other files, where playback blends two neighbouring grid points.
+
+`tools/scorecard` scores the hold windows of these files only, after the 0.5 s of settling.
+
 ## The free segment
 
 `idle-free.scn` and `limiter-free.scn` use the segment `free THROTTLE SECONDS`: the dynamometer is off and the engine runs free. Only the engine-sim renderer (`--free`) and `tools/fit --health` read it. It is not part of `docs/scenario-format.md`, so `snarl-render` and `snarl-compare` do not read these two files.
