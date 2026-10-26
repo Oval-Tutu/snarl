@@ -17,6 +17,8 @@ import (
 //     the attack and decay of each firing in each band.
 //   - The noise character is the residual level and the burst measure of
 //     both files.
+//   - The hiss measures compare the bands above 2 kHz: their levels, their
+//     tonality and the noise between the firing pulses (hiss.go).
 //
 // A score from 0 to 100 maps the distances above their calibration floors to
 // a quality figure: AlignScore.
@@ -87,6 +89,20 @@ const (
 	// AlignFloorBurstDB is the floor of the mean burst modulation
 	// difference.
 	AlignFloorBurstDB = 1.3
+	// The floors of the hiss measures come from the full-range holds of
+	// docs/research/fullrange-scorecard.md, engine-sim against a second
+	// render, for i4-vtec, v8-ls, f4-ej25 and v12-merlin. v12-412 differs
+	// from itself by more, from its random misfires.
+	//
+	// AlignFloorHissDB is the floor of the largest band level difference
+	// above 2 kHz (HissMatch.WorstDB).
+	AlignFloorHissDB = 1.6
+	// AlignFloorTonalityDB is the floor of the mean tonality difference
+	// above 2 kHz (HissCycleMatch.TonalityDistance).
+	AlignFloorTonalityDB = 0.5
+	// AlignFloorGapDB is the floor of the mean difference of the noise
+	// between the firing pulses above 2 kHz (HissCycleMatch.GapDistance).
+	AlignFloorGapDB = 2.2
 )
 
 // alignResidualLowDB is the residual level, relative to the signal, below
@@ -104,6 +120,9 @@ const (
 	AlignStepEnvelopeDB   = 2.0
 	AlignStepResidualDB   = 2.0
 	AlignStepBurstDB      = 2.0
+	AlignStepHissDB       = 1.0
+	AlignStepTonalityDB   = 1.0
+	AlignStepGapDB        = 1.0
 )
 
 // ResidualDistance returns the difference in dB of the residual levels of
@@ -209,11 +228,14 @@ type AlignSteps struct {
 	Envelope   float64 `json:"envelope"`
 	Residual   float64 `json:"residual"`
 	Burst      float64 `json:"burst"`
+	Hiss       float64 `json:"hiss"`
+	Tonality   float64 `json:"tonality"`
+	Gap        float64 `json:"gap"`
 }
 
 // Sum returns the total number of steps.
 func (s AlignSteps) Sum() float64 {
-	return s.SpecMedian + s.SpecP90 + s.Roughness + s.Wave + s.Envelope + s.Residual + s.Burst
+	return s.SpecMedian + s.SpecP90 + s.Roughness + s.Wave + s.Envelope + s.Residual + s.Burst + s.Hiss + s.Tonality + s.Gap
 }
 
 // AlignResult is the scorecard of one window.
@@ -225,8 +247,13 @@ type AlignResult struct {
 	Cycle    *CycleMatch    `json:"cycle,omitempty"`
 	Envelope *EnvelopeMatch `json:"envelope,omitempty"`
 	Noise    *NoiseMatch    `json:"noise,omitempty"`
-	Steps    AlignSteps     `json:"steps"`
-	Score    float64        `json:"score"`
+	// Hiss is the band level match above 2 kHz of every window, and
+	// HissCycle the tonality and the gap between the firing pulses of a
+	// hold with cycle measures.
+	Hiss      HissMatch       `json:"hiss"`
+	HissCycle *HissCycleMatch `json:"hiss_cycle,omitempty"`
+	Steps     AlignSteps      `json:"steps"`
+	Score     float64         `json:"score"`
 	// Hold is true for a hold window, which has the hold floors of the
 	// spectral distance.
 	Hold bool `json:"hold"`
@@ -258,8 +285,11 @@ func Align(a, b []float64, rate int, rpm float64, hold, cycles bool) AlignResult
 				BurstA:    burstOf(&ca.c, rate),
 				BurstB:    burstOf(&cb.c, rate),
 			}
+			hc := hissCycleMatch(a, b, rate, ca, cb)
+			res.HissCycle = &hc
 		}
 	}
+	res.Hiss = hissMatch(a, b, rate)
 	res.Spectral = spectralDistance(a, b, rate, lag)
 	// The self distance shifts A by the whole number of cycles that first
 	// reaches a frame length, so that the frames do not overlap and keep
@@ -309,6 +339,13 @@ func alignSteps(r *AlignResult) AlignSteps {
 		s.Residual = excess(ResidualDistance(r.Noise.ResidualA, r.Noise.ResidualB), AlignFloorResidualDB, AlignStepResidualDB)
 		s.Burst = excess(BurstModDistance(r.Noise.BurstA, r.Noise.BurstB), AlignFloorBurstDB, AlignStepBurstDB)
 	}
+	s.Hiss = excess(math.Abs(r.Hiss.WorstDB), AlignFloorHissDB, AlignStepHissDB)
+	if r.HissCycle != nil {
+		tonality, _ := r.HissCycle.TonalityDistance()
+		gap, _ := r.HissCycle.GapDistance()
+		s.Tonality = excess(tonality, AlignFloorTonalityDB, AlignStepTonalityDB)
+		s.Gap = excess(gap, AlignFloorGapDB, AlignStepGapDB)
+	}
 	return s
 }
 
@@ -343,6 +380,9 @@ func AlignTotal(rs []AlignResult, weights []float64) (score float64, steps Align
 		steps.Envelope += w * s.Envelope
 		steps.Residual += w * s.Residual
 		steps.Burst += w * s.Burst
+		steps.Hiss += w * s.Hiss
+		steps.Tonality += w * s.Tonality
+		steps.Gap += w * s.Gap
 	}
 	if wsum <= 0 {
 		return math.NaN(), AlignSteps{}
@@ -355,6 +395,9 @@ func AlignTotal(rs []AlignResult, weights []float64) (score float64, steps Align
 	steps.Envelope /= wsum
 	steps.Residual /= wsum
 	steps.Burst /= wsum
+	steps.Hiss /= wsum
+	steps.Tonality /= wsum
+	steps.Gap /= wsum
 	return score, steps
 }
 
@@ -372,6 +415,11 @@ type AlignRaw struct {
 	EnvelopeDB    float64 `json:"envelope_db"`
 	ResidualDB    float64 `json:"residual_db"`
 	BurstDB       float64 `json:"burst_db"`
+	// HissDB is the size of HissMatch.WorstDB, and TonalityDB and GapDB the
+	// distances of HissCycleMatch.
+	HissDB     float64 `json:"hiss_db"`
+	TonalityDB float64 `json:"tonality_db"`
+	GapDB      float64 `json:"gap_db"`
 }
 
 // AlignFloors returns the calibration floors of the score as an AlignRaw.
@@ -380,6 +428,7 @@ func AlignFloors() AlignRaw {
 		SpecMedianDB: AlignFloorSpecMedianDB, SpecP90DB: AlignFloorSpecP90DB,
 		SweepMedianDB: AlignFloorSweepMedianDB, SweepP90DB: AlignFloorSweepP90DB, RoughnessDB: AlignFloorRoughnessDB,
 		WaveDB: AlignFloorWaveDB, EnvelopeDB: AlignFloorEnvelopeDB, ResidualDB: AlignFloorResidualDB, BurstDB: AlignFloorBurstDB,
+		HissDB: AlignFloorHissDB, TonalityDB: AlignFloorTonalityDB, GapDB: AlignFloorGapDB,
 	}
 }
 
@@ -387,7 +436,7 @@ func AlignFloors() AlignRaw {
 // distance, and the smallest WaveDB. A distance that no window has is NaN.
 func AlignWorst(rs []AlignResult) AlignRaw {
 	nan := math.NaN()
-	w := AlignRaw{nan, nan, nan, nan, nan, nan, nan, nan, nan}
+	w := AlignRaw{nan, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan}
 	hi := func(p *float64, v float64) {
 		if !math.IsNaN(v) && (math.IsNaN(*p) || v > *p) {
 			*p = v
@@ -419,6 +468,13 @@ func AlignWorst(rs []AlignResult) AlignRaw {
 		if r.Noise != nil {
 			hi(&w.ResidualDB, ResidualDistance(r.Noise.ResidualA, r.Noise.ResidualB))
 			hi(&w.BurstDB, BurstModDistance(r.Noise.BurstA, r.Noise.BurstB))
+		}
+		hi(&w.HissDB, math.Abs(r.Hiss.WorstDB))
+		if r.HissCycle != nil {
+			tonality, _ := r.HissCycle.TonalityDistance()
+			gap, _ := r.HissCycle.GapDistance()
+			hi(&w.TonalityDB, tonality)
+			hi(&w.GapDB, gap)
 		}
 	}
 	return w
@@ -723,15 +779,15 @@ func cycleMatch(a, b *alignCycles, rate int) (CycleMatch, int) {
 }
 
 // cycleEnvelope returns the mean band envelope over the cycle of c in each
-// of AlignEnvelopeBands, in dB, alignSectors values each, or nil for a band
-// above the Nyquist frequency of the angle domain.
-func cycleEnvelope(c *alignCycles) [][]float64 {
+// of bands, in dB, alignSectors values each, or nil for a band above the
+// Nyquist frequency of the angle domain.
+func cycleEnvelope(c *alignCycles, bands [][2]float64) [][]float64 {
 	n := max(8, int(math.Round(alignEnvFrameS*c.fs)))
 	size := nextPow2(n)
 	win := Hann(n)
 	buf := make([]complex128, size)
-	out := make([][]float64, len(AlignEnvelopeBands))
-	for i, b := range AlignEnvelopeBands {
+	out := make([][]float64, len(bands))
+	for i, b := range bands {
 		if b[1] <= c.fs/2 {
 			out[i] = make([]float64, alignSectors)
 		}
@@ -744,7 +800,7 @@ func cycleEnvelope(c *alignCycles) [][]float64 {
 				buf[j] = complex(c.sig[i0+j]*w, 0)
 			}
 			FFT(buf)
-			for bi, b := range AlignEnvelopeBands {
+			for bi, b := range bands {
 				if out[bi] == nil {
 					continue
 				}
@@ -904,7 +960,7 @@ func shapeDistance(x, y []float64, q int) float64 {
 // envelopeMatch compares the mean band envelopes of a and b, with b shifted
 // by the cycle shift of the waveform match, give or take one sector.
 func envelopeMatch(a, b *alignCycles, shift int) EnvelopeMatch {
-	ea, eb := cycleEnvelope(a), cycleEnvelope(b)
+	ea, eb := cycleEnvelope(a, AlignEnvelopeBands), cycleEnvelope(b, AlignEnvelopeBands)
 	q0 := int(math.Round(float64(shift) * alignSectors / float64(a.size)))
 	m := EnvelopeMatch{MeanCorr: math.NaN(), DistanceDB: math.NaN()}
 	for q := q0 - 1; q <= q0+1; q++ {

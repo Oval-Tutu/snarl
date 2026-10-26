@@ -84,6 +84,7 @@ func aligns(w io.Writer, paths []string, cfg *config) error {
 	alignScoreTable(w, rows)
 	alignCycleTable(w, rows)
 	alignNoiseTable(w, rows)
+	alignHissTable(w, rows)
 	alignTotal(w, rows)
 	return nil
 }
@@ -188,6 +189,67 @@ func alignNoiseTable(w io.Writer, rows []alignRow) {
 	fmt.Fprint(w, "\nResidual: the part that does not repeat from cycle to cycle, relative to the signal. Mod and Locked: the burst measure of the residual (--burst), Locked shown from -40 dB. Mod distance: the mean absolute difference of Mod over the bands.\n\n")
 }
 
+func alignHissTable(w io.Writer, rows []alignRow) {
+	var bands []float64
+	for _, r := range rows {
+		if len(r.r.Hiss.Bands) > len(bands) {
+			bands = bands[:0]
+			for _, b := range r.r.Hiss.Bands {
+				bands = append(bands, b.CentreHz)
+			}
+		}
+	}
+	if len(bands) == 0 {
+		return
+	}
+	fmt.Fprint(w, "| Window |")
+	for _, c := range bands {
+		fmt.Fprintf(w, " %.0f Hz B-A (dB) |", c)
+	}
+	fmt.Fprint(w, " Worst band (dB) |")
+	for _, b := range analysis.BurstBands {
+		fmt.Fprintf(w, " Tonality A / B %s (dB) |", bandName(analysis.ResidualBand{Lo: b[0], Hi: b[1]}))
+	}
+	for _, b := range analysis.BurstBands {
+		fmt.Fprintf(w, " Gap A / B %s (dB) |", bandName(analysis.ResidualBand{Lo: b[0], Hi: b[1]}))
+	}
+	fmt.Fprint(w, " Tonality distance (dB) | Gap distance (dB) |\n")
+	fmt.Fprint(w, "|"+strings.Repeat(" --- |", 4+len(bands)+2*len(analysis.BurstBands))+"\n")
+	for _, row := range rows {
+		h := row.r.Hiss
+		fmt.Fprintf(w, "| %s |", row.label)
+		for i := range bands {
+			if i < len(h.Bands) {
+				fmt.Fprintf(w, " %+.1f |", h.Bands[i].LevelB-h.Bands[i].LevelA)
+			} else {
+				fmt.Fprint(w, " - |")
+			}
+		}
+		fmt.Fprintf(w, " %s |", cell("%+.1f", h.WorstDB))
+		hc := row.r.HissCycle
+		for i := range 2 * len(analysis.BurstBands) {
+			switch {
+			case hc == nil:
+				fmt.Fprint(w, " - |")
+			case i < len(analysis.BurstBands) && i < len(hc.TonalA):
+				fmt.Fprintf(w, " %.1f / %.1f |", hc.TonalA[i], hc.TonalB[i])
+			case i >= len(analysis.BurstBands) && i-len(analysis.BurstBands) < len(hc.GapA):
+				j := i - len(analysis.BurstBands)
+				fmt.Fprintf(w, " %.1f / %.1f |", hc.GapA[j], hc.GapB[j])
+			default:
+				fmt.Fprint(w, " - |")
+			}
+		}
+		td, gd := math.NaN(), math.NaN()
+		if hc != nil {
+			td, _ = hc.TonalityDistance()
+			gd, _ = hc.GapDistance()
+		}
+		fmt.Fprintf(w, " %s | %s |\n", cell("%.1f", td), cell("%.1f", gd))
+	}
+	fmt.Fprint(w, "\nB-A: the level of each third-octave band from 2 kHz, relative to the K-weighted level of the window, of B less that of A. Worst band: the largest of them. Tonality: the power of the octave band over the noise between the engine-order harmonics in the crank angle domain, 0 dB for noise only. Gap: the level of the quietest quarter of the mean band envelope over the cycle, relative to the K-weighted level of the window, the noise between the firing pulses. Tonality and gap distance: the mean absolute difference over the bands.\n\n")
+}
+
 func alignTotal(w io.Writer, rows []alignRow) {
 	rs := make([]analysis.AlignResult, len(rows))
 	weights := make([]float64, len(rows))
@@ -208,6 +270,9 @@ func alignTotal(w io.Writer, rows []alignRow) {
 		{"envelope", steps.Envelope},
 		{"residual level", steps.Residual},
 		{"burst modulation", steps.Burst},
+		{"band level above 2 kHz", steps.Hiss},
+		{"tonality above 2 kHz", steps.Tonality},
+		{"gap between firings above 2 kHz", steps.Gap},
 	}
 	slices.SortStableFunc(parts, func(a, b part) int {
 		switch {
@@ -238,6 +303,9 @@ func alignTotal(w io.Writer, rows []alignRow) {
 		{"envelope distance (dB)", worst.EnvelopeDB, floor.EnvelopeDB, "%.2f"},
 		{"residual difference (dB)", worst.ResidualDB, floor.ResidualDB, "%.2f"},
 		{"burst Mod distance (dB)", worst.BurstDB, floor.BurstDB, "%.2f"},
+		{"band level above 2 kHz (dB)", worst.HissDB, floor.HissDB, "%.2f"},
+		{"tonality distance above 2 kHz (dB)", worst.TonalityDB, floor.TonalityDB, "%.2f"},
+		{"gap distance above 2 kHz (dB)", worst.GapDB, floor.GapDB, "%.2f"},
 	} {
 		fmt.Fprintf(w, "| %s | %s | %s |\n", d.name, cell(d.decimal, d.v), cell(d.decimal, d.f))
 	}
