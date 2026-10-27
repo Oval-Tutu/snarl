@@ -504,3 +504,41 @@ go run ./tools/cycles spectrum --record out/cycles/grid/v12-412/t100 --rpm 15250
 go run ./tools/cycles spectrum --record out/cycles/grid/i4-vtec/t100 --rpm 1500 --groups 1000 --frame 16384
 go run ./tools/cycles blend --tables profiles/cycles/f4-ej25.bin
 ```
+
+## 13. The lift-off
+
+The drive scorecard (`docs/research/drive-scorecard.md`) found 4 to 10 dB too much level from 2 to 8 kHz in the first 0.25 s after a lift from full throttle. It was largest on `v12-merlin` and `f4-ej25`, and it blamed the closing transient and the intake lag. Measured on the tables of section 12.
+
+### 13.1 Answer
+
+The cause is in the measure of the closing slices, not in the intake lag. The first slice of each closing step holds only 2 or 3 cycles of a cycle that changes fast. The average of those cycles holds each phase at another time, so the average cycle jumps at its end. Played over and over, the jump clicks, with harmonics up to the Nyquist frequency. Each slice now holds the cycle at its middle. In the drive, the lift windows of `v12-merlin` go from +10.7, +13.3 and +10.9 dB to -6.0, -4.1 and -2.5 dB, and those of `f4-ej25` from +5.7, +2.6 and +8.7 dB to +3.1, within 1.6 and +3.4 dB, inside its self spread of 5.3 dB. The full-range and default scorecards do not change, the intake lag stays as measured, and the tables shrink to 5 395 744 bytes (-27 377 bytes). The runtime does not change.
+
+### 13.2 Evidence
+
+New engine-sim renders of a lift at a held RPM and a lift at the falling RPM of the drive lifts, per engine (`out/fix4/lift`: 3250 rpm on `v12-merlin`, 5750 rpm on `f4-ej25` and `v8-ls`, 7750 rpm on `i4-vtec` and 15750 rpm on `v12-412`, at a closing step RPM of each grid), show the excess at the held RPM too: +11.3 dB on `v12-merlin` and +6.9 dB on `f4-ej25`. The slices come from closing steps at these RPM, so the playback of the slices is at fault, not the falling RPM.
+
+On `v12-merlin` at 3250 rpm, the first slice runs from 0.04 to 0.15 s after the close and holds 2 cycles. With the average of the cycles, `tools/cycles spectrum --length 0.11` gives a residual 30 to 40 dB above the input from 700 Hz to 3.5 kHz: the average cycle holds content that the input has not. With the cycle at the middle of the slice, the residual is 0.3 to 5.5 dB below the input. In the output, engine-sim has 5 dB more from 0.7 to 2.8 kHz in the first 0.25 s after the lift, relative to the window level. snarl had 16 to 23 dB more (`snarl-compare --describe` on quarter-second holds).
+
+Three other suspects, each tested on the lift renders and the drive:
+
+- **Without the intake lag while the slices play**, the slices taking the whole closed-throttle share at once: worse, +13.0 to +14.3 dB on `v12-merlin` and +11.3 to +21.7 dB on `f4-ej25`. The lag stays.
+- **Without the band noise of the first slices**: no change on `v12-merlin` (+13.3 dB). The excess is in the average cycle, not in the noise.
+- **A longer intake lag on `f4-ej25`**: `tools/cycles build --step` on the closing steps of `close.scn` fits the closing lag at each RPM of the steps. On `f4-ej25` it is 0.050 s at 4750, 5750 and 6400 rpm and 0.057 s at 3750 rpm, against 0.050 s in the profile, from the throttle step of `step.scn` at 3750 rpm. The 0.2 s that the drive scorecard tried has no support in engine-sim, and with the slices fixed, the `f4-ej25` lifts pass with 0.05 s. The lag grows at low RPM: 0.19 s at 830 rpm on `f4-ej25` and 0.17 s at 600 rpm on `v12-merlin` (`out/fix4/lag-*.md`). A lag by RPM would follow that, but no scored window needs it.
+
+### 13.3 The fix
+
+`syncSnapshot` (`internal/cycles/measure.go`) measures a slice with `MeasureOptions.Drift`, which `CloseSlices` sets. It averages the cycles and fits their least-squares slope over the cycle index. Then it takes each phase of the average back to the middle of its cycle with the slope, which is the cycle at the middle of the slice. The playback blends the slices by the time since the close, as before, so the change from slice to slice comes from the blend, not from a jump within a cycle. The band filters of the slice residual start at the slice, settled on its first residual, with no warm-up on the input before it, which is another state. A slice has no aliased harmonics and no modulation. `TestMeasureDrift` checks that a cycle that grows by 7 % per cycle comes back as the cycle at the middle with an error 40 dB or more below it, and 15 dB or more below the error of the average. `tools/cycles build --no-drift` builds the slices as before.
+
+### 13.4 Results
+
+The drive (`out/fix4/base/score.md` to `out/fix4/snap/score.md`), the worst band above 2 kHz of the lift windows at 6.0, 14.5 and 24.0 s:
+
+| Engine | Before (dB) | After (dB) | engine-sim self spread over the drive (dB) |
+| --- | --- | --- | --- |
+| `i4-vtec` | -3.3, +4.3, +4.3 | +2.9, +4.4, +4.2 | 4.3 |
+| `v8-ls` | +3.8, +4.6, +4.1 | +3.8, +4.6, +3.9 | 5.8 |
+| `f4-ej25` | +5.7, +2.6, +8.7 | +3.1, pass, +3.4 | 5.3 |
+| `v12-412` | -2.3, -3.7, +3.4 | -2.8, -3.8, +3.4 | 4.1 |
+| `v12-merlin` | +10.7, +13.3, +10.9 | -6.0, -4.1, -2.5 | 4.6 |
+
+The windows of the drive beyond the self spread fall from 24 to 20. `v12-merlin` at 6.0 s (-6.0 dB) is now beyond the spread on the low side. The `i4-vtec` and `v8-ls` lifts stay at the edge of the spread, as before. The full-range scorecard has the same 867 passing holds of 919, and the default scenarios do not change (`out/fix4/full/score.md`, `out/fix4/default/score.md`).
