@@ -432,6 +432,62 @@ ref-fullrange engine="":
     done
     echo "Rendered the full-range references of ${engines[*]} in $((SECONDS - start)) s"
 
+# Render the drive references of the five upstream engine-sim engines
+# (docs/research/drive-scorecard.md), for one engine or for all when none is
+# given. snarl-harness -scenario writes scenarios/upstream/<engine>/drive.scn
+# from the scripted drive of the harness: one sweep per tick of 60 per
+# second. The renderer runs it as just ref-fullrange does, at the 3 s
+# pre-roll into out/reference/upstream/<engine>/ and at a 3.5 s pre-roll
+# into out/reference/upstream/calib/<engine>/, in parallel.
+ref-drive engine="": (_command "snarl-harness")
+    #!/usr/bin/env bash
+    set -euo pipefail
+    r="$(nix build -f reference/engine-sim --print-out-paths --no-link)"
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "${tmp}"' EXIT
+    declare -A scripts=(
+        [i4-vtec]=atg-video-1/05_honda_vtec.mr
+        [v8-ls]=atg-video-2/07_gm_ls.mr
+        [f4-ej25]=atg-video-1/06_subaru_ej25.mr
+        [v12-412]=atg-video-2/12_ferrari_412_t2.mr
+        [v12-merlin]=atg-video-2/11_merlin_v12.mr
+    )
+    engines=({{ if engine == "" { "i4-vtec v8-ls f4-ej25 v12-412 v12-merlin" } else { engine } }})
+    start=${SECONDS}
+    (cd cmd/snarl-harness && go build -o "${tmp}/snarl-harness" .)
+    pids=()
+    for e in "${engines[@]}"; do
+        if [[ -z "${scripts[${e}]:-}" ]]; then
+            echo "Error: unknown engine '${e}'. Use i4-vtec, v8-ls, f4-ej25, v12-412 or v12-merlin." >&2
+            exit 1
+        fi
+        script="$(tools/import/engine-sim-main.sh "${r}/share/engine-sim/engines/${scripts[${e}]}" "${tmp}")"
+        f="scenarios/upstream/${e}/drive.scn"
+        "${tmp}/snarl-harness" -profile "${e}" -scenario "${f}"
+        segments=()
+        while IFS= read -r line; do
+            read -r kind a b c d extra <<< "${line%%#*}" || true
+            case "${kind:-}" in
+                "") continue ;;
+                hold) [[ -n "${c}" && -z "${d}" ]] && segments+=(--hold "${a}:${b}:${c}") && continue ;;
+                sweep) [[ -n "${d}" && -z "${extra}" ]] && segments+=(--sweep "${a}:${b}:${c}:${d}") && continue ;;
+            esac
+            echo "Error: ${f}: bad segment '${line}'" >&2
+            exit 1
+        done < "${f}"
+        for run in "out/reference/upstream/${e}:3" "out/reference/upstream/calib/${e}:3.5"; do
+            dir="${run%:*}"
+            mkdir -p "${dir}"
+            "${r}/bin/engine-sim-render" --script "${script}" "${segments[@]}" --volume 0.5 --settle "${run##*:}" \
+                --out "${dir}/drive.wav" --csv "${dir}/drive.csv" --csv-every 100 > "${dir}/drive.log" 2>&1 &
+            pids+=($!)
+        done
+    done
+    for p in "${pids[@]}"; do
+        wait "${p}"
+    done
+    echo "Rendered the drive references of ${engines[*]} in $((SECONDS - start)) s"
+
 # Play the full-range scenarios of just ref-fullrange from the cycle tables
 # through the exact synthesiser port with tools/cycles play, for one engine
 # or for all when engine is "all", into out/fullrange/<name>/<engine>/, so
@@ -462,8 +518,10 @@ fullrange-play name engine="all" *args:
 # (docs/research/cycle-tables.md), for one engine or for all when none is
 # given. tools/cycles scenarios writes the grid scenarios into
 # scenarios/upstream/<engine>/grid from the first and last hold of
-# holds-t100.scn: one file per throttle row (0, 0.25, 0.5, 0.75 and 1) with
-# a hold at idle, every multiple of the RPM step and the top, cut.scn
+# holds-t100.scn and the limiter RPM of profiles/<engine>.toml: one file per
+# throttle row (0, 0.25, 0.5, 0.75 and 1) with a hold at idle, every
+# multiple of the RPM step and the top, the last multiple of the step below
+# 0.998 of the limiter RPM or the last hold when that is higher, cut.scn
 # with ignition-off holds, step.scn with throttle steps for the intake
 # lag, and close.scn with closing steps for the closing transient. The
 # renderer runs each file with --dump-synth into
@@ -515,8 +573,11 @@ cycles-grid engine="":
         script="$(tools/import/engine-sim-main.sh "${r}/share/engine-sim/engines/${scripts[${e}]}" "${tmp}")"
         scn="scenarios/upstream/${e}/grid"
         out="out/cycles/grid/${e}"
+        # The grid goes on above the last hold to below the limiter RPM of
+        # the profile, as the full-range scenarios do.
+        limiter="$(grep -m 1 '^limiter_rpm = ' "profiles/${e}.toml")"
         go run ./tools/cycles scenarios --holds "scenarios/upstream/${e}/holds-t100.scn" --name "${e}" \
-            --step "${steps[${e}]}" --out "${scn}"
+            --step "${steps[${e}]}" --limiter "${limiter##* }" --out "${scn}"
         rm -rf "${out}"
         mkdir -p "${out}"
         pids=()

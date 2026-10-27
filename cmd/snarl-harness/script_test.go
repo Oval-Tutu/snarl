@@ -3,11 +3,13 @@ package main
 import (
 	"bytes"
 	"encoding/csv"
+	"math"
 	"strconv"
 	"testing"
 
 	"github.com/oval-tutu/snarl"
 	"github.com/oval-tutu/snarl/cmd/snarl-harness/internal/record"
+	"github.com/oval-tutu/snarl/internal/scenario"
 )
 
 func TestScriptLog(t *testing.T) {
@@ -56,6 +58,52 @@ func TestScriptLog(t *testing.T) {
 	}
 	if rows[0][len(rows[0])-1] != "pop_character" || len(rows[0]) != len(splitHeader()) {
 		t.Errorf("header %v", rows[0])
+	}
+}
+
+func TestScriptScenario(t *testing.T) {
+	ps, i, _, err := loadProfiles("i4-vtec", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr := ps[i]
+	var buf bytes.Buffer
+	if err := runScenario(&buf, pr, driveScript); err != nil {
+		t.Fatal(err)
+	}
+	sc, err := scenario.Parse(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := sc.Duration(); math.Abs(d-27.5) > 1e-9 {
+		t.Errorf("duration %v s, want 27.5 s", d)
+	}
+	// The scenario reaches the RPM and the throttle of each tick at its
+	// end, and the ticks at idle and at the part-throttle goal join holds.
+	var snaps []snarl.Snapshot
+	if err := driveTicks(pr, driveScript, func(s snarl.Snapshot) error {
+		snaps = append(snaps, s)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	holds := 0
+	for _, seg := range sc.Segments {
+		if seg.Kind == scenario.Hold {
+			holds++
+		}
+	}
+	if len(sc.Segments) >= len(snaps) || holds < 2 || sc.Segments[0].Kind != scenario.Hold ||
+		sc.Segments[0].RPM0 != float64(pr.IdleRPM) {
+		t.Errorf("%d segments for %d ticks, %d holds, first %+v", len(sc.Segments), len(snaps), holds, sc.Segments[0])
+	}
+	for k, s := range snaps {
+		rpm, throttle := sc.At((float64(k) + 0.999) / tps)
+		next, _ := sc.At(float64(k+1) / tps)
+		if math.Abs(next-float64(s.RPM)) > 0.01 || math.Abs(rpm-float64(s.RPM)) > 0.002*float64(pr.LimiterRPM) ||
+			throttle != float64(s.Throttle) {
+			t.Fatalf("tick %d: scenario %v rpm (end %v) throttle %v, snapshot %v rpm throttle %v", k, rpm, next, throttle, s.RPM, s.Throttle)
+		}
 	}
 }
 

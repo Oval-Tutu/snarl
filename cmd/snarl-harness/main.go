@@ -1,13 +1,13 @@
 // Command snarl-harness plays a snarl engine in real time. A game
 // controller or the keyboard drives a simple drivetrain, and the screen
 // shows the engine state and the audio timings. It can record the
-// snapshots and the played audio, and it can write the snapshot log of a
-// scripted drive without a window.
+// snapshots and the played audio, and it can write the snapshot log or the
+// scenario (docs/scenario-format.md) of a scripted drive without a window.
 //
 // Usage:
 //
 //	snarl-harness [-profile NAME] [-catalogue DIR] [-record DIR]
-//	snarl-harness [-profile NAME] [-catalogue DIR] -script LOG.csv
+//	snarl-harness [-profile NAME] [-catalogue DIR] [-script LOG.csv] [-scenario DRIVE.scn]
 //
 // The profile list is the five embedded profiles, then the catalogue
 // profiles in DIR that have cycle tables, sorted by id. The harness skips a
@@ -587,14 +587,21 @@ func main() {
 	recDir := flag.String("record", "", "record from the start into `dir`; R starts and stops recordings in dir (default "+
 		filepath.Join(os.TempDir(), "snarl-record")+")")
 	script := flag.String("script", "", "write the snapshot log of the scripted drive, with shifts and lift-offs, to `file` and exit, with no window or audio")
+	scn := flag.String("scenario", "", "write the RPM and the throttle of the scripted drive as a scenario to `file` and exit, with no window or audio")
 	flag.Parse()
 	if *catalogue == "" {
 		*catalogue = findCatalogue()
 	}
 	var err error
-	if *script != "" {
-		err = writeScript(*script, *profile, *catalogue)
-	} else {
+	switch {
+	case *script != "" || *scn != "":
+		if *script != "" {
+			err = writeScript(*script, *profile, *catalogue)
+		}
+		if *scn != "" {
+			err = errors.Join(err, writeScenario(*scn, *profile, *catalogue))
+		}
+	default:
 		err = play(*profile, *catalogue, *recDir)
 	}
 	if err != nil {

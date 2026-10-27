@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"errors"
+	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/oval-tutu/snarl"
@@ -46,6 +49,18 @@ var driveScript = []scriptStep{
 // path, as a recording would log it. The profile is an embedded profile or a
 // profile of the catalogue directory.
 func writeScript(path, profile, catalogue string) error {
+	return writeDrive(path, profile, catalogue, runScript)
+}
+
+// writeScenario writes the RPM and the throttle of driveScript for the
+// profile to path in the scenario format (docs/scenario-format.md), so that
+// the engine-sim renderer and snarl-render can play the drive.
+func writeScenario(path, profile, catalogue string) error {
+	return writeDrive(path, profile, catalogue, runScenario)
+}
+
+// writeDrive writes driveScript for the profile to path with run.
+func writeDrive(path, profile, catalogue string, run func(io.Writer, snarl.Profile, []scriptStep) error) error {
 	ps, i, _, err := loadProfiles(profile, catalogue)
 	if err != nil {
 		return err
@@ -54,23 +69,75 @@ func writeScript(path, profile, catalogue string) error {
 	if err != nil {
 		return err
 	}
-	return errors.Join(runScript(f, ps[i], driveScript), f.Close())
+	return errors.Join(run(f, ps[i], driveScript), f.Close())
 }
 
-// runScript drives the harness drivetrain through steps at tps ticks per
-// second with the harness LoadFilter, and logs the snapshot of each tick
-// at the tick time, with tier 1.
+// runScript logs the snapshot of each tick of steps at the tick time,
+// with tier 1.
 func runScript(w io.Writer, pr snarl.Profile, steps []scriptStep) error {
 	l, err := record.NewLog(w)
 	if err != nil {
 		return err
 	}
+	tick := 0
+	at := func() time.Duration { return time.Duration(tick) * time.Second / tps }
+	if err := driveTicks(pr, steps, func(s snarl.Snapshot) error {
+		err := l.Write(at(), pr.Name, snarl.Tier1, s)
+		tick++
+		return err
+	}); err != nil {
+		return err
+	}
+	return l.Close(at())
+}
+
+// runScenario writes the scenario of steps: for each tick, a sweep from the
+// RPM of the tick before, idle at the start, to the RPM of the tick, with
+// the throttle of the tick, over one tick. Ticks that keep the RPM of the
+// tick before and the throttle join one hold.
+func runScenario(w io.Writer, pr snarl.Profile, steps []scriptStep) error {
+	b := bufio.NewWriter(w)
+	f := func(v float32) string { return strconv.FormatFloat(float64(v), 'g', -1, 32) }
+	sec := func(ticks int) string { return strconv.FormatFloat(float64(ticks)/tps, 'g', -1, 64) }
+	fmt.Fprintf(b, "# %s: written by snarl-harness -scenario from the scripted drive at %d ticks per second.\n", pr.Name, tps)
+	b.WriteString("# Each sweep is one tick, from the RPM of the tick before to the RPM of the tick.\n")
+	prev := pr.IdleRPM
+	var holdThrottle float32
+	holdTicks := 0
+	flush := func() {
+		if holdTicks > 0 {
+			fmt.Fprintf(b, "hold %s %s %s\n", f(prev), f(holdThrottle), sec(holdTicks))
+			holdTicks = 0
+		}
+	}
+	if err := driveTicks(pr, steps, func(s snarl.Snapshot) error {
+		if s.RPM == prev {
+			if holdTicks > 0 && s.Throttle != holdThrottle {
+				flush()
+			}
+			holdThrottle = s.Throttle
+			holdTicks++
+			return nil
+		}
+		flush()
+		fmt.Fprintf(b, "sweep %s %s %s %s\n", f(prev), f(s.RPM), f(s.Throttle), sec(1))
+		prev = s.RPM
+		return nil
+	}); err != nil {
+		return err
+	}
+	flush()
+	return b.Flush()
+}
+
+// driveTicks drives the harness drivetrain through steps at tps ticks per
+// second with the harness LoadFilter, and calls tick with the snapshot of
+// each tick.
+func driveTicks(pr snarl.Profile, steps []scriptStep, tick func(snarl.Snapshot) error) error {
 	d := drive.New(drive.DefaultGears)
 	var load snarl.LoadFilter
 	var shifts shiftPops
 	const dt = 1.0 / tps
-	tick := 0
-	at := func() time.Duration { return time.Duration(tick) * time.Second / tps }
 	for _, st := range steps {
 		for moved := true; moved && d.Gear() != st.gear; {
 			if d.Gear() < st.gear {
@@ -80,12 +147,10 @@ func runScript(w io.Writer, pr snarl.Profile, steps []scriptStep) error {
 			}
 		}
 		for range int(st.seconds * tps) {
-			s := step(d, &load, &shifts, pr, st.throttle, true, dt)
-			if err := l.Write(at(), pr.Name, snarl.Tier1, s); err != nil {
+			if err := tick(step(d, &load, &shifts, pr, st.throttle, true, dt)); err != nil {
 				return err
 			}
-			tick++
 		}
 	}
-	return l.Close(at())
+	return nil
 }

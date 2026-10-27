@@ -26,10 +26,15 @@
 // --matrix prints them by RPM and throttle against the self spread of
 // engine-sim from --calib (docs/research/fullrange-scorecard.md).
 //
+// The drive scenario drive, which snarl-harness -scenario writes and just
+// ref-drive renders, has windows of --drive-window seconds one after the other, scored
+// along the RPM of the scenario, and --drive prints the windows that miss a
+// hiss floor (docs/research/drive-scorecard.md).
+//
 // Usage:
 //
 //	go run ./tools/scorecard [--engines LIST] [--scenarios LIST] [--dyno] [--no-pops] [--set key=value ...] [--windows]
-//	    [--against DIR] [--calib DIR] [--matrix] [--write-fullrange]
+//	    [--against DIR] [--calib DIR] [--matrix] [--drive] [--write-fullrange]
 package main
 
 import (
@@ -82,6 +87,9 @@ type config struct {
 	settle             float64
 	dyno, noPops       bool
 	windows, matrix    bool
+	drive              bool
+	driveWindow        float64
+	driveLead          float64
 	against, calib     string
 	sets               []string
 }
@@ -102,6 +110,9 @@ func run(args []string, w io.Writer) error {
 	fs.StringVar(&c.against, "against", "", "score the WAV files <dir>/<engine>/<scenario>.wav in place of the snarl renders, for example a second engine-sim render or a playback of the tables")
 	fs.StringVar(&c.calib, "calib", "", "also score the second engine-sim renders <dir>/<engine>/<scenario>.wav that exist, the self spread of engine-sim for --matrix")
 	fs.BoolVar(&c.matrix, "matrix", false, "print the hold windows of the full-range scenarios of each engine by RPM and throttle, with the misses and their RPM ranges")
+	fs.BoolVar(&c.drive, "drive", false, "print the windows of the drive scenario of each engine that miss a hiss floor, with the RPM, the RPM rate and the throttle")
+	fs.Float64Var(&c.driveWindow, "drive-window", 0.25, "length in `seconds` of the windows of the drive scenario")
+	fs.Float64Var(&c.driveLead, "drive-lead", 0, "delay in `seconds` of the RPM track of the scored file behind the scenario in the drive windows, for example the delay of the snarl engine from a snapshot to the sound")
 	fs.Func("set", "override a profile value, as `section.key=value` (repeatable)", func(v string) error {
 		c.sets = append(c.sets, v)
 		return nil
@@ -109,8 +120,8 @@ func run(args []string, w io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if fs.NArg() != 0 || c.settle < 0 {
-		return errors.New("no arguments are taken, and --settle must not be negative")
+	if fs.NArg() != 0 || c.settle < 0 || !(c.driveWindow > 0) {
+		return errors.New("no arguments are taken, --settle must not be negative, and --drive-window must be positive")
 	}
 	c.engines, c.scenarios = strings.Split(*engines, ","), strings.Split(*scenarios, ",")
 	if *writeFull {
@@ -178,6 +189,9 @@ func run(args []string, w io.Writer) error {
 	if c.matrix {
 		writeMatrix(w, c.engines, renders, calibs)
 	}
+	if c.drive {
+		writeDrive(w, c.engines, renders, calibs)
+	}
 	return errors.Join(errs...)
 }
 
@@ -186,6 +200,8 @@ type point struct {
 	engine, scenario string
 	win              analysis.Window
 	r                analysis.AlignResult
+	// drive is the scenario state of a window of the drive, or nil.
+	drive *driveInfo
 }
 
 // score renders one scenario of one engine, or with a directory in against
@@ -238,21 +254,40 @@ func (c *config) score(engine, name, against string) (string, []point, error) {
 	if holdsOnly {
 		settle = fullRangeSettle
 	}
-	windows := analysis.Windows(sc, float64(n)/rate, analysis.Options{Settle: settle, Window: 0.5})
+	var windows []analysis.Window
+	var drives []driveInfo
+	if name == driveName {
+		windows, drives = driveWindows(sc, c.driveWindow, float64(n)/rate, float64(p.IdleRPM), float64(p.LimiterRPM))
+	} else {
+		windows = analysis.Windows(sc, float64(n)/rate, analysis.Options{Settle: settle, Window: 0.5})
+	}
 	var rs []analysis.AlignResult
 	var weights []float64
 	var pts []point
 	var b strings.Builder
 	low, lowLabel := math.Inf(1), ""
-	for _, win := range windows {
+	for i, win := range windows {
 		if holdsOnly && win.Kind != "hold" {
 			continue
 		}
 		i0, i1 := int(win.Start*rate), min(int(win.End*rate), n)
-		r := analysis.Align(ref[i0:i1], x[i0:i1], rate, win.RPMStart, win.Kind == "hold", cycles)
+		pt := point{engine: engine, scenario: name, win: win}
+		if drives != nil {
+			pt.drive = &drives[i]
+			track := func(lead float64) func(float64) float64 {
+				return func(t float64) float64 {
+					rpm, _ := sc.At(win.Start + t - lead)
+					return rpm
+				}
+			}
+			pt.r = analysis.AlignTrack(ref[i0:i1], x[i0:i1], rate, track(0), track(c.driveLead))
+		} else {
+			pt.r = analysis.Align(ref[i0:i1], x[i0:i1], rate, win.RPMStart, win.Kind == "hold", cycles)
+		}
+		r := pt.r
 		rs = append(rs, r)
 		weights = append(weights, float64(i1-i0)/rate)
-		pts = append(pts, point{engine: engine, scenario: name, win: win, r: r})
+		pts = append(pts, pt)
 		if r.Score < low {
 			low, lowLabel = r.Score, win.Label
 		}

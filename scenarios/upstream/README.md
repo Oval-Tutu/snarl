@@ -42,6 +42,14 @@ Only the renderer recipe reads `cut.scn`. `snarl-render` and `snarl-compare` do 
 
 `tools/scorecard` scores the hold windows of these files only, after the 0.5 s of settling.
 
+## Drive
+
+`just ref-drive` writes `drive.scn` in each engine directory with `snarl-harness -scenario` (`docs/research/drive-scorecard.md`). Do not edit these files by hand: run the recipe again.
+
+- `drive.scn`: the RPM and the throttle of the scripted drive of the harness, 27.5 s at 60 ticks per second. Each tick is a sweep from the RPM of the tick before to the RPM of the tick, with the throttle of the tick. Ticks at a constant RPM and throttle join one hold. The drive model is the same for each profile in shares of the range from idle to the limiter, so only the RPM scale changes from engine to engine.
+
+`tools/scorecard --scenarios drive` scores the drive in windows of 0.25 s one after the other, and `--drive` prints the windows that miss.
+
 ## The free segment
 
 `idle-free.scn` and `limiter-free.scn` use the segment `free THROTTLE SECONDS`: the dynamometer is off and the engine runs free. Only the engine-sim renderer (`--free`) and `tools/fit --health` read it. It is not part of `docs/scenario-format.md`, so `snarl-render` and `snarl-compare` do not read these two files.
