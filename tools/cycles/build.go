@@ -173,6 +173,7 @@ func measureClose(w io.Writer, t *cycles.Tables, dir string, opt cycles.MeasureO
 	}
 	fmt.Fprint(w, "| Closing step RPM | Since (s) | Cycles | Residual below signal (dB) | Distance from the steady closed point below signal (dB) |\n| --- | --- | --- | --- | --- |\n")
 	n := 0
+	var lags string
 	for k := range r.Segments {
 		if !r.IsClose(k) {
 			continue
@@ -181,6 +182,14 @@ func measureClose(w io.Writer, t *cycles.Tables, dir string, opt cycles.MeasureO
 		if err != nil {
 			return fmt.Errorf("%s: %w", dir, err)
 		}
+		// The closing lag at the RPM of the step, as measureLag fits it,
+		// on the steady points only, for the report.
+		samples, err := r.StepResponse(t, k, cycles.MeasureOptions{})
+		if err != nil {
+			return fmt.Errorf("%s: %w", dir, err)
+		}
+		tau, _ := cycles.FitLag(samples)
+		lags += fmt.Sprintf(" %g rpm %.3f s;", r.Segments[k].RPM0, tau)
 		steady := -1
 		for i, p := range t.Points {
 			if p.Ignition && p.Since == 0 && p.Throttle == 0 && p.RPM == r.Segments[k].RPM0 {
@@ -204,7 +213,7 @@ func measureClose(w io.Writer, t *cycles.Tables, dir string, opt cycles.MeasureO
 	if n == 0 {
 		return fmt.Errorf("%s: no closing step", dir)
 	}
-	fmt.Fprintf(w, "\nClosing transient: %d closing steps\n\n", n)
+	fmt.Fprintf(w, "\nClosing transient: %d closing steps\n\nClosing lag by RPM, from the closing steps:%s\n\n", n, lags)
 	return nil
 }
 

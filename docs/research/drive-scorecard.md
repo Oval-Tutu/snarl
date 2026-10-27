@@ -205,3 +205,49 @@ go run ./tools/scorecard --engines i4-vtec,f4-ej25 --scenarios drive --dyno --no
 ```
 
 Add `--no-lag` to `cycles play` for the playback without the lag. Repeat the `cycles play` line for each engine.
+
+## 9. After the fixes of the tables
+
+Scored again on the tables of `1318de7`: the grid to the limiter, the aliased harmonics, the modulation of the cycle (`docs/research/fullrange-scorecard.md` section 12) and the closing slices at their middle (section 13 there). The tonality fix of section 7 is in every score of this section. The before column is the same tables without the closing slice fix (`out/fix4/base/score.md`), the after column `out/drive/score.md`.
+
+### 9.1 Answer
+
+The lift-off burst is gone on `v12-merlin` and `f4-ej25`. The first closing slice of each closing step held the average of 2 or 3 cycles of a cycle that changes fast. The average jumps at its end and clicks when it plays over and over. Each slice now holds the cycle at its middle. The intake lag of `f4-ej25` is not the cause: closing steps of engine-sim at the RPM of the lifts give 0.050 s, the lag of the profile. The windows beyond the engine-sim self spread fall from 24 to 20.
+
+The worst band above 2 kHz of the lift windows at 6.0, 14.5 and 24.0 s, snarl less engine-sim:
+
+| Engine | Before (dB) | After (dB) | Self spread (dB) |
+| --- | --- | --- | --- |
+| `i4-vtec` | -3.3, +4.3, +4.3 | +2.9, +4.4, +4.2 | 4.3 |
+| `v8-ls` | +3.8, +4.6, +4.1 | +3.8, +4.6, +3.9 | 5.8 |
+| `f4-ej25` | +5.7, +2.6, +8.7 | +3.1, within 1.6, +3.4 | 5.3 |
+| `v12-412` | -2.3, -3.7, +3.4 | -2.8, -3.8, +3.4 | 4.1 |
+| `v12-merlin` | +10.7, +13.3, +10.9 | -6.0, -4.1, -2.5 | 4.6 |
+
+The lift class: worst band median 4.2, 3.9, 3.1, 3.4 and 4.1 dB for `i4-vtec`, `v8-ls`, `f4-ej25`, `v12-412` and `v12-merlin`, against 1.4 to 3.5 dB for engine-sim against itself. `i4-vtec` at 14.5 s (+4.4 dB, 0.1 dB over the spread) and `v8-ls` at 24.0 s (the gap, -2.9 dB) stay beyond the spread, as before the fix. `v12-merlin` at 6.0 s is beyond it on the low side (-6.0 dB). The other misses of section 4 do not change: the coast and downshift windows with less level than engine-sim, the two idle windows, and the launch.
+
+### 9.2 The intake lag by RPM
+
+The closing lag of engine-sim, fitted at each closing step of `close.scn` (`tools/cycles build --step out/cycles/grid/<engine>/close`, in `out/fix4/lag-<engine>.md`; `just cycles-grid` now prints the same fits in the line "Closing lag by RPM" of `build.md`), grows at low RPM:
+
+| Engine | Closing lag by RPM (rpm: s) | Profile (s) |
+| --- | --- | --- |
+| `i4-vtec` | 770: 0.226, 1750: 0.103, 3750: 0.055, 5750: 0.048, 7750: 0.033, 9250: 0.031 | 0.052 |
+| `v8-ls` | 690: 0.312, 1750: 0.136, 3750: 0.071, 5750: 0.054, 6750: 0.048 | 0.068 |
+| `f4-ej25` | 830: 0.190, 1750: 0.090, 3750: 0.057, 5750: 0.050, 6400: 0.050 | 0.050 |
+| `v12-412` | 3810: 0.046, 7750: 0.027, 11750: 0.018, 15750: 0.012, 18250: 0.011 | 0.019 |
+| `v12-merlin` | 600: 0.173, 1500: 0.061, 2500: 0.082, 3250: 0.056 | 0.095 |
+
+A test of `cycles.Live` with this lag, linear in the RPM between the steps and scaled by the lag of the profile over the lag of the tables, scored the drive (`out/fix4/rl/score.md`). The `v12-merlin` lifts go to -3.9, -3.2 and +2.6 dB, inside the spread, and the `i4-vtec` lift at 14.5 s to +2.7 dB. But the `i4-vtec` lift at 6.0 s goes to -4.4 dB, a new window beyond the spread of 4.3 dB. The windows beyond the spread fall from 20 to 19, with one new miss, so the lag by RPM is not kept. snarl keeps one closing lag per profile.
+
+### 9.3 The other lifts
+
+The lifts of `i4-vtec`, `v8-ls` and `v12-412` stay at the edge of the spread, and no cause is proven. The engine-sim lifts of `out/fix4/lift` (fullrange-scorecard section 13.2) give the same excess at a held RPM as with the RPM falling: `i4-vtec` +5.8 and +4.9 dB, `v8-ls` +4.5 and +3.8 dB, `v12-412` +3.0 and -3.0 dB. The falling RPM is therefore not the cause. Without the lag while the slices play, `i4-vtec` turns to -5.8 and -4.8 dB, and the lag that follows the RPM moves its drive lifts to -4.4, +2.7 and +2.9 dB. The sign follows the balance of the open-throttle and closed-throttle sound in the first 0.25 s, and no setting measured from engine-sim brings all three lifts inside the spread. The offline playback without a closing transient gave +3.4 to +6.9 dB on `i4-vtec` (section 5), so the slices are not the cause either.
+
+### 9.4 Reproduce
+
+```sh
+go run ./tools/scorecard --scenarios drive --dyno --no-pops --calib out/reference/upstream/calib --drive --out out/drive/snarl > out/drive/score.md
+```
+
+The lift renders of `docs/research/fullrange-scorecard.md` section 13.2 are in `out/fix4/lift`, with their scenarios in `out/fix4/lift/scn`.
