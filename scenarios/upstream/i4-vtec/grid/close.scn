@@ -23,6 +23,9 @@ hold 6750 0 3
 sweep 6750 7750 1 0.25
 hold 7750 1 1
 hold 7750 0 3
-sweep 7750 8400 1 0.25
-hold 8400 1 1
-hold 8400 0 3
+sweep 7750 8750 1 0.25
+hold 8750 1 1
+hold 8750 0 3
+sweep 8750 9250 1 0.25
+hold 9250 1 1
+hold 9250 0 3

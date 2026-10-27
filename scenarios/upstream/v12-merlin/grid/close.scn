@@ -8,6 +8,6 @@ hold 1500 0 3
 sweep 1500 2500 1 0.25
 hold 2500 1 1
 hold 2500 0 3
-sweep 2500 3000 1 0.25
-hold 3000 1 1
-hold 3000 0 3
+sweep 2500 3250 1 0.25
+hold 3250 1 1
+hold 3250 0 3

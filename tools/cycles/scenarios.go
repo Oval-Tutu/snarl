@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/oval-tutu/snarl/internal/scenario"
@@ -27,6 +28,7 @@ type gridOptions struct {
 	step, settle, minHold float64
 	cycles                int
 	cutEvery              int
+	fineBelow, fineStep   float64
 }
 
 func runScenarios(args []string, stdout io.Writer) error {
@@ -40,6 +42,9 @@ func runScenarios(args []string, stdout io.Writer) error {
 	fs.IntVar(&o.cycles, "cycles", 24, "whole engine cycles in each hold after the settle time")
 	fs.Float64Var(&o.minHold, "min-hold", 1, "least hold time in seconds after the settle time")
 	fs.IntVar(&o.cutEvery, "cut-every", 4, "the ignition-off holds take every Nth grid RPM and the top")
+	limiter := fs.Float64("limiter", 0, "limiter RPM of the engine: the grid goes on to the last multiple of the step below 0.998 of it, where the snarl limiter starts, when that is above the last hold (0: end at the last hold)")
+	fs.Float64Var(&o.fineBelow, "fine-below", 0, "below this RPM the throttle rows also hold every multiple of --fine-step (0: none)")
+	fs.Float64Var(&o.fineStep, "fine-step", 125, "RPM step of the rows below --fine-below")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -47,8 +52,8 @@ func runScenarios(args []string, stdout io.Writer) error {
 		fs.Usage()
 		return errors.New("need --holds, --name and --out")
 	}
-	if o.step <= 0 || o.settle < 0 || o.cycles < 1 || o.cutEvery < 1 {
-		return errors.New("--step, --cycles and --cut-every must be positive and --settle not negative")
+	if o.step <= 0 || o.settle < 0 || o.cycles < 1 || o.cutEvery < 1 || o.fineStep <= 0 {
+		return errors.New("--step, --fine-step, --cycles and --cut-every must be positive and --settle not negative")
 	}
 	sc, err := scenario.ParseFile(*holds)
 	if err != nil {
@@ -67,11 +72,15 @@ func runScenarios(args []string, stdout io.Writer) error {
 	if lo == 0 || hi <= lo {
 		return fmt.Errorf("%s: need at least two holds", *holds)
 	}
-	rpms := gridRPMs(lo, hi, o.step)
+	// The throttle step stays at 60 per cent of the last hold.
+	stepTop := hi
+	hi = max(hi, gridTop(*limiter, o.step))
+	coarse := gridRPMs(lo, hi, o.step)
+	rpms := withFine(coarse, o.fineBelow, o.fineStep)
 	if err := os.MkdirAll(*out, 0o755); err != nil {
 		return err
 	}
-	files := gridFiles(*name, rpms, o)
+	files := gridFiles(*name, rpms, coarse, stepTop, o)
 	for _, f := range files {
 		if err := os.WriteFile(filepath.Join(*out, f.name), []byte(f.text), 0o644); err != nil {
 			return err
@@ -79,6 +88,24 @@ func runScenarios(args []string, stdout io.Writer) error {
 	}
 	fmt.Fprintf(stdout, "%s: %d grid rpm from %g to %g, %d files in %s\n", *name, len(rpms), lo, hi, len(files), *out)
 	return nil
+}
+
+// withFine returns the sorted grid RPM with the multiples of fineStep
+// below fineBelow added, except those within a quarter of fineStep of a
+// grid RPM.
+func withFine(rpms []float64, fineBelow, fineStep float64) []float64 {
+	out := append([]float64(nil), rpms...)
+	for r := math.Floor(rpms[0]/fineStep)*fineStep + fineStep; r < fineBelow && r < rpms[len(rpms)-1]; r += fineStep {
+		near := false
+		for _, g := range rpms {
+			near = near || math.Abs(r-g) < fineStep/4
+		}
+		if !near {
+			out = append(out, r)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // gridRPMs returns idle, the multiples of step above it, and the top.
@@ -92,6 +119,23 @@ func gridRPMs(lo, hi, step float64) []float64 {
 	return append(out, hi)
 }
 
+// limiterShare is the share of the limiter RPM that the top of the grid
+// stays below: the snarl limiter starts its bounce at 0.998 of it.
+const limiterShare = 0.998
+
+// gridTop returns the last multiple of step below limiterShare of the
+// limiter RPM, or 0 with no limiter.
+func gridTop(limiter, step float64) float64 {
+	if limiter <= 0 {
+		return 0
+	}
+	top := math.Floor(limiterShare*limiter/step) * step
+	if top >= limiterShare*limiter {
+		top -= step
+	}
+	return top
+}
+
 // holdSeconds returns the length of a grid hold at rpm.
 func holdSeconds(rpm float64, o gridOptions) float64 {
 	s := o.settle + max(o.minHold, float64(o.cycles)*120/rpm)
@@ -102,9 +146,10 @@ type gridFile struct {
 	name, text string
 }
 
-// gridFiles returns one scenario per throttle row, and the ignition-off
-// holds at throttle 0 and 1.
-func gridFiles(name string, rpms []float64, o gridOptions) []gridFile {
+// gridFiles returns one scenario per throttle row at rpms, the ignition-off
+// holds at throttle 0 and 1 and the closing steps at the coarse RPM, and
+// the throttle step at the grid RPM nearest 60 per cent of stepTop.
+func gridFiles(name string, rpms, coarse []float64, stepTop float64, o gridOptions) []gridFile {
 	head := func(b *strings.Builder, what string) {
 		fmt.Fprintf(b, "# %s: written by tools/cycles scenarios. Cycle table grid: %s.\n", name, what)
 		fmt.Fprintf(b, "# Each hold is %g s of settling and at least %d whole cycles; 0.25 s sweeps join the holds.\n", o.settle, o.cycles)
@@ -123,8 +168,8 @@ func gridFiles(name string, rpms []float64, o gridOptions) []gridFile {
 		files = append(files, gridFile{fmt.Sprintf("t%03d.scn", int(math.Round(th*100))), b.String()})
 	}
 	var cut []float64
-	for i, r := range rpms {
-		if i%o.cutEvery == 0 || i == len(rpms)-1 {
+	for i, r := range coarse {
+		if i%o.cutEvery == 0 || i == len(coarse)-1 {
 			cut = append(cut, r)
 		}
 	}
@@ -159,10 +204,10 @@ func gridFiles(name string, rpms []float64, o gridOptions) []gridFile {
 	files = append(files, gridFile{"close.scn", b.String()})
 
 	// The throttle step: full throttle, closed, full again, at the grid
-	// RPM nearest 60 per cent of the top.
-	step := rpms[0]
-	for _, r := range rpms {
-		if math.Abs(r-0.6*rpms[len(rpms)-1]) < math.Abs(step-0.6*rpms[len(rpms)-1]) {
+	// RPM nearest 60 per cent of stepTop.
+	step := coarse[0]
+	for _, r := range coarse {
+		if math.Abs(r-0.6*stepTop) < math.Abs(step-0.6*stepTop) {
 			step = r
 		}
 	}
