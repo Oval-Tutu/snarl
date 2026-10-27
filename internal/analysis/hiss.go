@@ -149,13 +149,15 @@ func hissCycle(c *alignCycles, ref float64) (tonal, gap []float64) {
 		wss += w * w
 	}
 	norm := 2 / (float64(nextPow2(n)) * wss)
+	// The spectra are of the cycles of c.c, with c.c.m samples per cycle at
+	// the rate c.c.rate, not of c.sig at the rate c.fs.
 	for bi, band := range BurstBands {
-		if band[1] > c.fs/2 || env[bi] == nil || ps == nil || pr == nil {
+		if band[1] > c.c.rate/2 || env[bi] == nil || ps == nil || pr == nil {
 			break
 		}
 		var s, r float64
 		for i := range ps {
-			if f := float64(i) * c.fs / float64(size); f >= band[0] && f < band[1] {
+			if f := float64(i) * c.c.rate / float64(size); f >= band[0] && f < band[1] {
 				s += ps[i]
 				r += pr[i]
 			}

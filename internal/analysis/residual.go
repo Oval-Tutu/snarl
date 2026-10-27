@@ -341,8 +341,12 @@ func residualCycles(x []float64, rate int, rpm float64) (cycles, bool) {
 	}
 	energy := func(r float64) float64 { return residualEnergy(y, p0*(1+r), m, k, sincAt) }
 	r := float64(best) * step
+	// A parabola that is almost flat can put its vertex far away, and k
+	// cycles of a period beyond the search do not fit in the signal, so
+	// each fit keeps the period in the search.
 	for _, d := range []float64{step, step / 64} {
 		r += vertex(d, energy(r-d), energy(r), energy(r+d))
+		r = min(max(r, d-residualSearch), residualSearch-d)
 	}
 	p := p0 * (1 + r)
 

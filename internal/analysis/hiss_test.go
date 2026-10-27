@@ -65,6 +65,32 @@ func TestHissNoisier(t *testing.T) {
 	}
 }
 
+// TestHissTonalityBand checks that a tone near the top of the 2 to 4 kHz
+// band counts in that band and not in the next. At testRPM the angle
+// domain has 1931 samples per cycle and its power of two 2048, so a rate
+// of the wrong one of the two moves 3.9 kHz to 4.1 kHz.
+func TestHissTonalityBand(t *testing.T) {
+	if raceEnabled {
+		t.Skip("minutes under the race detector")
+	}
+	a := engineLike(0.003, false, 0, 1)
+	b := engineLike(0.003, false, 0, 2)
+	cycle := 120.0 / testRPM
+	for i := range b {
+		ph := math.Mod(float64(i)/testRate/cycle, 1)
+		b[i] += 0.012 * math.Sin(2*math.Pi*3900*cycle*ph)
+	}
+	r := Align(a, b, testRate, testRPM, true, true)
+	if r.HissCycle == nil || len(r.HissCycle.TonalB) < 2 {
+		t.Fatal("hold with no hiss cycle measure")
+	}
+	t.Logf("tonality %v / %v", r.HissCycle.TonalA, r.HissCycle.TonalB)
+	ta, tb := r.HissCycle.TonalA, r.HissCycle.TonalB
+	if tb[0]-ta[0] < 8 || tb[1]-ta[1] > 2 {
+		t.Errorf("tone at 3.9 kHz: tonality %+.1f dB at 2 to 4 kHz and %+.1f dB at 4 to 8 kHz, want it in the first band only", tb[0]-ta[0], tb[1]-ta[1])
+	}
+}
+
 // TestHissTonality checks the tonality of a band with a tone on the engine
 // cycle.
 func TestHissTonality(t *testing.T) {
