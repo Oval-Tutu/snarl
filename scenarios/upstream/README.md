@@ -50,6 +50,14 @@ Only the renderer recipe reads `cut.scn`. `snarl-render` and `snarl-compare` do 
 
 `tools/scorecard --scenarios drive` scores the drive in windows of 0.25 s one after the other, and `--drive` prints the windows that miss.
 
+## Listening holds
+
+`just ref-listen` writes `listen-hold-70.scn` and `listen-hold-90.scn` in each engine directory with `tools/scorecard --write-listen`, for the listening files of `just listen-ab`. Do not edit these files by hand: run the recipe again.
+
+- `listen-hold-70.scn` and `listen-hold-90.scn`: one full-throttle hold at the full-range rpm closest to 0.7 and 0.9 of the redline rpm of the profile, 0.5 s of settling and then 3 s.
+
+`tools/scorecard` scores the hold of these files after the 0.5 s of settling.
+
 ## The free segment
 
 `idle-free.scn` and `limiter-free.scn` use the segment `free THROTTLE SECONDS`: the dynamometer is off and the engine runs free. Only the engine-sim renderer (`--free`) and `tools/fit --health` read it. It is not part of `docs/scenario-format.md`, so `snarl-render` and `snarl-compare` do not read these two files.

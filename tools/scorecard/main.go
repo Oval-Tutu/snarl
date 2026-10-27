@@ -31,10 +31,17 @@
 // along the RPM of the scenario, and --drive prints the windows that miss a
 // hiss floor (docs/research/drive-scorecard.md).
 //
+// The listening scenarios listen-hold-70 and listen-hold-90, which
+// --write-listen writes and just listen-ab plays, hold full throttle at the
+// full-range RPM closest to 0.7 and 0.9 of the redline. Their hold windows
+// count after the settle time of the full-range scenarios. --summary writes
+// the score and the hiss measures of each engine and scenario to a text
+// file.
+//
 // Usage:
 //
 //	go run ./tools/scorecard [--engines LIST] [--scenarios LIST] [--dyno] [--no-pops] [--set key=value ...] [--windows]
-//	    [--against DIR] [--calib DIR] [--matrix] [--drive] [--write-fullrange]
+//	    [--against DIR] [--calib DIR] [--matrix] [--drive] [--summary DIR] [--write-fullrange] [--write-listen]
 package main
 
 import (
@@ -91,6 +98,7 @@ type config struct {
 	driveWindow        float64
 	driveLead          float64
 	against, calib     string
+	summary            string
 	sets               []string
 }
 
@@ -107,6 +115,8 @@ func run(args []string, w io.Writer) error {
 	fs.BoolVar(&c.noPops, "no-pops", false, "set FlagNoPops, so that the engine makes no own pops; engine-sim has none")
 	fs.BoolVar(&c.windows, "windows", false, "print the score of every window")
 	writeFull := fs.Bool("write-fullrange", false, "write the full-range scenarios fullrange-t000 to fullrange-t100 of each engine into the scenario directory, and render nothing")
+	writeListen := fs.Bool("write-listen", false, "write the listening scenarios listen-hold-70 and listen-hold-90 of each engine into the scenario directory, and render nothing")
+	fs.StringVar(&c.summary, "summary", "", "also write the measures of each engine and scenario to <dir>/<engine>/<scenario>.txt")
 	fs.StringVar(&c.against, "against", "", "score the WAV files <dir>/<engine>/<scenario>.wav in place of the snarl renders, for example a second engine-sim render or a playback of the tables")
 	fs.StringVar(&c.calib, "calib", "", "also score the second engine-sim renders <dir>/<engine>/<scenario>.wav that exist, the self spread of engine-sim for --matrix")
 	fs.BoolVar(&c.matrix, "matrix", false, "print the hold windows of the full-range scenarios of each engine by RPM and throttle, with the misses and their RPM ranges")
@@ -124,10 +134,17 @@ func run(args []string, w io.Writer) error {
 		return errors.New("no arguments are taken, --settle must not be negative, and --drive-window must be positive")
 	}
 	c.engines, c.scenarios = strings.Split(*engines, ","), strings.Split(*scenarios, ",")
-	if *writeFull {
+	if *writeFull || *writeListen {
 		for _, e := range c.engines {
-			if err := c.writeFullRange(e); err != nil {
-				return err
+			if *writeFull {
+				if err := c.writeFullRange(e); err != nil {
+					return err
+				}
+			}
+			if *writeListen {
+				if err := c.writeListen(e); err != nil {
+					return err
+				}
 			}
 		}
 		return nil
@@ -178,6 +195,11 @@ func run(args []string, w io.Writer) error {
 				default:
 					fmt.Fprint(w, r.text)
 					if k == 0 {
+						if c.summary != "" {
+							if err := saveSummary(c.summary, c.engines[i], c.scenarios[j], r.points); err != nil {
+								errs = append(errs, err)
+							}
+						}
 						renders = append(renders, r.points...)
 					} else {
 						calibs = append(calibs, r.points...)
@@ -250,7 +272,7 @@ func (c *config) score(engine, name, against string) (string, []point, error) {
 		return "", nil, err
 	}
 	n := min(len(ref), len(x))
-	settle, holdsOnly := 0.25, strings.HasPrefix(name, "fullrange-")
+	settle, holdsOnly := 0.25, strings.HasPrefix(name, "fullrange-") || strings.HasPrefix(name, listenPrefix)
 	if holdsOnly {
 		settle = fullRangeSettle
 	}

@@ -488,6 +488,186 @@ ref-drive engine="": (_command "snarl-harness")
     done
     echo "Rendered the drive references of ${engines[*]} in $((SECONDS - start)) s"
 
+# Render the listening references of the five upstream engine-sim engines
+# for just listen-ab, for one engine or for all when none is given.
+# tools/scorecard --write-listen writes
+# scenarios/upstream/<engine>/listen-hold-70.scn and listen-hold-90.scn:
+# a full-throttle hold at the full-range RPM closest to 0.7 and 0.9 of the
+# redline, 0.5 s of settling and then 3 s. The renderer runs each file with
+# the settings of just ref-fullrange and the 3 s pre-roll into
+# out/reference/upstream/<engine>/, in parallel.
+ref-listen engine="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    r="$(nix build -f reference/engine-sim --print-out-paths --no-link)"
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "${tmp}"' EXIT
+    declare -A scripts=(
+        [i4-vtec]=atg-video-1/05_honda_vtec.mr
+        [v8-ls]=atg-video-2/07_gm_ls.mr
+        [f4-ej25]=atg-video-1/06_subaru_ej25.mr
+        [v12-412]=atg-video-2/12_ferrari_412_t2.mr
+        [v12-merlin]=atg-video-2/11_merlin_v12.mr
+    )
+    engines=({{ if engine == "" { "i4-vtec v8-ls f4-ej25 v12-412 v12-merlin" } else { engine } }})
+    start=${SECONDS}
+    pids=()
+    for e in "${engines[@]}"; do
+        if [[ -z "${scripts[${e}]:-}" ]]; then
+            echo "Error: unknown engine '${e}'. Use i4-vtec, v8-ls, f4-ej25, v12-412 or v12-merlin." >&2
+            exit 1
+        fi
+        script="$(tools/import/engine-sim-main.sh "${r}/share/engine-sim/engines/${scripts[${e}]}" "${tmp}")"
+        go run ./tools/scorecard --write-listen --engines "${e}"
+        out="out/reference/upstream/${e}"
+        mkdir -p "${out}"
+        for f in scenarios/upstream/"${e}"/listen-hold-{70,90}.scn; do
+            name="$(basename "${f}" .scn)"
+            read -r kind a b c extra < <(grep -v '^#' "${f}")
+            if [[ "${kind}" != hold || -z "${c}" || -n "${extra}" ]]; then
+                echo "Error: ${f}: want one hold" >&2
+                exit 1
+            fi
+            "${r}/bin/engine-sim-render" --script "${script}" --hold "${a}:${b}:${c}" --volume 0.5 --settle 3 \
+                --out "${out}/${name}.wav" --csv "${out}/${name}.csv" --csv-every 100 > "${out}/${name}.log" 2>&1 &
+            pids+=($!)
+        done
+    done
+    for p in "${pids[@]}"; do
+        wait "${p}"
+    done
+    echo "Rendered the listening references of ${engines[*]} in $((SECONDS - start)) s"
+
+# Make A/B listening files of engine-sim against snarl in out/listen-ab for
+# the five upstream engines, from the references of just ref-listen and just
+# ref-drive, which it renders first when they are missing. For each engine,
+# out/listen-ab/<engine>/ has hold-70.wav and hold-90.wav (the listening
+# holds of just ref-listen, 3 s after the 0.5 s of settling) and drive.wav
+# (the whole scripted drive of drive.scn). Each file plays engine-sim, 1 s
+# of silence, then snarl from the same scenario time. tools/scorecard
+# renders snarl with --dyno --no-pops, as the scorecards do, and writes the
+# measures of each pair. A plain gain gives both parts the same integrated
+# loudness, each part has a 10 ms fade in and an 80 ms fade out, and one
+# more gain takes the file to -19 LUFS. The recipe stops when a file has a
+# true peak at or above -1 dBTP. Beside each WAV file are a
+# spectrogram PNG of the two parts, one above the other with the same
+# axes and colour scale, and a TXT file with the measures. README.txt lists
+# the files. The snarl renders and the measures go to out/score/listen-ab.
+listen-ab:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v ffmpeg >/dev/null; then
+        echo "Error: ffmpeg is not on PATH. Run this recipe in nix develop." >&2
+        exit 1
+    fi
+    engines=(i4-vtec v8-ls f4-ej25 v12-412 v12-merlin)
+    ref=out/reference/upstream
+    scn=scenarios/upstream
+    work=out/score/listen-ab
+    out=out/listen-ab
+    target=-19
+    for e in "${engines[@]}"; do
+        if [[ ! -f "${scn}/${e}/listen-hold-70.scn" || ! -f "${scn}/${e}/listen-hold-90.scn" \
+            || ! -f "${ref}/${e}/listen-hold-70.wav" || ! -f "${ref}/${e}/listen-hold-90.wav" ]]; then
+            "{{ just_executable() }}" ref-listen "${e}"
+        fi
+        if [[ ! -f "${scn}/${e}/drive.scn" || ! -f "${ref}/${e}/drive.wav" ]]; then
+            "{{ just_executable() }}" ref-drive "${e}"
+        fi
+    done
+    rm -rf "${work}" "${out}"
+    mkdir -p "${work}" "${out}"
+    go run ./tools/scorecard --dyno --no-pops --engines "$(IFS=,; echo "${engines[*]}")" \
+        --scenarios listen-hold-70,listen-hold-90,drive --out "${work}" --summary "${work}" > "${work}/score.md"
+    ff=(ffmpeg -nostdin -hide_banner -loglevel error -y)
+    # Prints the integrated loudness in LUFS of file $1 from $2 to $3 s.
+    lufs() {
+        local l
+        l="$(ffmpeg -nostdin -hide_banner -i "$1" -af "atrim=start=$2:end=$3,ebur128=framelog=quiet" -f null - 2>&1 | grep -E '^ +I:')"
+        l="${l#*I:}"
+        l="${l%LUFS}"
+        echo "${l// /}"
+    }
+    # Prints the duration in seconds of file $1.
+    duration() {
+        ffprobe -v error -show_entries format=duration -of csv=p=0 "$1"
+    }
+    fmt="aformat=sample_fmts=flt:sample_rates=48000:channel_layouts=mono"
+    # Fade each part in over 10 ms and out over 80 ms, so that the joins do
+    # not click.
+    fade="afade=t=in:d=0.01,areverse,afade=t=in:d=0.08,areverse"
+    spec="showspectrumpic=s=1600x480:mode=combined:color=intensity:scale=log:fscale=lin:drange=120:legend=1"
+    label="drawtext=fontcolor=white:fontsize=24:box=1:boxcolor=black@0.6:x=w-tw-20:y=8:text"
+    {
+        echo "A/B listening files of engine-sim against snarl, made by just listen-ab."
+        echo
+        echo "Each file plays engine-sim, 1 s of silence, then snarl, cut from the same scenario time."
+        echo "The two parts have the same integrated loudness, each has a 10 ms fade in and an 80 ms fade out,"
+        echo "and each file is at ${target} LUFS with a true peak below -1 dBTP."
+        echo "snarl renders at 48 kHz, tier 1, with the dynamometer settings and no pops (tools/scorecard --dyno --no-pops)."
+        echo "engine-sim renders with the 3 s pre-roll of the references. Throttle 1 is full throttle."
+        echo "Beside each WAV file: a PNG spectrogram (engine-sim above, snarl below) and a TXT file with the measures."
+        echo
+    } > "${out}/README.txt"
+    for e in "${engines[@]}"; do
+        mkdir -p "${out}/${e}"
+        redline="$(grep -m 1 '^redline_rpm = ' "profiles/${e}.toml")"
+        redline="${redline##* }"
+        for name in hold-70 hold-90 drive; do
+            s="${name}"
+            [[ "${name}" == hold-* ]] && s="listen-${name}"
+            a="${ref}/${e}/${s}.wav"
+            b="${work}/${e}/${s}.wav"
+            if [[ "${name}" == drive ]]; then
+                t0=0
+                t1="$(printf '%s\n%s\n' "$(duration "${a}")" "$(duration "${b}")" | sort -g | head -n 1)"
+            else
+                read -r _ rpm _ t1 < <(grep -v '^#' "${scn}/${e}/${s}.scn")
+                t0=0.5
+            fi
+            la="$(lufs "${a}" "${t0}" "${t1}")"
+            lb="$(lufs "${b}" "${t0}" "${t1}")"
+            cut="atrim=start=${t0}:end=${t1},asetpts=PTS-STARTPTS,${fmt}"
+            "${ff[@]}" -i "${a}" -i "${b}" -filter_complex \
+                "[0:a]${cut},volume='pow(10,(${target}-(${la}))/20)',${fade}[a];[1:a]${cut},volume='pow(10,(${target}-(${lb}))/20)',${fade}[b];aevalsrc=0:s=48000:d=1,${fmt}[s];[a][s][b]concat=n=3:v=0:a=1" \
+                -c:a pcm_f32le "${work}/${e}/${name}-ab.wav"
+            # The silence and the fades take the file a little below the
+            # parts, so one gain on the whole file takes it to the target.
+            l="$(lufs "${work}/${e}/${name}-ab.wav" 0 "$(duration "${work}/${e}/${name}-ab.wav")")"
+            "${ff[@]}" -i "${work}/${e}/${name}-ab.wav" -af "volume='pow(10,(${target}-(${l}))/20)'" -c:a pcm_f32le "${out}/${e}/${name}.wav"
+            t0="$(awk -v t="${t0}" 'BEGIN { printf "%.3f", t }')"
+            t1="$(awk -v t="${t1}" 'BEGIN { printf "%.3f", t }')"
+            len="$(awk -v a="${t0}" -v b="${t1}" 'BEGIN { printf "%.3f", b - a }')"
+            peak="$(ffmpeg -nostdin -hide_banner -i "${out}/${e}/${name}.wav" -af ebur128=peak=true:framelog=quiet -f null - 2>&1 | grep -A 1 'True peak:' | grep -E '^ +Peak:')"
+            peak="${peak#*Peak:}"
+            peak="${peak%dBFS}"
+            peak="${peak// /}"
+            if ! awk -v p="${peak}" 'BEGIN { exit !(p < -1) }'; then
+                echo "Error: ${out}/${e}/${name}.wav has a true peak of ${peak} dBTP, at or above -1 dBTP." >&2
+                exit 1
+            fi
+            sb="$(awk -v l="${len}" 'BEGIN { printf "%.3f", l + 1 }')"
+            "${ff[@]}" -i "${out}/${e}/${name}.wav" -filter_complex \
+                "[0:a]asplit[x][y];[x]atrim=end=${len},${spec},${label}='engine-sim  ${e} ${name}'[a];[y]atrim=start=${sb},asetpts=PTS-STARTPTS,${spec},${label}='snarl  ${e} ${name}'[b];[a][b]vstack" \
+                -frames:v 1 "${out}/${e}/${name}.png"
+            {
+                cat "${work}/${e}/${s}.txt"
+                echo
+                echo "Integrated loudness of the parts before the gain: engine-sim ${la} LUFS, snarl ${lb} LUFS."
+                echo "The parts play from ${t0} s to ${t1} s of the scenario. The file has a true peak of ${peak} dBTP."
+            } > "${out}/${e}/${name}.txt"
+            if [[ "${name}" == drive ]]; then
+                what="the scripted drive of ${scn}/${e}/drive.scn (idle, full-throttle pulls, lifts, coasts and part throttle; throttle 0 to 1 as scripted)"
+            else
+                what="a full-throttle hold at ${rpm} rpm (the full-range grid RPM closest to 0.${name#hold-} of the redline at ${redline} rpm), throttle 1"
+            fi
+            printf '%s/%s.wav: %s. engine-sim plays from 0.000 to %s s, silence to %s s, snarl from %s to %s s.\n' \
+                "${e}" "${name}" "${what}" "${len}" "${sb}" "${sb}" "$(awk -v l="${len}" 'BEGIN { printf "%.3f", 2 * l + 1 }')" >> "${out}/README.txt"
+            echo "Wrote ${out}/${e}/${name}.wav"
+        done
+    done
+    echo "Wrote the listening files to ${out}"
+
 # Play the full-range scenarios of just ref-fullrange from the cycle tables
 # through the exact synthesiser port with tools/cycles play, for one engine
 # or for all when engine is "all", into out/fullrange/<name>/<engine>/, so

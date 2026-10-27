@@ -58,26 +58,36 @@ func fullRangeHold(rpm float64) float64 {
 	return math.Ceil(s*10) / 10
 }
 
-// writeFullRange writes the full-range scenarios of the engine into
-// <scenario-dir>/<engine>/: idle is the first hold of holds-t100.scn and
-// the top is below the limiter RPM of the profile.
-func (c *config) writeFullRange(engine string) error {
+// fullRangeGrid returns the profile of the engine and the RPM of its
+// full-range holds: idle is the first hold of
+// <scenario-dir>/<engine>/holds-t100.scn and the top is below the limiter
+// RPM of the profile.
+func (c *config) fullRangeGrid(engine string) (snarl.Profile, []float64, error) {
 	p, err := snarl.LoadProfile(engine)
 	if err != nil {
-		return err
+		return p, nil, err
 	}
 	if p.LimiterRPM <= 0 {
-		return fmt.Errorf("%s: no limiter RPM", engine)
+		return p, nil, fmt.Errorf("%s: no limiter RPM", engine)
 	}
 	holds := filepath.Join(c.scn, engine, "holds-t100.scn")
 	sc, err := scenario.ParseFile(holds)
 	if err != nil {
-		return err
+		return p, nil, err
 	}
 	if len(sc.Segments) == 0 || sc.Segments[0].Kind != scenario.Hold {
-		return fmt.Errorf("%s: the first segment is not a hold", holds)
+		return p, nil, fmt.Errorf("%s: the first segment is not a hold", holds)
 	}
-	rpms := fullRangeRPMs(sc.Segments[0].RPM0, float64(p.LimiterRPM))
+	return p, fullRangeRPMs(sc.Segments[0].RPM0, float64(p.LimiterRPM)), nil
+}
+
+// writeFullRange writes the full-range scenarios of the engine into
+// <scenario-dir>/<engine>/.
+func (c *config) writeFullRange(engine string) error {
+	p, rpms, err := c.fullRangeGrid(engine)
+	if err != nil {
+		return err
+	}
 	write := func(name, what string, th float64, rpms []float64) error {
 		var b strings.Builder
 		fmt.Fprintf(&b, "# %s: written by tools/scorecard --write-fullrange. Holds at throttle %g %s\n", engine, th, what)

@@ -1,0 +1,3 @@
+# v8-ls: written by tools/scorecard --write-listen. A full-throttle hold at the full-range grid RPM
+# closest to 0.9 of the redline at 6500 rpm: 0.5 s of settling, then 3 s.
+hold 5750 1 3.5
