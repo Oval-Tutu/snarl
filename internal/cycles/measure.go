@@ -29,6 +29,13 @@ type MeasureOptions struct {
 	// many equal parts of each cycle (slotModulation), and leaves it out of
 	// the residual envelopes. 0 measures none.
 	ModulationSlots int
+	// Drift is for a slice of a transient, whose cycle changes from cycle
+	// to cycle: the cycle is the snapshot at the middle of the slice
+	// (syncSnapshot), and the band filters of the residual start at the
+	// slice, settled on its first residual, with no warm-up on the input
+	// before it. It measures no harmonics above the Nyquist frequency and
+	// no modulation. NoDrift turns it off for the slices of CloseSlices.
+	Drift, NoDrift bool
 }
 
 // ModulationSlots is the number of equal parts of each cycle of the
@@ -251,6 +258,34 @@ func interpolate(x []float64, u float64) float64 {
 // ones, where a sum over the unevenly spaced samples leaks them at about
 // 60 dB below the signal.
 func syncAverage(x, phase []float64, start float64, cycles, h int, shift float64) []float64 {
+	return seriesOf(syncSamples(x, phase, start, cycles, h, func(int) float64 { return 1 }, float64(cycles)), h, start-shift)
+}
+
+// syncSnapshot returns the cycle of a slice of a transient at the middle
+// of the slice, in the layout of syncAverage. The average of the cycles
+// holds each phase of the cycle at another time, a share of a cycle after
+// the start of its cycle, so that a cycle that changes jumps at the end of
+// the average cycle, and played over and over, the jump clicks. The
+// snapshot takes each phase back to the middle of its cycle with the
+// change per cycle, the least-squares slope over the cycle index.
+func syncSnapshot(x, phase []float64, start float64, cycles, h int, shift float64) []float64 {
+	mid := float64(cycles-1) / 2
+	var norm float64
+	for c := range cycles {
+		norm += (float64(c) - mid) * (float64(c) - mid)
+	}
+	avg := syncSamples(x, phase, start, cycles, h, func(int) float64 { return 1 }, float64(cycles))
+	s := syncSamples(x, phase, start, cycles, h, func(c int) float64 { return float64(c) - mid }, norm)
+	for i := range avg {
+		avg[i] -= (float64(i)/float64(len(avg)) - 0.5) * s[i]
+	}
+	return seriesOf(avg, h, start-shift)
+}
+
+// syncSamples returns the weighted sum over the cycles of x, at a power of
+// two of uniform phase points per cycle (at least 4h+2) from phase start,
+// with weight(c)/div for cycle c.
+func syncSamples(x, phase []float64, start float64, cycles, h int, weight func(int) float64, div float64) []float64 {
 	m := nextPow2(4*h + 2)
 	avg := make([]float64, m)
 	k := 0
@@ -263,8 +298,16 @@ func syncAverage(x, phase []float64, start float64, cycles, h int, shift float64
 		if dp := phase[k+1] - phase[k]; dp > 0 {
 			u += (psi - phase[k]) / dp
 		}
-		avg[j%m] += interpolate(x, u) / float64(cycles)
+		avg[j%m] += interpolate(x, u) * weight(j/m) / div
 	}
+	return avg
+}
+
+// seriesOf returns the Fourier series up to harmonic h, in the layout of
+// Point.Wave, of the uniform samples avg of one cycle, the first at the
+// series variable origin.
+func seriesOf(avg []float64, h int, origin float64) []float64 {
+	m := len(avg)
 	buf := make([]complex128, m)
 	for i, v := range avg {
 		buf[i] = complex(v, 0)
@@ -272,8 +315,8 @@ func syncAverage(x, phase []float64, start float64, cycles, h int, shift float64
 	forwardFFT(buf)
 	out := make([]float64, 2*h+1)
 	for j := 0; j <= h; j++ {
-		// avg sits at start + i/m; the series variable is phase - shift.
-		s, c := math.Sincos(-2 * math.Pi * float64(j) * (start - shift))
+		// avg sits at origin + i/m.
+		s, c := math.Sincos(-2 * math.Pi * float64(j) * origin)
 		v := buf[j] * complex(c, s) / complex(float64(m), 0)
 		if j == 0 {
 			out[0] = real(v)
@@ -382,22 +425,45 @@ func (r *Record) Measure(seg RecordSegment, opt MeasureOptions) (Point, error) {
 		} else {
 			// A few steps past the span, for the interpolator.
 			ext := min(sincHalf+2, len(r.Inputs[c])-s.I1, smooth.base+len(smooth.phase)-(s.I1-d))
-			wave = syncAverage(r.Inputs[c][lo:s.I1+ext], smooth.slice(lo-d, s.I1+ext-d), emission[warm], s.Cycles, p.Harmonics, shift)
+			if opt.Drift {
+				wave = syncSnapshot(r.Inputs[c][lo:s.I1+ext], smooth.slice(lo-d, s.I1+ext-d), emission[warm], s.Cycles, p.Harmonics, shift)
+			} else {
+				wave = syncAverage(r.Inputs[c][lo:s.I1+ext], smooth.slice(lo-d, s.I1+ext-d), emission[warm], s.Cycles, p.Harmonics, shift)
+			}
 		}
-		if !opt.NoAliases && opt.MaxHarmonics == 0 {
+		if !opt.NoAliases && !opt.Drift && opt.MaxHarmonics == 0 {
 			wave = aliasHarmonics(wave, r.Inputs[c][s.I0:s.I1], emission[warm:], shift, stepsPerCycle, r.InputSampleRate)
 		}
 		p.Wave = append(p.Wave, wave)
 		var am []float64
-		if opt.ModulationSlots > 0 {
+		switch {
+		case opt.Drift:
+			if opt.ModulationSlots > 0 {
+				p.Modulation = append(p.Modulation, 0)
+				p.ModulationRho = append(p.ModulationRho, 0)
+			}
+		case opt.ModulationSlots > 0:
 			var depth, rho float64
 			if stepsPerCycle >= minModulationSteps*float64(opt.ModulationSlots) {
-				am, depth, rho = slotModulation(r.Inputs[c][s.I0:s.I1], emission[warm:], wave, shift, opt.ModulationSlots)
+				var m []float64
+				m, depth, rho = slotModulation(r.Inputs[c][s.I0:s.I1], emission[warm:], wave, shift, opt.ModulationSlots)
+				if m != nil {
+					am = append(make([]float64, warm), m...)
+				}
 			}
 			p.Modulation = append(p.Modulation, depth)
 			p.ModulationRho = append(p.ModulationRho, rho)
 		}
-		p.Noise = append(p.Noise, residualEnvelopes(r.Inputs[c][lo:s.I1], emission, warm, wave, am, shift, r.InputSampleRate, stepsPerCycle, bank, leak))
+		// A slice of a transient changes too fast for a warm-up before it:
+		// its band filters start at the slice, settled on its first residual.
+		skip := 0
+		if opt.Drift {
+			skip = warm
+		}
+		if am != nil {
+			am = am[skip:]
+		}
+		p.Noise = append(p.Noise, residualEnvelopes(r.Inputs[c][lo+skip:s.I1], emission[skip:], warm-skip, wave, am, opt.Drift, shift, r.InputSampleRate, stepsPerCycle, bank, leak))
 	}
 	// The channels share one harmonic count: the series of a channel with
 	// fewer harmonics above the Nyquist frequency end in zeros.
@@ -627,10 +693,12 @@ func aliasHarmonics(wave, x, psi []float64, shift, stepsPerCycle, rate float64) 
 // filter, unmixed from the leakage of the neighbouring bands, as the gain
 // of unit-power band noise. x and phase are the input and its phase from
 // warm samples before the span, so that the band filters have settled. am
-// is nil or the part of the residual that the modulation explains from
-// the span on, which the envelopes leave out. rate is the input rate and
-// stepsPerCycle the samples of one cycle.
-func residualEnvelopes(x, phase []float64, warm int, wave, am []float64, shift, rate, stepsPerCycle float64, bank []band, leak [][]float64) []float64 {
+// is nil or, for each sample of x, the part of the residual that the
+// modulation or the drift explains, which the envelopes leave out. With
+// settled, the band filters start from the steady state of the first
+// residual. rate is the input rate and stepsPerCycle the samples of one
+// cycle.
+func residualEnvelopes(x, phase []float64, warm int, wave, am []float64, settled bool, shift, rate, stepsPerCycle float64, bank []band, leak [][]float64) []float64 {
 	table := NewWaveTable(wave)
 	sum := make([][]float64, BandCount)
 	for b := range sum {
@@ -642,11 +710,25 @@ func residualEnvelopes(x, phase []float64, warm int, wave, am []float64, shift, 
 	for b := range filters {
 		filters[b].sections = append([]biquad(nil), bank[b].sections...)
 	}
+	if settled && len(x) > 0 {
+		// The filters start from the steady state of the first residual,
+		// so that a residual far from 0 there is no step into every band.
+		first := x[0] - table.At(phase[0]-shift)
+		if am != nil {
+			first -= am[0]
+		}
+		edges := BandEdges(rate)
+		for range int(8 * rate / edges[1]) {
+			for b := range filters {
+				filters[b].process(first)
+			}
+		}
+	}
 	for i, v := range x {
 		psi := phase[i] - shift
 		res := v - table.At(psi)
-		if am != nil && i >= warm {
-			res -= am[i-warm]
+		if am != nil {
+			res -= am[i]
 		}
 		sec := sectorOf(psi)
 		for b := range filters {

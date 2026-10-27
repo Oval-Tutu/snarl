@@ -4,11 +4,11 @@ Each `<engine>.bin` holds the cycle tables of one engine-sim engine: the synthes
 
 | Engine | Points | Closing transient slices | Bytes |
 | --- | --- | --- | --- |
-| `i4-vtec` | 273 | 78 | 1518827 |
-| `v8-ls` | 190 | 51 | 886237 |
-| `f4-ej25` | 185 | 51 | 1167965 |
-| `v12-412` | 469 | 142 | 1398987 |
-| `v12-merlin` | 93 | 25 | 464059 |
+| `i4-vtec` | 273 | 78 | 1507862 |
+| `v8-ls` | 190 | 51 | 874456 |
+| `f4-ej25` | 185 | 51 | 1162215 |
+| `v12-412` | 469 | 142 | 1389200 |
+| `v12-merlin` | 93 | 25 | 462011 |
 
 ## Format
 

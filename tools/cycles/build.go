@@ -23,6 +23,7 @@ func runBuild(args []string, stdout io.Writer) error {
 	maxHarmonics := fs.Int("max-harmonics", 0, "cap the harmonics of the average cycle (0: every harmonic below the input Nyquist frequency, and the harmonics above it that the steps fold below it)")
 	noAliases := fs.Bool("no-aliases", false, "leave out the harmonics above the input Nyquist frequency")
 	noModulation := fs.Bool("no-modulation", false, "model the whole residual as band noise, without the modulation of the average cycle")
+	noDrift := fs.Bool("no-drift", false, "measure each closing slice as a steady hold: the average of its cycles, with the band filters warmed up on the input before it")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -30,7 +31,7 @@ func runBuild(args []string, stdout io.Writer) error {
 		fs.Usage()
 		return errors.New("need --out and at least one record directory")
 	}
-	opt := cycles.MeasureOptions{Settle: *settle, MaxHarmonics: *maxHarmonics, NoAliases: *noAliases, ModulationSlots: cycles.ModulationSlots}
+	opt := cycles.MeasureOptions{Settle: *settle, MaxHarmonics: *maxHarmonics, NoAliases: *noAliases, ModulationSlots: cycles.ModulationSlots, NoDrift: *noDrift}
 	if *noModulation {
 		opt.ModulationSlots = 0
 	}

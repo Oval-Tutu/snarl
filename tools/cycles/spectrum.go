@@ -22,6 +22,8 @@ func runSpectrum(args []string, stdout io.Writer) error {
 	frame := fs.Int("frame", 1024, "Welch frame in samples, a power of two")
 	groups := fs.Int("groups", 32, "number of equal frequency groups to print")
 	settle := fs.Float64("settle", 0.5, "settle time in seconds at the start of the hold")
+	length := fs.Float64("length", 0, "seconds of the hold after the settle time to measure, as a slice of a transient with --drift (0: the rest of the hold)")
+	drift := fs.Bool("drift", false, "measure as a slice of a transient (MeasureOptions.Drift), from the start of the hold")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -44,7 +46,10 @@ func runSpectrum(args []string, stdout io.Writer) error {
 		if seg.Mode != mode || seg.RPM0 != *rpm || (*throttle >= 0 && seg.Throttle != *throttle) {
 			continue
 		}
-		opt := cycles.MeasureOptions{Settle: *settle}
+		opt := cycles.MeasureOptions{Settle: *settle, Drift: *drift}
+		if *length > 0 {
+			seg.End = min(seg.End, seg.Start+*settle+*length)
+		}
 		p, err := r.Measure(seg, opt)
 		if err != nil {
 			return err

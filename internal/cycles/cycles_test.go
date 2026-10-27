@@ -212,6 +212,39 @@ func TestMeasureModulation(t *testing.T) {
 	}
 }
 
+// TestMeasureDrift checks that the cycle of a slice whose level grows by 7
+// % per cycle is, with Drift, the cycle at the middle of the slice, without
+// the jump at the end of the cycle that the average has.
+func TestMeasureDrift(t *testing.T) {
+	slice := RecordSegment{Mode: "hold", RPM0: 3000, RPM1: 3000, Throttle: 1, Start: 0.3, End: 0.42}
+	r := synthRecord(10000, 3000, 0.5, 0, func(psi float64) float64 { return (1 + 0.2*psi) * (testWave(psi) - 0.3) }, func(float64) float64 { return 0 })
+	s, err := r.HoldSpan(slice, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The cycle at the middle of the slice.
+	gain := 1 + 0.2*(r.Phase[s.I0]+float64(s.Cycles)/2)
+	errorDB := func(drift bool) float64 {
+		p, err := r.Measure(slice, MeasureOptions{Drift: drift})
+		if err != nil {
+			t.Fatal(err)
+		}
+		table := NewWaveTable(p.Wave[0])
+		var e, sig float64
+		for i := range 1000 {
+			psi := float64(i) / 1000
+			want := gain * (testWave(psi) - 0.3)
+			e += (table.At(psi) - want) * (table.At(psi) - want)
+			sig += want * want
+		}
+		return 10 * math.Log10(e/sig)
+	}
+	with, without := errorDB(true), errorDB(false)
+	if with > -40 || without < with+15 {
+		t.Errorf("cycle error %.1f dB below the cycle with Drift and %.1f dB without, want 40 dB or more and 15 dB less", -with, -without)
+	}
+}
+
 func TestMeasureNoiseEnvelope(t *testing.T) {
 	rng := rand.New(rand.NewPCG(3, 4)) //nolint:gosec // Test noise, not security.
 	// Flat white noise with an RMS of 0.1 in the first half of the cycle
