@@ -20,13 +20,19 @@ func runBuild(args []string, stdout io.Writer) error {
 	closing := fs.String("close", "", "record of the closing steps (close.scn) to measure the closing transient from; its holds are not grid points")
 	minHold := fs.Float64("min-hold", 0.9, "skip holds shorter than the settle time and this many seconds")
 	thin := fs.Int("thin", 1, "keep every Nth grid RPM of each row, and the last; 2 leaves out the points that the half-grid check plays")
-	maxHarmonics := fs.Int("max-harmonics", 0, "cap the harmonics of the average cycle (0: every harmonic below the input Nyquist frequency)")
+	maxHarmonics := fs.Int("max-harmonics", 0, "cap the harmonics of the average cycle (0: every harmonic below the input Nyquist frequency, and the harmonics above it that the steps fold below it)")
+	noAliases := fs.Bool("no-aliases", false, "leave out the harmonics above the input Nyquist frequency")
+	noModulation := fs.Bool("no-modulation", false, "model the whole residual as band noise, without the modulation of the average cycle")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *out == "" || fs.NArg() == 0 || *thin < 1 {
 		fs.Usage()
 		return errors.New("need --out and at least one record directory")
+	}
+	opt := cycles.MeasureOptions{Settle: *settle, MaxHarmonics: *maxHarmonics, NoAliases: *noAliases, ModulationSlots: cycles.ModulationSlots}
+	if *noModulation {
+		opt.ModulationSlots = 0
 	}
 	var t *cycles.Tables
 	for _, dir := range fs.Args() {
@@ -38,7 +44,7 @@ func runBuild(args []string, stdout io.Writer) error {
 			return fmt.Errorf("%s: input rate %g differs from the simulation frequency %g", dir, r.InputSampleRate, r.SimulationFrequency)
 		}
 		if t == nil {
-			t = &cycles.Tables{Engine: r.Engine, Script: r.Script, Rate: r.SimulationFrequency, Audio: r.Audio}
+			t = &cycles.Tables{Engine: r.Engine, Script: r.Script, Rate: r.SimulationFrequency, Audio: r.Audio, ModulationSlots: opt.ModulationSlots}
 			for i, c := range r.ChannelDelays() {
 				t.Channels = append(t.Channels, cycles.Channel{ImpulseResponse: r.Dump.Channels[i].ImpulseResponse, Volume: r.Dump.Channels[i].Volume, DelaySteps: c})
 			}
@@ -50,7 +56,7 @@ func runBuild(args []string, stdout io.Writer) error {
 			if (seg.Mode != "hold" && seg.Mode != "cut") || seg.Seconds < *settle+*minHold {
 				continue
 			}
-			p, err := r.Measure(seg, cycles.MeasureOptions{Settle: *settle, MaxHarmonics: *maxHarmonics})
+			p, err := r.Measure(seg, opt)
 			if err != nil {
 				return fmt.Errorf("%s: %w", dir, err)
 			}
@@ -65,7 +71,7 @@ func runBuild(args []string, stdout io.Writer) error {
 		}
 	}
 	if *closing != "" {
-		if err := measureClose(stdout, t, *closing, *maxHarmonics); err != nil {
+		if err := measureClose(stdout, t, *closing, opt); err != nil {
 			return err
 		}
 	}
@@ -156,7 +162,7 @@ func measureLag(w io.Writer, t *cycles.Tables, dir string, settle float64) error
 // step of the record in dir to t, and reports each slice: its residual
 // below the signal, and the distance of its average cycle from the steady
 // closed-throttle point at the RPM, below the signal.
-func measureClose(w io.Writer, t *cycles.Tables, dir string, maxHarmonics int) error {
+func measureClose(w io.Writer, t *cycles.Tables, dir string, opt cycles.MeasureOptions) error {
 	r, err := cycles.LoadRecord(dir)
 	if err != nil {
 		return err
@@ -170,7 +176,7 @@ func measureClose(w io.Writer, t *cycles.Tables, dir string, maxHarmonics int) e
 		if !r.IsClose(k) {
 			continue
 		}
-		parts, err := r.CloseSlices(k, cycles.MeasureOptions{MaxHarmonics: maxHarmonics})
+		parts, err := r.CloseSlices(k, opt)
 		if err != nil {
 			return fmt.Errorf("%s: %w", dir, err)
 		}
@@ -298,13 +304,16 @@ func db(p float64) float64 {
 // residual below the signal, and the change of the average cycle to the
 // next RPM point of the row below the signal, per channel.
 func report(w io.Writer, t *cycles.Tables) {
-	fmt.Fprint(w, "| Ignition | Throttle | RPM | Measured RPM | Cycles | Harmonics | Signal (dB) | Residual below signal (dB) | Residual bands, low to high, below the harmonics in the band (dB) | Change to next below signal (dB) |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
+	fmt.Fprint(w, "| Ignition | Throttle | RPM | Measured RPM | Cycles | Harmonics | Signal (dB) | Modulation (RMS gain / correlation of neighbouring parts) | Residual below signal (dB) | Residual bands, low to high, below the harmonics in the band (dB) | Change to next below signal (dB) |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
 	for i := range t.Points {
 		p := &t.Points[i]
-		var sig, res, bands, change string
+		var sig, mod, res, bands, change string
 		for c := range t.Channels {
 			sp := seriesPower(p.Wave[c])
 			sig += fmt.Sprintf(" %.1f", db(sp))
+			if c < len(p.Modulation) && c < len(p.ModulationRho) {
+				mod += fmt.Sprintf(" %.3f/%.2f", p.Modulation[c], p.ModulationRho[c])
+			}
 			res += fmt.Sprintf(" %.1f", db(sp)-db(noisePower(p.Noise[c])))
 			edges := cycles.BandEdges(t.Rate)
 			for b := range cycles.BandCount {
@@ -322,6 +331,6 @@ func report(w io.Writer, t *cycles.Tables) {
 				change += fmt.Sprintf(" %.1f", db(sp)-db(seriesDistance(p.Wave[c], t.Points[i+1].Wave[c])))
 			}
 		}
-		fmt.Fprintf(w, "| %t | %g | %g | %.1f | %d | %d |%s |%s |%s |%s |\n", p.Ignition, p.Throttle, p.RPM, p.MeasuredRPM, p.Cycles, p.Harmonics, sig, res, strings.TrimSuffix(bands, " /"), change)
+		fmt.Fprintf(w, "| %t | %g | %g | %.1f | %d | %d |%s |%s |%s |%s |%s |\n", p.Ignition, p.Throttle, p.RPM, p.MeasuredRPM, p.Cycles, p.Harmonics, sig, mod, res, strings.TrimSuffix(bands, " /"), change)
 	}
 }

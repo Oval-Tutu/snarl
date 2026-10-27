@@ -229,14 +229,56 @@ func TestLiveResidual(t *testing.T) {
 	}
 }
 
+// TestLiveModulation checks that the modulation of Live is the average
+// cycle without its mean times a gain that stays within a part of the
+// cycle between its interpolated values, with the RMS gain of the tables
+// times the square root of 2/3 of the linear interpolation of independent
+// values.
+func TestLiveModulation(t *testing.T) {
+	tab := liveTables()
+	tab.ModulationSlots = 8
+	for i := range tab.Points {
+		p := &tab.Points[i]
+		p.Wave[0][0] = 0.2 * p.RPM
+		p.Modulation = []float64{0.05}
+	}
+	b, err := NewBank(tab)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := b.NewLive(LiveOptions{Seed: 5})
+	wave := b.NewLive(LiveOptions{Seed: 5, NoResidual: true})
+	got, base := make([]float64, 1), make([]float64, 1)
+	var gain2, n float64
+	for range 200000 {
+		live.Next(3000, 1, true, got)
+		wave.Next(3000, 1, true, base)
+		var mean float64
+		for _, w := range wave.w {
+			mean += w.W * tab.Points[w.Point].Wave[0][0]
+		}
+		if g := base[0] - mean; math.Abs(g) > 0.1*3000 {
+			gain2 += ((got[0] - base[0]) / g) * ((got[0] - base[0]) / g)
+			n++
+		}
+	}
+	if rms, want := math.Sqrt(gain2/n), 0.05*math.Sqrt(2.0/3); math.Abs(rms/want-1) > 0.05 {
+		t.Errorf("RMS gain %.4f, want %.4f", rms, want)
+	}
+}
+
 // TestLiveNoAlloc checks that Next does not allocate, with the residual,
-// both ignition states and the closing transient.
+// the modulation, both ignition states and the closing transient.
 func TestLiveNoAlloc(t *testing.T) {
 	tab := liveTables()
 	tab.Points = append(tab.Points, Point{
 		RPM: 2000, Throttle: 0, Ignition: true, Since: 0.2, MeasuredRPM: 2000, Harmonics: 1,
 		Speed: unitSpeed(), Wave: [][]float64{{1, 0, 0}}, Noise: [][]float64{make([]float64, BandCount*Sectors)},
 	})
+	tab.ModulationSlots = 8
+	for i := range tab.Points {
+		tab.Points[i].Modulation = []float64{0.05}
+	}
 	b, err := NewBank(tab)
 	if err != nil {
 		t.Fatal(err)

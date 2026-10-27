@@ -42,7 +42,7 @@ from = "out/reference/upstream/f4-ej25/engine.json rev_limit_rpm"
 [[source]]
 key = "tables"
 kind = "measured"
-from = "profiles/cycles/f4-ej25.bin of just cycles-grid f4-ej25: tools/cycles build of the engine-sim renders of the grid scenarios in scenarios/upstream/f4-ej25/grid at the simulation rate of the unchanged script, in out/cycles/grid/f4-ej25: 185 points, of which 51 are slices of the closing steps of close.scn (docs/research/cycle-tables.md)"
+from = "profiles/cycles/f4-ej25.bin of just cycles-grid f4-ej25: tools/cycles build of the engine-sim renders of the grid scenarios in scenarios/upstream/f4-ej25/grid at the simulation rate of the unchanged script, from idle to below the limiter, in out/cycles/grid/f4-ej25: 185 points, of which 51 are slices of the closing steps of close.scn, with the harmonics above the Nyquist frequency of the steps and the modulation of the average cycle in 8 parts per cycle (docs/research/cycle-tables.md, docs/research/fullrange-scorecard.md section 12)"
 
 [[source]]
 key = "volume"

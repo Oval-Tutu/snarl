@@ -22,7 +22,35 @@ type MeasureOptions struct {
 	// RawPhase uses the crank phase of the record as it is, without the
 	// smoothing of smoothedPhase.
 	RawPhase bool
+	// NoAliases leaves out the harmonics above the Nyquist frequency of the
+	// steps (aliasHarmonics).
+	NoAliases bool
+	// ModulationSlots measures the modulation of the average cycle in that
+	// many equal parts of each cycle (slotModulation), and leaves it out of
+	// the residual envelopes. 0 measures none.
+	ModulationSlots int
 }
+
+// ModulationSlots is the number of equal parts of each cycle of the
+// modulation that tools/cycles build measures. More parts explain more of
+// the residual: on the grids of the five engines, 8 parts explain 24 to 88
+// per cent of the residual power (docs/research/fullrange-scorecard.md).
+const ModulationSlots = 8
+
+// minModulationSteps is the least number of steps in each part of the
+// cycle for a modulation. With fewer, the gains of the parts fit more
+// than a sixteenth of the residual noise, and the point keeps its whole
+// residual in the band noise. maxModulationGain is the largest RMS gain of
+// a modulation. The model is a small change of the gain of one cycle
+// shape. A larger gain is not small: the misfires of v12-412 at idle (RMS
+// gains of 0.24 to 0.33) and the closing slices, whose cycle changes
+// within the slice, are not a gain of one shape, and the band noise models
+// all of their residual. The steady points of the other engines have RMS
+// gains of 0.01 to 0.09.
+const (
+	minModulationSteps = 16
+	maxModulationGain  = 0.1
+)
 
 // Span is the steps i0 to i1 (exclusive) of a hold that cover whole cycles.
 type Span struct {
@@ -356,19 +384,253 @@ func (r *Record) Measure(seg RecordSegment, opt MeasureOptions) (Point, error) {
 			ext := min(sincHalf+2, len(r.Inputs[c])-s.I1, smooth.base+len(smooth.phase)-(s.I1-d))
 			wave = syncAverage(r.Inputs[c][lo:s.I1+ext], smooth.slice(lo-d, s.I1+ext-d), emission[warm], s.Cycles, p.Harmonics, shift)
 		}
+		if !opt.NoAliases && opt.MaxHarmonics == 0 {
+			wave = aliasHarmonics(wave, r.Inputs[c][s.I0:s.I1], emission[warm:], shift, stepsPerCycle, r.InputSampleRate)
+		}
 		p.Wave = append(p.Wave, wave)
-		p.Noise = append(p.Noise, residualEnvelopes(r.Inputs[c][lo:s.I1], emission, warm, wave, shift, r.InputSampleRate, stepsPerCycle, bank, leak))
+		var am []float64
+		if opt.ModulationSlots > 0 {
+			var depth, rho float64
+			if stepsPerCycle >= minModulationSteps*float64(opt.ModulationSlots) {
+				am, depth, rho = slotModulation(r.Inputs[c][s.I0:s.I1], emission[warm:], wave, shift, opt.ModulationSlots)
+			}
+			p.Modulation = append(p.Modulation, depth)
+			p.ModulationRho = append(p.ModulationRho, rho)
+		}
+		p.Noise = append(p.Noise, residualEnvelopes(r.Inputs[c][lo:s.I1], emission, warm, wave, am, shift, r.InputSampleRate, stepsPerCycle, bank, leak))
+	}
+	// The channels share one harmonic count: the series of a channel with
+	// fewer harmonics above the Nyquist frequency end in zeros.
+	for _, w := range p.Wave {
+		p.Harmonics = max(p.Harmonics, (len(w)-1)/2)
+	}
+	for c, w := range p.Wave {
+		p.Wave[c] = append(w, make([]float64, 2*p.Harmonics+1-len(w))...)
 	}
 	return p, nil
+}
+
+// fitSlotModulation measures the modulation of the average cycle in the
+// input x at the emission phases psi less shift: the least-squares gain of
+// the residual on the cycle wave without its mean in each of slots equal
+// parts of each cycle. It returns per sample the gain, interpolated
+// linearly between the part centres, times the cycle without its mean, the
+// part of the residual that the modulation explains, the correlation rho
+// of the gains of neighbouring parts, from 0 to 0.99, the RMS gain of the
+// playback: the gain whose unit values per part with the correlation rho,
+// interpolated in the same way, give the explained part its power, and the
+// share of the residual power that the explained part holds.
+func fitSlotModulation(x, psi, wave []float64, shift float64, slots int) (m []float64, depth, rho, share float64) {
+	table := NewWaveTable(wave)
+	first := int(math.Floor((psi[0] - shift) * float64(slots)))
+	last := int(math.Floor((psi[len(psi)-1] - shift) * float64(slots)))
+	num := make([]float64, last-first+1)
+	den := make([]float64, last-first+1)
+	g := make([]float64, len(x))
+	for i, v := range x {
+		w := table.At(psi[i] - shift)
+		g[i] = w - wave[0]
+		j := int(math.Floor((psi[i]-shift)*float64(slots))) - first
+		num[j] += (v - w) * g[i]
+		den[j] += g[i] * g[i]
+	}
+	// The gain of a part where the cycle is quiet would fit the residual
+	// noise there, so each gain shrinks by a tenth of the mean power of the
+	// cycle in a part.
+	var mean float64
+	for _, v := range den {
+		mean += v
+	}
+	ridge := 0.1 * mean / float64(len(den))
+	gain := make([]float64, len(num))
+	for j := range gain {
+		if den[j] > 0 {
+			gain[j] = num[j] / (den[j] + ridge)
+		}
+	}
+	// The correlation leaves out the parts at the ends, which hold fewer
+	// samples.
+	var lag, zero float64
+	for j := 1; j+2 < len(gain); j++ {
+		lag += gain[j] * gain[j+1]
+		zero += gain[j] * gain[j]
+	}
+	if zero > 0 {
+		rho = min(max(lag/zero, 0), 0.99)
+	}
+	m = make([]float64, len(x))
+	// explained is the power of the explained part, unit the power that
+	// unit gains per part with the correlation rho, interpolated, give the
+	// cycle, and total the power of the residual.
+	var explained, unit, total float64
+	for i, v := range x {
+		u := (psi[i]-shift)*float64(slots) - 0.5 - float64(first)
+		j := int(math.Floor(u))
+		f := u - float64(j)
+		a, b := gain[min(max(j, 0), len(gain)-1)], gain[min(max(j+1, 0), len(gain)-1)]
+		m[i] = (a + f*(b-a)) * g[i]
+		explained += m[i] * m[i]
+		unit += ((1-f)*(1-f) + f*f + 2*f*(1-f)*rho) * g[i] * g[i]
+		e := v - g[i] - wave[0]
+		total += e * e
+	}
+	if unit <= 0 || total <= 0 {
+		return nil, 0, 0, 0
+	}
+	return m, math.Sqrt(explained / unit), rho, explained / total
+}
+
+// slotModulation returns the modulation of fitSlotModulation, or none when
+// its RMS gain is above maxModulationGain.
+func slotModulation(x, psi, wave []float64, shift float64, slots int) (m []float64, depth, rho float64) {
+	m, depth, rho, _ = fitSlotModulation(x, psi, wave, shift, slots)
+	if depth > maxModulationGain {
+		return nil, 0, 0
+	}
+	return m, depth, rho
+}
+
+// maxAliases caps the harmonics above the Nyquist frequency of the steps
+// that aliasHarmonics fits, and aliasKeep is the least power of a fitted
+// harmonic over the power that the residual noise near its folded
+// frequency gives the fit, 10 dB, for the harmonic to stay. aliasFloor is
+// the least power of a harmonic that stays relative to the power of the
+// series, 80 dB below it and below the precision of the float16 storage.
+// aliasMaxHz is the highest frequency in Hz to which a harmonic that stays
+// may fold: twice the 1900 Hz of the fourth-order input low pass of the
+// synthesiser, which takes a tone above it 24 dB or more down.
+const (
+	maxAliases = 64
+	aliasKeep  = 10
+	aliasFloor = 1e-8
+	aliasMaxHz = 3800
+)
+
+// aliasHarmonics returns the series wave, whose harmonics end at the
+// Nyquist frequency of the steps, with the harmonics above it that the
+// input holds. The engine-sim physics makes harmonics above the Nyquist
+// frequency of its steps, and the steps fold each to a tone that is not a
+// harmonic of the cycle, so that the synchronous average leaves it in the
+// residual. Over many cycles the steps fall at other phases of the cycle,
+// so that a least-squares fit to the residual of the samples x at the
+// emission phases psi less shift separates the harmonics from wave's last
+// plus one up to wave's last plus maxAliases, below twice it. A harmonic
+// stays when its power is aliasKeep times the power that the residual noise
+// near its folded frequency gives the fit, aliasFloor of the series power
+// or more, and its folded frequency is below aliasMaxHz. Played at the same
+// steps, the harmonics fold to the same tones. stepsPerCycle is the mean
+// number of steps of one cycle, and rate the step rate in Hz.
+func aliasHarmonics(wave, x, psi []float64, shift, stepsPerCycle, rate float64) []float64 {
+	h := (len(wave) - 1) / 2
+	a := min(h-1, maxAliases)
+	if a < 1 || len(x) < 16*a {
+		return wave
+	}
+	// folded returns the frequency in Hz to which the steps fold harmonic
+	// k.
+	folded := func(k int) float64 {
+		f := float64(k) / stepsPerCycle
+		return math.Abs(f-math.Round(f)) * rate
+	}
+	some := false
+	for k := h + 1; k <= h+a; k++ {
+		some = some || folded(k) < aliasMaxHz
+	}
+	if !some {
+		return wave
+	}
+	table := NewWaveTable(wave)
+	res := make([]float64, len(x))
+	for i, v := range x {
+		res[i] = v - table.At(psi[i]-shift)
+	}
+	// The normal equations of the regressors 2 cos(2 pi k psi) and
+	// -2 sin(2 pi k psi) of each harmonic k, as in Point.Wave.
+	n := 2 * a
+	g := make([][]float64, n)
+	for i := range g {
+		g[i] = make([]float64, n)
+	}
+	b := make([]float64, n)
+	phi := make([]float64, n)
+	for i, v := range res {
+		s, c := math.Sincos(2 * math.Pi * float64(h+1) * (psi[i] - shift))
+		ds, dc := math.Sincos(2 * math.Pi * (psi[i] - shift))
+		for k := range a {
+			phi[2*k], phi[2*k+1] = 2*c, -2*s
+			s, c = s*dc+c*ds, c*dc-s*ds
+		}
+		for j := range n {
+			b[j] += phi[j] * v
+			row := g[j]
+			for l := j; l < n; l++ {
+				row[l] += phi[j] * phi[l]
+			}
+		}
+	}
+	var trace float64
+	for j := range n {
+		for l := 0; l < j; l++ {
+			g[j][l] = g[l][j]
+		}
+		trace += g[j][j]
+	}
+	for j := range n {
+		g[j][j] += 1e-9 * trace / float64(n)
+	}
+	u := solve(g, b)
+
+	// The noise left after the fit, as a power spectrum per bin that white
+	// noise of unit variance gives 1.
+	fit := append([]float64(nil), res...)
+	for i := range fit {
+		s, c := math.Sincos(2 * math.Pi * float64(h+1) * (psi[i] - shift))
+		ds, dc := math.Sincos(2 * math.Pi * (psi[i] - shift))
+		for k := range a {
+			fit[i] -= 2*u[2*k]*c - 2*u[2*k+1]*s
+			s, c = s*dc+c*ds, c*dc-s*ds
+		}
+	}
+	frame := 16
+	for frame*8 <= len(fit) && frame < 1024 {
+		frame *= 2
+	}
+	noise := welch(fit, frame)
+	var signal float64
+	for j := 1; j <= h; j++ {
+		signal += 2 * (wave[2*j-1]*wave[2*j-1] + wave[2*j]*wave[2*j])
+	}
+	out := append([]float64(nil), wave...)
+	last := h
+	for k := range a {
+		// The folded frequency of harmonic h+1+k in cycles per step.
+		f := float64(h+1+k) / stepsPerCycle
+		f -= math.Round(f)
+		bin := min(int(math.Round(math.Abs(f)*float64(frame))), len(noise)-1)
+		// A fitted harmonic of pure noise of variance v per bin has an
+		// expected power of 2 v / len(x).
+		power := 2 * (u[2*k]*u[2*k] + u[2*k+1]*u[2*k+1])
+		if power > aliasKeep*2*noise[bin]/float64(len(x)) && power > aliasFloor*signal && folded(h+1+k) < aliasMaxHz {
+			last = h + 1 + k
+		} else {
+			u[2*k], u[2*k+1] = 0, 0
+		}
+	}
+	for k := range last - h {
+		out = append(out, u[2*k], u[2*k+1])
+	}
+	return out
 }
 
 // residualEnvelopes returns the residual RMS per band and sector of the
 // emission angle: the input less the average cycle, through each band
 // filter, unmixed from the leakage of the neighbouring bands, as the gain
 // of unit-power band noise. x and phase are the input and its phase from
-// warm samples before the span, so that the band filters have settled.
-// rate is the input rate and stepsPerCycle the samples of one cycle.
-func residualEnvelopes(x, phase []float64, warm int, wave []float64, shift, rate, stepsPerCycle float64, bank []band, leak [][]float64) []float64 {
+// warm samples before the span, so that the band filters have settled. am
+// is nil or the part of the residual that the modulation explains from
+// the span on, which the envelopes leave out. rate is the input rate and
+// stepsPerCycle the samples of one cycle.
+func residualEnvelopes(x, phase []float64, warm int, wave, am []float64, shift, rate, stepsPerCycle float64, bank []band, leak [][]float64) []float64 {
 	table := NewWaveTable(wave)
 	sum := make([][]float64, BandCount)
 	for b := range sum {
@@ -383,6 +645,9 @@ func residualEnvelopes(x, phase []float64, warm int, wave []float64, shift, rate
 	for i, v := range x {
 		psi := phase[i] - shift
 		res := v - table.At(psi)
+		if am != nil && i >= warm {
+			res -= am[i-warm]
+		}
 		sec := sectorOf(psi)
 		for b := range filters {
 			y := filters[b].process(res)

@@ -327,8 +327,8 @@ func (r *refProfile) sections() []refSection {
 		{"idle_rpm", num(e.IdleRPM), idle},
 		{"redline_rpm", num(e.RedlineRPM), up("%s redline_rpm", dump)},
 		{"limiter_rpm", num(e.LimiterRPM), up("%s rev_limit_rpm", dump)},
-		{"tables", quote(r.re.id), meas("%s of just cycles-grid %s: tools/cycles build of the engine-sim renders of the grid scenarios in %s/%s/grid at the simulation rate of the unchanged script, in %s: %d points, of which %d are slices of the closing steps of close.scn (docs/research/cycle-tables.md)",
-			bin, r.re.id, r.scenarios, r.re.id, grid, len(r.tables.Points), closeSlices(r.tables))},
+		{"tables", quote(r.re.id), meas("%s of just cycles-grid %s: tools/cycles build of the engine-sim renders of the grid scenarios in %s/%s/grid at the simulation rate of the unchanged script, from idle to below the limiter, in %s: %d points, of which %d are slices of the closing steps of close.scn, with the harmonics above the Nyquist frequency of the steps and the modulation of the average cycle in %d parts per cycle (docs/research/cycle-tables.md, docs/research/fullrange-scorecard.md section 12)",
+			bin, r.re.id, r.scenarios, r.re.id, grid, len(r.tables.Points), closeSlices(r.tables), r.tables.ModulationSlots)},
 		{"volume", num(def.Volume), sn("half the engine-sim-render --volume 0.5 of the reference renders of just ref-upstream, so that the pops have 6 dB of room above the engine level of the references: core default")},
 	}}
 

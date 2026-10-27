@@ -3,6 +3,7 @@ package cycles
 import (
 	"bytes"
 	"math"
+	"math/cmplx"
 	"math/rand/v2"
 	"testing"
 
@@ -130,6 +131,84 @@ func TestMeasureRecoversWave(t *testing.T) {
 		if math.Abs(s/want-1) > 0.003 {
 			t.Fatalf("speed %d is %g, want about %g", i, s, want)
 		}
+	}
+}
+
+// TestMeasureAliases checks that a harmonic above the Nyquist frequency of
+// the steps, which the steps fold to a tone that is not a harmonic, comes
+// back as that harmonic, with its phase.
+func TestMeasureAliases(t *testing.T) {
+	// 387.1 steps per cycle: harmonic 250 is above the Nyquist frequency,
+	// harmonic 193.
+	wave := func(psi float64) float64 { return testWave(psi) + 0.1*math.Cos(2*math.Pi*250*psi+0.3) }
+	r := synthRecord(10000, 3100, 2, 50, wave, func(float64) float64 { return 0 })
+	p, err := r.Measure(r.Segments[0], MeasureOptions{Settle: 0.5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Harmonics < 250 {
+		t.Fatalf("%d harmonics, want 250 or more", p.Harmonics)
+	}
+	c := complex(p.Wave[0][499], p.Wave[0][500])
+	if a, ph := cmplx.Abs(c), cmplx.Phase(c); math.Abs(a-0.05) > 0.0025 || math.Abs(ph-0.3) > 0.05 {
+		t.Errorf("harmonic 250: magnitude %.4f phase %.3f, want 0.05 and 0.3", a, ph)
+	}
+	off, err := r.Measure(r.Segments[0], MeasureOptions{Settle: 0.5, NoAliases: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if off.Harmonics != 193 {
+		t.Errorf("%d harmonics without the aliases, want 193", off.Harmonics)
+	}
+}
+
+// TestMeasureModulation checks that a random gain of the cycle in eight
+// parts of each cycle comes back as the modulation, with most of its power,
+// and leaves little to the band noise. The gain of each part is a mean over
+// the part, so that the measure smooths the gains and finds a correlation
+// of neighbouring parts.
+func TestMeasureModulation(t *testing.T) {
+	rng := rand.New(rand.NewPCG(5, 6)) //nolint:gosec // Test noise, not security.
+	gains := map[int]float64{}
+	gain := func(k int) float64 {
+		if _, ok := gains[k]; !ok {
+			gains[k] = rng.NormFloat64()
+		}
+		return gains[k]
+	}
+	const depth = 0.05
+	noise := func(psi float64) float64 {
+		u := psi*ModulationSlots - 0.5
+		k := int(math.Floor(u))
+		f := u - float64(k)
+		return depth * (gain(k) + f*(gain(k+1)-gain(k))) * (testWave(psi) - 0.3)
+	}
+	r := synthRecord(10000, 1500, 6, 0, testWave, noise)
+	p, err := r.Measure(r.Segments[0], MeasureOptions{Settle: 0.5, ModulationSlots: ModulationSlots})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Modulation) != 1 || len(p.ModulationRho) != 1 {
+		t.Fatalf("modulation %v, correlation %v", p.Modulation, p.ModulationRho)
+	}
+	// The power of the modulation: the gain times the cycle without its
+	// mean, of power 1.37, with 2/3 of the interpolation of independent
+	// values, or 2/3 + rho/3 of correlated ones.
+	want := depth * depth * 2.0 / 3 * 1.37
+	rho := p.ModulationRho[0]
+	got := p.Modulation[0] * p.Modulation[0] * (2.0/3 + rho/3) * 1.37
+	// The means over the parts smooth the gains, which takes about 2 dB of
+	// the power into the band noise.
+	if d := 10 * math.Log10(got/want); d < -2.5 || d > 0.5 {
+		t.Errorf("modulation power %.2f dB from the truth, want -2.5 to 0.5 dB (RMS gain %.4f, correlation %.2f)", d, p.Modulation[0], rho)
+	}
+	var left float64
+	for _, v := range p.Noise[0] {
+		left += v * v
+	}
+	left /= Sectors
+	if rel := 10 * math.Log10(left/want); rel > -6 {
+		t.Errorf("band noise %.1f dB below the modulation, want 6 dB or more", -rel)
 	}
 }
 

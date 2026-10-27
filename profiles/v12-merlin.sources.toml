@@ -42,7 +42,7 @@ from = "out/reference/upstream/v12-merlin/engine.json rev_limit_rpm"
 [[source]]
 key = "tables"
 kind = "measured"
-from = "profiles/cycles/v12-merlin.bin of just cycles-grid v12-merlin: tools/cycles build of the engine-sim renders of the grid scenarios in scenarios/upstream/v12-merlin/grid at the simulation rate of the unchanged script, in out/cycles/grid/v12-merlin: 87 points, of which 24 are slices of the closing steps of close.scn (docs/research/cycle-tables.md)"
+from = "profiles/cycles/v12-merlin.bin of just cycles-grid v12-merlin: tools/cycles build of the engine-sim renders of the grid scenarios in scenarios/upstream/v12-merlin/grid at the simulation rate of the unchanged script, from idle to below the limiter, in out/cycles/grid/v12-merlin: 93 points, of which 25 are slices of the closing steps of close.scn, with the harmonics above the Nyquist frequency of the steps and the modulation of the average cycle in 8 parts per cycle (docs/research/cycle-tables.md, docs/research/fullrange-scorecard.md section 12)"
 
 [[source]]
 key = "volume"

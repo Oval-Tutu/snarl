@@ -47,6 +47,70 @@ func (r *Record) HoldSpectra(seg RecordSegment, opt MeasureOptions, p *Point, c,
 	return out, nil
 }
 
+// HoldModulation returns, for each slot count, the share of the residual
+// power of channel c over the hold that a modulation of the average cycle
+// of p in that many equal parts of each cycle explains, and the RMS gain of
+// the playback (fitSlotModulation).
+func (r *Record) HoldModulation(seg RecordSegment, opt MeasureOptions, p *Point, c int, slots []int) (share, depth []float64, err error) {
+	s, err := r.HoldSpan(seg, opt.Settle)
+	if err != nil {
+		return nil, nil, err
+	}
+	d := int(math.Round(r.ChannelDelays()[c]))
+	x := r.Inputs[c][s.I0:s.I1]
+	smooth := r.smoothedPhase(s, d, float64(s.I1-s.I0)/float64(s.Cycles), opt)
+	phase := smooth.slice(s.I0-d, s.I1-d)
+	for _, n := range slots {
+		_, dep, _, sh := fitSlotModulation(x, phase, p.Wave[c], 0, n)
+		share = append(share, sh)
+		depth = append(depth, dep)
+	}
+	return share, depth, nil
+}
+
+// ModelSpectrum returns the power spectral density of the residual model
+// of channel c of the table point p, the band noise of the playback, on the
+// frame/2+1 bins of HoldSpectra at the input rate: per band the mean power
+// of its envelope over the sectors, shaped by the band filter.
+func ModelSpectrum(p *Point, c int, rate float64, frame int) []float64 {
+	bank := bankFor(rate)
+	gains, _ := bankGains(bank)
+	out := make([]float64, frame/2+1)
+	for b := range bank {
+		var power float64
+		for _, v := range p.Noise[c][b*Sectors : (b+1)*Sectors] {
+			power += v * v
+		}
+		power /= Sectors
+		for k := range out {
+			out[k] += power * bank[b].response(2*math.Pi*float64(k)/float64(frame)) / gains[b]
+		}
+	}
+	return out
+}
+
+// BandPowers returns the power of a spectrum on the bins of HoldSpectra
+// at the input rate through each residual band filter, as the measure of
+// the residual table sees it.
+func BandPowers(psd []float64, rate float64) []float64 {
+	bank := bankFor(rate)
+	frame := 2 * (len(psd) - 1)
+	out := make([]float64, len(bank))
+	for b := range bank {
+		for k, v := range psd {
+			out[b] += v * bank[b].response(2*math.Pi*float64(k)/float64(frame))
+		}
+		out[b] /= float64(len(psd))
+	}
+	return out
+}
+
+// Welch returns the mean power spectrum of x over Hann frames with half
+// overlap on frame/2+1 bins, normalised so that white noise of unit
+// variance gives 1 per bin on average over the bins, or nil when x is
+// shorter than one frame.
+func Welch(x []float64, frame int) []float64 { return welch(x, frame) }
+
 // welch returns the mean power spectrum of x over Hann frames with half
 // overlap, normalised so that white noise of unit variance gives 1 per bin
 // on average over the bins.

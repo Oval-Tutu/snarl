@@ -70,6 +70,9 @@ func (r *Record) StepResponse(t *Tables, k int, opt MeasureOptions) ([]StepSampl
 	}
 	delays := r.ChannelDelays()
 	stepsPerCycle := float64(s.I1-s.I0) / float64(s.Cycles)
+	// The harmonics above the Nyquist frequency of the steps are not in a
+	// synchronous average of one cycle.
+	h = min(h, int(math.Floor(stepsPerCycle/2)))
 	pad := int(math.Ceil(maxOf(delays))) + sincHalf + 2
 	smooth := r.smoothedPhase(s, pad, stepsPerCycle, opt)
 	stepTime := seg.Start

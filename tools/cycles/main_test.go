@@ -30,6 +30,34 @@ func TestGridRPMs(t *testing.T) {
 	}
 }
 
+func TestWithFine(t *testing.T) {
+	got := withFine(gridRPMs(770, 3000, 250), 2000, 125)
+	want := "[770 875 1000 1125 1250 1375 1500 1625 1750 1875 2000 2250 2500 2750 3000]"
+	if fmt.Sprint(got) != want {
+		t.Errorf("withFine = %v, want %s", got, want)
+	}
+	// 625 is closer than a quarter step to idle at 600.
+	if got := withFine(gridRPMs(600, 1000, 250), 1000, 125); fmt.Sprint(got) != "[600 750 875 1000]" {
+		t.Errorf("withFine = %v", got)
+	}
+	if got := withFine(gridRPMs(770, 3000, 250), 0, 125); len(got) != 10 {
+		t.Errorf("withFine without fine rows = %v", got)
+	}
+}
+
+func TestGridTop(t *testing.T) {
+	for _, c := range []struct{ limiter, want float64 }{{9400, 9250}, {6500, 6250}, {18500, 18250}, {0, 0}} {
+		if got := gridTop(c.limiter, 250); got != c.want {
+			t.Errorf("gridTop(%g) = %g, want %g", c.limiter, got, c.want)
+		}
+	}
+	// 0.998 of the limiter falls on a multiple of the step, so the top is
+	// one step below it.
+	if got := gridTop(9000/limiterShare, 250); got != 8750 {
+		t.Errorf("gridTop on a step = %g, want 8750", got)
+	}
+}
+
 func TestHoldSeconds(t *testing.T) {
 	o := gridOptions{settle: 0.5, minHold: 1, cycles: 24}
 	for _, c := range []struct{ rpm, want float64 }{{690, 4.7}, {6000, 1.5}, {1440, 2.5}} {
@@ -85,6 +113,27 @@ func TestScenariosWritesParsableRows(t *testing.T) {
 	}
 	if fmt.Sprint(closes) != "[700 1750 2750 3000]" {
 		t.Errorf("close.scn closes at %v", closes)
+	}
+
+	// With the limiter, the rows go on above the last hold, and the
+	// throttle step stays at 60 per cent of the last hold.
+	stdout.Reset()
+	if err := run([]string{"scenarios", "--holds", holds, "--name", "test", "--out", out, "--limiter", "3600"}, &stdout); err != nil {
+		t.Fatal(err)
+	}
+	sc, err = scenario.ParseFile(filepath.Join(out, "t100.scn"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last := sc.Segments[len(sc.Segments)-1]; last.RPM0 != 3500 {
+		t.Errorf("t100.scn ends at %g rpm, want 3500", last.RPM0)
+	}
+	sc, err = scenario.ParseFile(filepath.Join(out, "step.scn"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sc.Segments[0].RPM0 != 1750 {
+		t.Errorf("step.scn at %g rpm, want 1750", sc.Segments[0].RPM0)
 	}
 }
 
@@ -233,8 +282,56 @@ func TestBuildAndPlay(t *testing.T) {
 	if err := run([]string{"spectrum", "--record", rec, "--rpm", "3000", "--frame", "256", "--groups", "4"}, &stdout); err != nil {
 		t.Fatal(err)
 	}
-	if n := strings.Count(stdout.String(), "\n| "); n != 6 {
-		t.Errorf("spectrum printed %d table rows, want a header, a rule and 4 groups:\n%s", n, stdout.String())
+	if n := strings.Count(stdout.String(), "\n| "); n != 6+2+cycles.BandCount+2+7 {
+		t.Errorf("spectrum printed %d table rows, want a header, a rule and 4 groups, then a header, a rule and the bands, then a header, a rule and 7 part counts:\n%s", n, stdout.String())
+	}
+	// The modulation table has a row for 8 parts per cycle, the parts of
+	// the tables.
+	if !strings.Contains(stdout.String(), "| 8 | ") {
+		t.Errorf("spectrum printed no modulation for 8 parts:\n%s", stdout.String())
+	}
+
+	stdout.Reset()
+	if err := run([]string{"wavspectrum", "--scenario", scn, "--rpm", "3000", "--settle", "0.1", "--frame", "1024", "--groups", "5", filepath.Join(out, "hold.wav")}, &stdout); err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(stdout.String(), "\n| "); n != 7 {
+		t.Errorf("wavspectrum printed %d table rows, want a header, a rule and 5 groups:\n%s", n, stdout.String())
+	}
+
+	stdout.Reset()
+	if err := run([]string{"blend", "--tables", tables}, &stdout); err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(stdout.String(), "\n| "); n != 2 {
+		t.Errorf("blend printed %d table rows for one point, want a header and a rule:\n%s", n, stdout.String())
+	}
+}
+
+func TestScoreDiff(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, rows string) string {
+		path := filepath.Join(dir, name)
+		text := "### test-engine\n\n| RPM | t000 | t100 |\n| --- | --- | --- |\n" + rows + "\n| RPM | mid-t100 |\n| --- | --- |\n| 1125 | 99.0 +0.2 +0.0 +0.0  |\n"
+		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	before := write("before.md", "| 1000 | 100.0 +0.4 +0.0 +0.0  | 90.0 -0.4 +0.0 +0.0 S |\n| 1250 | 100.0 +1.0 +0.0 +0.0  | 99.0 -0.2 +0.0 +0.0  |\n")
+	after := write("after.md", "| 1000 | 99.5 +0.4 +0.0 +0.0  | 100.0 -0.4 +0.0 +0.0  |\n| 1250 | 96.0 +1.0 +0.0 +0.0  | 99.0 +1.7 +0.0 +0.0 H |\n")
+	var stdout bytes.Buffer
+	if err := run([]string{"scorediff", before, after}, &stdout); err != nil {
+		t.Fatal(err)
+	}
+	out := stdout.String()
+	for _, want := range []string{"| test-engine t000 1250 rpm | 100.0 +1.0 | 96.0 +1.0 |", "| test-engine t100 1250 rpm | 99.0 -0.2 | 99.0 +1.7 |", "5 holds in both: 4 pass before, 4 after"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("scorediff output lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "t000 1000 rpm") {
+		t.Errorf("scorediff lists a loss within the margin:\n%s", out)
 	}
 }
 

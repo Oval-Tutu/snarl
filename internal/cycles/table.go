@@ -34,6 +34,10 @@ type Tables struct {
 	// ThrottleLag is the intake lag of the playback, measured from a
 	// throttle step.
 	ThrottleLag ThrottleLag `json:"throttle_lag"`
+	// ModulationSlots is the number of equal parts of each cycle in which
+	// the average cycle takes one random gain, the modulation of
+	// Point.Modulation, or 0 with no modulation.
+	ModulationSlots int `json:"modulation_slots,omitempty"`
 	// Points are the grid points.
 	Points []Point `json:"points"`
 }
@@ -61,8 +65,18 @@ type Point struct {
 	// cycles that the tables average.
 	MeasuredRPM float64 `json:"measured_rpm"`
 	Cycles      int     `json:"cycles"`
-	// Harmonics is the highest harmonic of the cycle in Wave.
+	// Harmonics is the highest harmonic of the cycle in Wave. The harmonics
+	// above the Nyquist frequency of the steps are those that the steps fold
+	// below it.
 	Harmonics int `json:"harmonics"`
+	// Modulation holds per channel the RMS of the random gain of the average
+	// cycle without its mean in each of Tables.ModulationSlots parts of each
+	// cycle, the part of the residual that follows the cycle. Noise holds
+	// the rest of the residual.
+	Modulation []float64 `json:"modulation,omitempty"`
+	// ModulationRho holds per channel the correlation of the gains of
+	// neighbouring parts of the modulation.
+	ModulationRho []float64 `json:"modulation_rho,omitempty"`
 	// Speed is the crank speed over the cycle relative to its mean, at
 	// SpeedPoints crank angles from 0. The time of one cycle at the mean
 	// RPM is the integral of 1/Speed over the cycle.

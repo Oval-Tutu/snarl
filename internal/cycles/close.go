@@ -53,7 +53,7 @@ func (r *Record) CloseSlices(k int, opt MeasureOptions) ([]Point, error) {
 			next = seg.Seconds
 		}
 		s := RecordSegment{Mode: "hold", RPM0: seg.RPM0, RPM1: seg.RPM0, Throttle: 0, Start: seg.Start + t, End: seg.Start + next}
-		p, err := r.Measure(s, MeasureOptions{MaxHarmonics: opt.MaxHarmonics})
+		p, err := r.Measure(s, MeasureOptions{MaxHarmonics: opt.MaxHarmonics, NoAliases: opt.NoAliases, ModulationSlots: opt.ModulationSlots})
 		if err != nil {
 			return nil, fmt.Errorf("closing step at %g rpm, %.2f to %.2f s: %w", seg.RPM0, t, next, err)
 		}

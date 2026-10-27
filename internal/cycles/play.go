@@ -42,6 +42,47 @@ type Player struct {
 	lagRows     []float64
 	lagIgnition bool
 	target      []float64
+	// mod holds the modulation of each channel, which draws from modRng.
+	mod    []modulation
+	modRng uint64
+}
+
+// modulation is the random gain of the average cycle of one channel: a
+// Gaussian value of unit variance per part of the cycle, with the
+// correlation rho to the value of the part before, interpolated linearly
+// between the part centres. slot is the part before the phase, a0 its
+// value and a1 the value of the next part. started is false before the
+// first value.
+type modulation struct {
+	slot    int
+	a0, a1  float64
+	started bool
+}
+
+// at returns the unit gain at the emission phase psi, from 0 to 1, for
+// slots parts per cycle and the correlation rho, with a value from the
+// xorshift state rng (xorshiftNormal) for each new part. Each change of
+// the part takes the next value.
+func (m *modulation) at(psi float64, slots int, rho float64, rng *uint64) float64 {
+	u := psi*float64(slots) - 0.5
+	// u is at least -0.5, so the conversion of u + 1 rounds down. The part
+	// counts modulo the parts of a cycle, so that a phase that wraps at the
+	// end of the cycle stays in its part.
+	k := int(u+1) - 1
+	f := u - float64(k)
+	if k < 0 {
+		k += slots
+	}
+	switch {
+	case !m.started:
+		m.a0 = xorshiftNormal(rng)
+		m.a1 = rho*m.a0 + math.Sqrt(1-rho*rho)*xorshiftNormal(rng)
+		m.slot, m.started = k, true
+	case k != m.slot:
+		m.a0, m.slot = m.a1, k
+		m.a1 = rho*m.a0 + math.Sqrt(1-rho*rho)*xorshiftNormal(rng)
+	}
+	return m.a0 + f*(m.a1-m.a0)
 }
 
 // row is the points of one throttle and ignition state, by RPM.
@@ -58,7 +99,7 @@ type Weight struct {
 
 // NewPlayer returns a player of the tables at phase 0.
 func NewPlayer(t *Tables, opt PlayOptions) *Player {
-	p := &Player{t: t, opt: opt, dt: 1 / t.Rate, rows: map[bool][]row{}, rng: rand.New(rand.NewPCG(opt.Seed, 0x5eed))} //nolint:gosec // Noise, not security.
+	p := &Player{t: t, opt: opt, dt: 1 / t.Rate, rows: map[bool][]row{}, rng: rand.New(rand.NewPCG(opt.Seed, 0x5eed)), mod: make([]modulation, len(t.Channels)), modRng: opt.Seed*0xbf58476d1ce4e5b9 + 0x94d049bb133111eb} //nolint:gosec // Noise, not security.
 	for i, pt := range t.Points {
 		// The player has no closing transient.
 		if pt.Since > 0 {
@@ -248,10 +289,35 @@ func (p *Player) Next(rpm, throttle float64, ignition bool, out []float64) {
 			v += w.W * p.waves[w.Point][c].At(psi)
 		}
 		if !p.opt.NoResidual {
+			v += p.modulated(c, ws, p.phase-shift, v)
 			v += p.noise(c, ws, p.phase-shift)
 		}
 		out[c] = v //nolint:gosec // c ranges over out.
 	}
+}
+
+// modulated returns the modulation of channel c at emission phase psi: the
+// unit gain of the channel times the blended RMS gain of the points times
+// the blended average cycle v without its blended mean.
+func (p *Player) modulated(c int, ws []Weight, psi, v float64) float64 {
+	if p.t.ModulationSlots <= 0 {
+		return 0
+	}
+	var depth, rho, mean float64
+	for _, w := range ws {
+		pt := &p.t.Points[w.Point]
+		if c < len(pt.Modulation) {
+			depth += w.W * pt.Modulation[c]
+		}
+		if c < len(pt.ModulationRho) {
+			rho += w.W * pt.ModulationRho[c]
+		}
+		mean += w.W * pt.Wave[c][0]
+	}
+	if depth == 0 {
+		return 0
+	}
+	return depth * p.mod[c].at(psi-math.Floor(psi), p.t.ModulationSlots, rho, &p.modRng) * (v - mean)
 }
 
 // noise returns the residual of channel c at emission phase psi: unit

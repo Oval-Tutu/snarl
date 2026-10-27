@@ -16,10 +16,21 @@ type Bank struct {
 	rows [2][]liveRow
 	// close is the closing transient.
 	close closeSet
-	waves [][]WaveTable
+	waves [][]liveWave
 	bands []band
 	// norm brings the band noise to unit power.
 	norm [BandCount]float64
+	// modulated is true when a point has a modulation.
+	modulated bool
+}
+
+// liveWave is the wave table of one point and channel, with its
+// modulation beside it, so that one pass over the weights blends both: the
+// RMS gain, the correlation of neighbouring parts, and the mean of the
+// average cycle.
+type liveWave struct {
+	table            WaveTable
+	depth, rho, mean float64
 }
 
 // liveRow is one throttle row: its points by RPM, their RPM, the
@@ -79,14 +90,22 @@ func NewBank(t *Tables) (*Bank, error) {
 		return nil, errors.New("cycles: the tables have a closing transient but no steady closed-throttle row")
 	}
 	b.close.sort(t)
-	b.waves = make([][]WaveTable, len(t.Points))
+	b.waves = make([][]liveWave, len(t.Points))
 	for i, pt := range t.Points {
 		if len(pt.Wave) != len(t.Channels) || len(pt.Noise) != len(t.Channels) || len(pt.Speed) != SpeedPoints {
 			return nil, errors.New("cycles: a point has the wrong array sizes")
 		}
-		b.waves[i] = make([]WaveTable, len(t.Channels))
+		b.waves[i] = make([]liveWave, len(t.Channels))
 		for c := range t.Channels {
-			b.waves[i][c] = NewWaveTable(pt.Wave[c])
+			w := &b.waves[i][c]
+			w.table, w.mean = NewWaveTable(pt.Wave[c]), pt.Wave[c][0]
+			if t.ModulationSlots > 0 && c < len(pt.Modulation) {
+				w.depth = pt.Modulation[c]
+				b.modulated = b.modulated || w.depth > 0
+			}
+			if c < len(pt.ModulationRho) {
+				w.rho = pt.ModulationRho[c]
+			}
 		}
 	}
 	b.bands = bankFor(t.Rate)
@@ -152,6 +171,9 @@ type Live struct {
 	// after the other.
 	bandNoise []float64
 	noisePos  int
+	// mod holds the modulation of each channel, which draws from modRng.
+	mod    []modulation
+	modRng uint64
 }
 
 // noiseSteps is the number of steps of band noise that fillNoise computes
@@ -173,8 +195,10 @@ func (b *Bank) NewLive(o LiveOptions) *Live {
 	p := &Live{
 		b: b, dt: 1 / b.t.Rate, kClose: 1, kOpen: 1, since: -1,
 		rng:         o.Seed*0x9e3779b97f4a7c15 + 0x2545f4914f6cdd1d,
+		modRng:      o.Seed*0xbf58476d1ce4e5b9 + 0x94d049bb133111eb,
 		noResidual:  o.NoResidual,
 		speedPoints: SpeedPoints, sectors: Sectors,
+		mod: make([]modulation, len(b.t.Channels)),
 	}
 	if o.Lag.Close > 0 {
 		p.kClose = -math.Expm1(-p.dt / o.Lag.Close)
@@ -263,8 +287,23 @@ func (p *Live) Next(rpm, throttle float64, ignition bool, out []float64) {
 		psi := p.phase - p.b.t.Channels[c].DelaySteps*p.dt*rpm*(1.0/120)
 		psi -= math.Floor(psi)
 		v := 0.0
-		for _, w := range ws {
-			v += w.W * p.b.waves[w.Point][c].At(psi)
+		if !p.b.modulated || p.noResidual {
+			for _, w := range ws {
+				v += w.W * p.b.waves[w.Point][c].table.At(psi)
+			}
+		} else {
+			// The modulation of Player.modulated, blended in the same pass.
+			var depth, rho, mean float64
+			for _, w := range ws {
+				lw := &p.b.waves[w.Point][c]
+				v += w.W * lw.table.At(psi)
+				depth += w.W * lw.depth
+				rho += w.W * lw.rho
+				mean += w.W * lw.mean
+			}
+			if depth > 0 {
+				v += depth * p.mod[c].at(psi, p.b.t.ModulationSlots, rho, &p.modRng) * (v - mean)
+			}
 		}
 		if !p.noResidual {
 			v += p.noise(c, ws, psi)
@@ -415,12 +454,16 @@ func pointBracket(row *liveRow, rpm float64) (a, b int, g float64) {
 
 // normal returns a value with the mean and the variance of a unit
 // Gaussian: the sum of four uniform values from one xorshift draw.
-func (p *Live) normal() float64 {
-	x := p.rng
+func (p *Live) normal() float64 { return xorshiftNormal(&p.rng) }
+
+// xorshiftNormal returns a value with the mean and the variance of a unit
+// Gaussian from the xorshift state, as normal describes.
+func xorshiftNormal(state *uint64) float64 {
+	x := *state
 	x ^= x << 13
 	x ^= x >> 7
 	x ^= x << 17
-	p.rng = x
+	*state = x
 	const unit = 1.0 / 65536
 	s := float64(x&0xffff) + float64(x>>16&0xffff) + float64(x>>32&0xffff) + float64(x>>48)
 	// Four uniform values from 0 to 1 have a mean of 2 and a variance of
