@@ -393,3 +393,114 @@ The full-range scorecard takes about 15 minutes. The outputs of this study are i
 - The miss limit of the tonality and the gap is the largest value of engine-sim against itself for the engine. A single outlier hold of engine-sim sets it, for example the gap of `i4-vtec` at 2.18 dB, where the median is 0.13 dB.
 - The scorecard covers dynamometer holds, sweeps and the limiter free run, with the own pops off. It does not cover the harness drive model, the gear changes or the pops.
 - The residual bands of `i4-vtec` at 1250 and 1500 rpm come from `snarl-compare --residual` at full throttle only.
+- The tonality numbers of this report used a wrong rate: the tonality bands of `hissCycle` were 1 to 2 times lower in frequency than their names, by a factor that depends on the RPM. The fix is in `internal/analysis/hiss.go` (`TestHissTonalityBand`). Scored again on the same renders (`out/fullrange/score-ratefix.md`), the largest tonality distance of engine-sim against itself falls from 0.30, 0.17, 0.30, 1.17 and 0.22 dB to 0.19, 0.11, 0.19, 0.36 and 0.09 dB for `i4-vtec`, `v8-ls`, `f4-ej25`, `v12-412` and `v12-merlin`. The largest of snarl falls from 1.2 dB to 0.7 dB (`i4-vtec` at 9125 rpm). The tonality misses are now `i4-vtec` above 8750 rpm (0.3 to 0.7 dB), `f4-ej25` at 3500 rpm at throttle 0 (0.2 dB), and `v12-412` at 15000 and 17500 rpm (0.4 dB). The other measures did not change.
+
+## 12. Fixes of the misses
+
+Measured on `pop-model` after `d7065aa`, with the tonality rate fix of section 11 in both the base and the fixed scorecards, so that the two compare on the same analysis. The base is `out/fix/base2/score.md`, the result `out/fix/f2/score.md`, and `tools/cycles scorediff` lists the holds that pass in the base and lose more than 1 point.
+
+### 12.1 Answer
+
+Three changes to the tables fix most of the misses. Of the 919 full-range holds, 867 pass after the fixes (a score of 95 or more and the worst band above 2 kHz within 1.5 dB), against 814 before:
+
+1. **Table range.** The grid now goes on to the last multiple of 250 rpm below 0.998 of the limiter. `i4-vtec` at 9000 and 9250 rpm goes from 77.3 to 91.0 up to 100 at every throttle.
+2. **Aliased harmonics.** The cause of the `v12-412` mid-hold misses is not the blend. The engine-sim physics makes harmonics above the Nyquist frequency of its 5 kHz steps, and the steps fold them to tones that the tables held as noise. The tables now hold these harmonics. The mid holds at 15375, 15625, 17625 and 18125 rpm go from 57.5 to 94.0 up to 100, and the hold at 17875 rpm from 58.1 to 94.2.
+3. **Modulation of the cycle.** Most of the residual of `i4-vtec`, `f4-ej25` and `v8-ls` is a random gain of the average cycle, which follows the harmonics, not flat band noise. The tables now hold that gain. `i4-vtec` at 1250 to 1500 rpm goes from 86.6 to 92.1 up to 97.6 to 100, and `f4-ej25` at 1000 to 1250 rpm goes from 90.8 to 93.8 up to 98.9 to 100.
+
+A 125 rpm grid below 2000 rpm fixes the low-RPM mid holds, but it makes the `i4-vtec` 1000 rpm holds worse (section 12.5), so the grid recipe does not use it. The fixes cost 1.15 % of the render on the geometric mean of the benchmarks, at most 1.9 % on one profile (`f4-ej25`), and the tables grow by 319 kB (6 %).
+
+| Engine | t000 | t025 | t050 | t075 | t100 | mid-t100 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `i4-vtec` | 98.5 to 98.8 | 98.6 to 99.8 | 97.4 to 99.8 | 97.6 to 99.1 | 98.4 to 99.8 | 97.7 to 99.4 |
+| `v8-ls` | 100.0 | 100.0 | 100.0 | 99.9 | 99.9 | 97.7 |
+| `f4-ej25` | 98.0 to 99.7 | 99.2 to 99.8 | 99.0 to 99.6 | 99.4 to 99.9 | 98.9 to 99.4 | 97.0 to 97.6 |
+| `v12-412` | 95.3 | 98.0 to 99.8 | 98.8 to 99.8 | 99.8 to 100.0 | 99.7 to 100.0 | 97.1 to 99.6 |
+| `v12-merlin` | 93.5 to 93.8 | 99.7 to 99.8 | 100.0 | 100.0 | 100.0 | 94.8 to 94.9 |
+
+The default scenarios (`out/fix/base-default/score.md` to `out/fix/f2-default/score.md`): `v12-412` holds-t050 98.1 to 99.6, holds-t100 98.1 to 99.5 and sweep-wot 98.5 to 99.6; `i4-vtec` holds-t100 99.4 to 99.7 and overrun 98.7 to 99.1; `f4-ej25` holds-t000 98.8 to 99.2; `v12-merlin` holds-t000 92.7 to 93.5 and limiter-free 75.0 to 78.2. The losses are 0.1 to 0.6 points: `v8-ls` limiter-free 98.4 to 98.2, `f4-ej25` sweep-wot 99.4 to 99.3 and idle-free 42.6 to 42.0, `v12-412` holds-t000 94.6 to 94.5, `i4-vtec` and `v12-merlin` idle-free-rpm 0.1 and 0.3 points.
+
+### 12.2 Table range and aliased harmonics
+
+`tools/cycles scenarios --limiter` takes the grid on to the last multiple of the step below 0.998 of the limiter RPM, the top of the full-range scenarios, when that is above the last hold of `holds-t100.scn`. `just cycles-grid` reads `limiter_rpm` from the profile. The new tops are 9250 rpm (`i4-vtec`), 6750 rpm (`v8-ls`), 18250 rpm (`v12-412`) and 3250 rpm (`v12-merlin`). `f4-ej25` keeps 6400 rpm, above 6250 rpm. The throttle step stays at 60 % of the last hold, so the intake lag does not change. engine-sim renders the grid the same way each time: the `f4-ej25` tables of the new render are the same bytes as before.
+
+The `v12-412` holds halfway between grid points missed in one third-octave band, 1995 Hz at 15125 to 15625 rpm and 2512 Hz at 17875 rpm, by -4.3 to -6.8 dB. All other bands were within 0.8 dB. Tables built from engine-sim holds at 15125, 15375 and 15625 rpm themselves (`out/fix/v12-fine`) missed by the same -4.7 to -6.9 dB at those RPM, so the blend is not the cause. `tools/cycles blend` confirms that the linear blend of neighbouring points loses no level in any band above 78 Hz on `v12-412` (-0.0 to -0.5 dB).
+
+The cause is aliasing in engine-sim. Harmonic 24, twice the firing rate, is near 3 kHz at these RPM, above the 2.5 kHz Nyquist frequency of the 5 kHz steps. The steps fold it to 5000 Hz less 24 times the cycle rate, for example 1948 Hz at 15250 rpm and 1922 Hz at 15375 rpm. `tools/cycles spectrum` shows the tone 44 to 46 dB below the input power, all of it in the residual, where the band noise of the model was 15 to 21 dB lower near it. At the output, `tools/cycles wavspectrum` shows engine-sim 12 dB above the playback at 1920 to 1940 Hz at 15375 rpm. At 15250 rpm the output tone is 16 dB weaker than at 15375 rpm, although the input tones are equal, and that hold passed.
+
+`aliasHarmonics` (`internal/cycles/measure.go`) measures these harmonics. Over many cycles, the steps fall at other phases of the cycle, so a least-squares fit to the residual of all samples separates up to 64 harmonics above the Nyquist frequency. A harmonic stays when its power is 10 times what the residual noise near its folded frequency gives the fit, 80 dB or less below the series, and its folded frequency is below 3.8 kHz, twice the 1900 Hz of the fourth-order input low pass of the synthesiser. Playback reads the series at the steps, so the harmonics fold to the same tones, and between grid points the tones move with the RPM as in engine-sim. The 20 kHz engines keep none, as their harmonics fold above 3.8 kHz. `TestMeasureAliases` checks that a harmonic above the Nyquist frequency comes back with its magnitude and phase.
+
+With the aliased harmonics, tables built from the holds at 15000 to 15750 rpm play every hold within 0.9 dB and score 100. With every second point left out, the holds at 15375 and 15625 rpm also score 100. The hold at 15125 rpm scores 77.3 there, because at 15000 rpm a cycle has exactly 40 steps. The folded harmonics then fall on harmonics, the fit cannot separate them, and halfway to 15250 rpm half of the tone is at the wrong frequency (-3.0 dB).
+
+### 12.3 Modulation of the cycle
+
+The residual model of section 7 matched the input residual of engine-sim in power per band (`tools/cycles spectrum`, within 0.2 dB on `i4-vtec` at 1500 rpm), but not in shape within a band. The real residual follows the harmonic envelope. On `i4-vtec` at 1500 rpm and full throttle, the residual dips with the harmonics at 275 and 325 Hz, and the flat band noise is 5 to 19 dB too high from 220 to 360 Hz. At the output, that gave 3.6 to 4.5 dB too much residual.
+
+A random gain of the average cycle in 8 equal parts of each cycle explains 53 to 88 % of the residual power at the grid holds of `i4-vtec`, `f4-ej25` and `v8-ls` that were measured (`tools/cycles spectrum`, the modulation table, 9 holds from 1000 to 6000 rpm). It explains 24 % at the closed-throttle idle of `v12-merlin` and 33 % on `v12-412` at idle. `slotModulation` measures the gain of each part as a least-squares fit, shrunk where the cycle is quiet. It also measures the correlation of neighbouring parts and the RMS gain that, with independent values per part and the same interpolation, gives the explained part its power. The band envelopes hold the rest, so the residual power stays the same. `Live` and `Player` play the gain as one Gaussian value per part, with the measured correlation to the part before, interpolated between the part centres, times the average cycle without its mean.
+
+The gain applies only where each part holds 16 steps or more, so that the fit takes less than a sixteenth of the residual noise, and where the RMS gain is 0.1 or less. A larger gain is not a small change of one cycle shape: the misfires of `v12-412` at idle (0.24 to 0.33) and the closing slices are not. With the gain on `v12-412` at idle, the hold at 3810 rpm fell from 97.7 to 76.2, with 4.1 dB too little level above 2 kHz. A first estimator, a least-squares fit at the part centres with a Wiener shrink, gave gains 2 times larger and made `f4-ej25` at 830 to 1000 rpm worse (90.4 to 93.1). The estimator in the tables takes the mean gain of each part. `TestMeasureModulation` checks that a modulated cycle comes back with its power within -2.5 to 0.5 dB, with the band noise 6 dB or more below. `TestLiveModulation` checks the RMS gain of the playback.
+
+### 12.4 Cost
+
+The benchmarks ran on this PC with `-test.cpu 1`, 6 runs each, the old and the new tables in turn, on the same code (`out/fix/bench5-old.txt`, `out/fix/bench5-new4.txt`, benchstat):
+
+| Benchmark | Old tables (% real time) | New tables (% real time) | Change |
+| --- | --- | --- | --- |
+| Render `i4-vtec` | 3.090 | 3.136 | not significant (p = 0.29) |
+| Render `v8-ls` | 2.409 | 2.405 | not significant |
+| Render `f4-ej25` | 3.085 | 3.143 | +1.90 % |
+| Render `v12-412` | 1.736 | 1.738 | not significant |
+| Render `v12-merlin` | 1.917 | 1.916 | not significant |
+
+Over all 25 benchmarks of `BenchmarkRender` and `BenchmarkStates`, the geometric mean rises by 1.15 %. The largest rise is +6.82 % in the limiter state of `i4-vtec`. The old tables play on the new code without a modulation, as on the code before.
+
+The aliased harmonics do not change the cost of the wave table reads: the render of `v12-412` and `v12-merlin`, which keep them, does not change. The modulation adds per step and channel three multiply-adds per weight in the pass that blends the wave tables, and one Gaussian value per part. A first form, with the blend in its own pass and with aliased harmonics on the 20 kHz engines, cost 2.3 % on the geometric mean of the render benchmarks and 4.6 % on `i4-vtec`.
+
+The tables grow from 5 103 840 to 5 423 121 bytes (+319 281, +6.3 %): 1 512 145 (`i4-vtec`, 273 points), 883 052 (`v8-ls`, 190), 1 164 878 (`f4-ej25`, 185), 1 398 987 (`v12-412`, 469) and 464 059 (`v12-merlin`, 93). The range gives 143 587 bytes. The aliased harmonics and the modulation values in the JSON header give the rest.
+
+### 12.5 The low-RPM blend
+
+The blend between neighbouring points loses level where the cycle changes most from point to point. `tools/cycles blend` gives -2 to -9 dB in some bands between the grid points below 2000 rpm, for example -9.1 dB from 156 to 312 Hz between 1500 and 1750 rpm on `f4-ej25`. A grid with every multiple of 125 rpm below 2000 rpm (`tools/cycles scenarios --fine-below 2000 --fine-step 125`, new engine-sim renders) measured:
+
+- The first-gap mid holds go from 86.1 (`v8-ls` 845 rpm) to 97.3 or more and from 86.8 (`f4-ej25` 915 rpm) to 92.4. `v12-merlin` 875 rpm becomes a grid point, and 675 rpm stays at 85.6.
+- New engine-sim holds halfway between the 125 rpm points, at 812.5 to 1937.5 rpm (`out/fix/valid`), score 97.8 on average on `v8-ls` with the 250 rpm grid and 99.4 with the 125 rpm grid, and 97.5 and 98.7 on `f4-ej25`.
+- The `i4-vtec` holds at 1000 rpm fall from 96.1 to 98.7 to 87.4 to 90.0. The grid reaches 1000 rpm from 875 rpm, while the full-range scenario reaches it from 770 rpm, and the cycle error of the hold grows from 40.5 to 32.7 dB below the signal. engine-sim does not settle to one state at 1000 rpm within the 0.5 s of settling. With the 250 rpm grid the scenario and the grid have the same history, so the hold repeats the grid point.
+- The tables grow by a further 0.84 MB.
+
+A hold that passes must not get worse, so the recipe keeps the 250 rpm step.
+
+### 12.6 What still misses
+
+The 52 holds below the target, and the reason for each:
+
+| Engine | Where | Size | Reason |
+| --- | --- | --- | --- |
+| `v12-412` | throttle 0 at 3810 to 13750 rpm and 17500 to 18250 rpm, throttle 0.25 and 0.5 at 16250 to 17500 rpm | throttle 0: worst bands of 1.6 to 4.3 dB (too high below 7000 rpm, too low from 8500 to 13750 rpm), scores 75.4 to 100; throttle 0.25 and 0.5: 1.9 to 2.3 dB, scores 92.9 to 100 | engine-sim misfires at random and differs from itself by up to 2.88 dB (section 3). The misfires are not a modulation of one cycle (section 12.3), and the band noise does not hold their shape above 2 kHz. |
+| `v12-412` | mid hold at 15125 rpm | 85.1, -3.1 dB at 1995 Hz | at 15000 rpm a cycle has exactly 40 steps, so the folded harmonics cannot be separated from the harmonics (section 12.2). |
+| `v12-merlin` | throttle 0 at 600 to 750 rpm | 81.0 and 84.8, +3.6 and +3.0 dB | the residual has a notch from 1.8 to 2.4 kHz inside the top band, 1750 to 3500 Hz, where the model is 5 to 7.5 dB too high. A tenth band to split the top band costs about 4.5 % of the render: the band noise is about 41 % of the render on `i4-vtec` (CPU profile), and a tenth band adds a ninth to it. |
+| `v8-ls`, `f4-ej25`, `v12-merlin` | mid holds at 845, 915, 675 and 875 rpm | 85.2 to 86.8 | the blend between idle and the next point (section 12.5). |
+| `i4-vtec` | mid hold at 5875 rpm | 85.5, -2.8 dB at 1995 Hz | the cycle changes most between 5750 and 6000 rpm: the blend loses 2.6 to 3.3 dB in every band from 156 Hz to 10 kHz there (`tools/cycles blend`), likely the VTEC switch of the cam profile. A grid point at 5875 rpm would hold it. |
+| `i4-vtec` | idle, 770 rpm, throttle 0 and 0.75 | 90.4 and 93.9, from the envelope | the idle holds of `docs/research/cycle-tables.md` section 6.3: few cycles per window and the largest change of shape per step. These did not change. |
+| `f4-ej25` | throttle 0 at 2750 to 3000 rpm, single holds at 2000, 3250 and 3625 rpm | bands 1.6 to 2.0 dB | these did not change, and they are within 0.5 dB of the 1.5 dB limit. |
+
+The holds that passed and lose more than 1 point: `i4-vtec` at 1000 rpm (throttle 0.25 100.0 to 97.7, throttle 0.75 97.2 to 96.1, throttle 1 100.0 to 98.7) and the mid hold at 1125 rpm (98.8 to 97.5), where the modulation leaves 2.2 dB less output residual than engine-sim. Also `i4-vtec` at 8750 rpm, throttle 0.5 (100.0 to 98.9), and `v12-412` at throttle 0 at 9250 and 13750 rpm (100.0 to 98.2 and 95.3), within the 2.88 dB that engine-sim differs from itself there. `f4-ej25` at 2000 rpm and `v12-412` at 17500 and 18250 rpm pass the score but move 0.1 to 0.3 dB past the 1.5 dB band limit. All of them still score 95.3 or more.
+
+### 12.7 Tools and reproduce
+
+The new commands of `tools/cycles`: `blend` (the level of the blend halfway between neighbouring points per residual band), `wavspectrum` (the spectrum of one hold in several renders), `scorediff` (the holds that pass in one full-range scorecard and lose in another), and the band, model and modulation tables of `spectrum`. `build --no-aliases` and `build --no-modulation` build the tables of the earlier model.
+
+```sh
+# Render the grids to below the limiter and build the tables (about 6 minutes per engine).
+just cycles-grid
+just import-reference
+
+# The full-range and default scorecards.
+go run ./tools/scorecard --scenarios fullrange-t000,fullrange-t025,fullrange-t050,fullrange-t075,fullrange-t100,fullrange-mid-t100 \
+  --dyno --no-pops --calib out/reference/upstream/calib --matrix --out out/fix/f2/snarl > out/fix/f2/score.md
+go run ./tools/scorecard --dyno --no-pops --calib out/reference/upstream/calib --out out/fix/f2-default/snarl > out/fix/f2-default/score.md
+go run ./tools/cycles scorediff out/fix/base2/score.md out/fix/f2/score.md
+
+# The evidence: aliased tones and the residual against its model at one hold, the blend per band.
+go run ./tools/cycles spectrum --record out/cycles/grid/v12-412/t100 --rpm 15250 --groups 16 --frame 256
+go run ./tools/cycles spectrum --record out/cycles/grid/i4-vtec/t100 --rpm 1500 --groups 1000 --frame 16384
+go run ./tools/cycles blend --tables profiles/cycles/f4-ej25.bin
+```
