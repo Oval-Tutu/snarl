@@ -1,6 +1,6 @@
 # Pop level by loudness
 
-Status: done, apart from the listening choice, which you must make. The kind gains now come from loudness over the engine (ITU-R BS.1770 K-weighting), and one offset, `popOffsetLU` in `internal/core/pops.go`, moves all kinds together. The default offset is -6 LU, the second-highest variant, until you choose.
+Status: done. The kind gains now come from loudness over the engine (ITU-R BS.1770 K-weighting), and one offset, `popOffsetLU` in `internal/core/pops.go`, moves all kinds together. After listening to the four variants, the user chose variant C, so the default offset is -10 LU. The measurements of sections 2 to 5 are at the earlier default of -6 LU, variant B.
 
 ## 1. Listen first
 
@@ -8,10 +8,10 @@ Run `nix develop --command just listen-pop-level`. It writes `out/listen-pop-lev
 
 | Variant | Starts at | Pops against the level before this change | `popOffsetLU` | `[pops] gain` at the default |
 | --- | ---: | ---: | ---: | ---: |
-| A | 0 s | -2 LU | -2 | 1.585 |
-| B (default) | 67 s | -6 LU | -6 | 1 |
-| C | 134 s | -10 LU | -10 | 0.631 |
-| D | 201 s | -14 LU | -14 | 0.398 |
+| A | 0 s | -2 LU | -2 | 2.512 |
+| B | 67 s | -6 LU | -6 | 1.585 |
+| C (default) | 134 s | -10 LU | -10 | 1 |
+| D | 201 s | -14 LU | -14 | 0.631 |
 
 Inside each variant, the engines start 13 s apart in the order v8-ls, f4-ej25, v12-merlin, i4-vtec, v12-412. `README.txt` gives each start time. A silence detection of the file (ffmpeg `silencedetect`) finds the 1 s and 3 s gaps at the times of `README.txt`. To apply a choice, set `popOffsetLU` to the offset of the variant. Then set the bands of `TestPopLevelOverEngine` in `pops_test.go` to overLU plus the new offset, plus and minus 3.5 LU.
 

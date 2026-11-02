@@ -30,7 +30,7 @@ const (
 	fadeS       = 0.01
 	// defaultLU is popOffsetLU of internal/core: the loudness of the pops
 	// over the engine against the level of the RMS calibration.
-	defaultLU = -6
+	defaultLU = -10
 )
 
 // variantLU holds the pop loudness of the variants against the level of

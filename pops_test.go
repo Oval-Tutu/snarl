@@ -393,11 +393,11 @@ func popOverEngine(t *testing.T, name string, kind PopKind, request bool, n int)
 
 // popBands are the bands of TestPopLevelOverEngine: 3.5 LU around the
 // loudness of the pop kinds over the engine, overLU plus popOffsetLU in
-// internal/core/pops.go, -3, -4, -6.7 and -12.2 LU. The calibration sets
+// internal/core/pops.go, -7, -8, -10.7 and -16.2 LU. The calibration sets
 // the levels on single pops with no engine. In the engine, the pops of a
 // kind vary in form, and an own pop sounds over the falling engine of a
 // lift-off.
-var popBands = map[PopKind][2]float64{KindPop: {-6.5, 0.5}, KindBoom: {-7.5, -0.5}, KindCrackle: {-10.2, -3.2}, KindBurble: {-15.7, -8.7}}
+var popBands = map[PopKind][2]float64{KindPop: {-10.5, -3.5}, KindBoom: {-11.5, -4.5}, KindCrackle: {-14.2, -7.2}, KindBurble: {-19.7, -12.7}}
 
 // TestPopLevelOverEngine checks the median loudness over the engine of each
 // pop kind on each profile, for 41 own pops on overrun and 61 requested

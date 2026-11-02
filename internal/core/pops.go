@@ -69,9 +69,9 @@ var overLU = [numKinds]float64{kindPop: 3, kindBoom: 2, kindCrackle: -0.7, kindB
 // popOffsetLU moves the loudness of every pop kind over the engine. At 0,
 // the pops have the level of the RMS calibration. The pack clips have no
 // engine under them, so the level is a listening choice among the
-// variants of just listen-pop-level, -2, -6, -10 and -14 LU. Until the
-// choice, it is the second-highest variant (docs/research/pop-level.md).
-const popOffsetLU = -6
+// variants of just listen-pop-level, -2, -6, -10 and -14 LU. The choice
+// is the third variant, -10 LU (docs/research/pop-level.md).
+const popOffsetLU = -10
 
 const ownNorm = 1 / 0.675
 

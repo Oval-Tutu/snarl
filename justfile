@@ -180,7 +180,7 @@ pop_level_cases := "v8-ls=tools/crackle/lift.scn f4-ej25=tools/crackle/lift.scn 
 
 # Measure the loudness and the RMS level of each pop kind over the engine,
 # and the cuts of the pop limiter, on the lift-offs of the five engines
-# with the race pops at the profile pop gain gain, for example 1.585 for
+# with the race pops at the profile pop gain gain, for example 2.512 for
 # variant A of just listen-pop-level (docs/research/pop-level.md).
 # Writes out.
 pop-level gain="1" out="out/pop-level.md":
