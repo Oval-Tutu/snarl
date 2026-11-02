@@ -55,11 +55,18 @@ func kWeighting(rate float64) (shelf, highpass biquad) {
 	return shelf, highpass
 }
 
+// KWeighted returns x through the two ITU-R BS.1770 K-weighting stages at
+// the sample rate, from rest. The mean square of the result over a span,
+// in decibels less 0.691, is the loudness of the span in LUFS.
+func KWeighted(x []float64, rate int) []float64 {
+	shelf, hp := kWeighting(float64(rate))
+	return hp.apply(shelf.apply(x))
+}
+
 // IntegratedLoudness returns the ITU-R BS.1770-4 gated integrated loudness in
 // LUFS of the given channels, each with weight 1 (mono, or left and right).
 // It returns negative infinity when every block falls below the absolute gate.
 func IntegratedLoudness(channels [][]float64, rate int) float64 {
-	shelf, hp := kWeighting(float64(rate))
 	block := int(math.Round(0.4 * float64(rate)))
 	hop := block / 4
 	n := 0
@@ -72,7 +79,7 @@ func IntegratedLoudness(channels [][]float64, rate int) float64 {
 	nBlocks := (n-block)/hop + 1
 	power := make([]float64, nBlocks)
 	for _, ch := range channels {
-		y := hp.apply(shelf.apply(ch))
+		y := KWeighted(ch, rate)
 		for j := range nBlocks {
 			var sum float64
 			for _, v := range y[j*hop : j*hop+block] {
