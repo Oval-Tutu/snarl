@@ -20,6 +20,12 @@
 // clips against model trains at one RMS level, and a blind test. With
 // --join it joins mono renders, each at one integrated loudness.
 //
+// With --pop-level it renders the lift-offs of each engine with each pop
+// kind and with no pops, and prints the loudness and the RMS level of the
+// pops over the engine and the cuts of the pop limiter. With
+// --pop-variants it writes the listening file of just listen-pop-level:
+// the lift-offs of each engine at four pop levels (docs/research/pop-level.md).
+//
 // Usage:
 //
 //	go run ./tools/crackle [--out DIR] [--k N] [--minus REF.wav] [--split S] [--floor DB] CLIP.wav...
@@ -27,6 +33,8 @@
 //	go run ./tools/crackle --model N [--params PARAMS.toml] [--render DIR] CLIP.wav...
 //	go run ./tools/crackle --listen DIR CLIP.wav...
 //	go run ./tools/crackle --join OUT.wav [--lufs L] RENDER.wav...
+//	go run ./tools/crackle --pop-level PROFILE=SCENARIO...
+//	go run ./tools/crackle --pop-variants DIR PROFILE=SCENARIO...
 package main
 
 import (
@@ -63,12 +71,20 @@ func run(args []string, stdout io.Writer) error {
 	listenDir := fs.String("listen", "", "write the listening files of the clips and of model trains to this directory")
 	join := fs.String("join", "", "join the mono inputs, each at the loudness of --lufs, with 1 s of silence between them, to this WAV file")
 	lufs := fs.Float64("lufs", -16, "the integrated loudness in LUFS of each input of --join")
+	popLevel := fs.Bool("pop-level", false, "render the lift-offs of each PROFILE=SCENARIO with each pop kind and with no pops, and print the levels of the pops over the engine")
+	variantsDir := fs.String("pop-variants", "", "write the pop level variants of the lift-offs of each PROFILE=SCENARIO to this directory")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() == 0 || *k < 0 || *split < 0 || *trains < 0 {
 		fs.Usage()
 		return errors.New("need one or more WAV files, a k of 0 or more and a split of 0 or more")
+	}
+	if *popLevel {
+		return popLevels(stdout, fs.Args())
+	}
+	if *variantsDir != "" {
+		return popVariants(*variantsDir, fs.Args())
 	}
 	if *join != "" {
 		return joinFiles(*join, *lufs, fs.Args())

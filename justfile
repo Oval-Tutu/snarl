@@ -173,6 +173,41 @@ listen-pops-model old="51f94ef" dir=crackle_clips out="out/listen-pops-model": (
     cat "{{ out }}/levels.txt"
     echo "Wrote the listening files to {{ out }}"
 
+# The engines and lift-off scenarios of just pop-level and just
+# listen-pop-level: tools/crackle/lift-<engine>.scn when it exists, else
+# tools/crackle/lift.scn.
+pop_level_cases := "v8-ls=tools/crackle/lift.scn f4-ej25=tools/crackle/lift.scn v12-merlin=tools/crackle/lift.scn i4-vtec=tools/crackle/lift-i4-vtec.scn v12-412=tools/crackle/lift-v12-412.scn"
+
+# Measure the loudness and the RMS level of each pop kind over the engine,
+# and the cuts of the pop limiter, on the lift-offs of the five engines
+# with the race pops (docs/research/pop-level.md). Writes out/pop-level.md.
+pop-level:
+    mkdir -p out
+    go run ./tools/crackle --pop-level {{ pop_level_cases }} > out/pop-level.md
+    cat out/pop-level.md
+
+# Make the listening file of the pop level in out: pop-level-variants.wav
+# with README.txt. It plays four variants of the pop loudness over the
+# engine, -2, -6, -10 and -14 LU against the level before the loudness
+# calibration, and each variant plays two lift-offs of each of the five
+# engines with the race pops at 48 kHz. Each engine has the gain that puts
+# it with no pops at -19 LUFS in every variant. Writes the length, the
+# integrated loudness and the sample peak of the file to levels.txt.
+listen-pop-level out="out/listen-pop-level":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v ffmpeg >/dev/null; then
+        echo "Error: ffmpeg is not on PATH. Run this recipe in nix develop." >&2
+        exit 1
+    fi
+    go run ./tools/crackle --pop-variants "{{ out }}" {{ pop_level_cases }}
+    f="{{ out }}/pop-level-variants.wav"
+    len=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "${f}")
+    lv=$(ffmpeg -nostdin -hide_banner -nostats -i "${f}" -af ebur128=peak=sample -f null - 2>&1 | grep -E '^ +(I|Peak):' | tr -s ' ' | tr '\n' ' ')
+    echo "pop-level-variants.wav: ${len} s,${lv}" > "{{ out }}/levels.txt"
+    cat "{{ out }}/README.txt" "{{ out }}/levels.txt"
+    echo "Wrote the listening file to {{ out }}"
+
 # Compare two renders and write metrics and spectrograms.
 compare a b *args: (_command "snarl-compare")
     go run ./cmd/snarl-compare {{ args }} "{{ a }}" "{{ b }}"
