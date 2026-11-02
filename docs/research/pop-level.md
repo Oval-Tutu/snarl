@@ -56,6 +56,18 @@ The scenarios are `tools/crackle/lift.scn` (5000 rpm, for v8-ls, f4-ej25 and v12
 
 A pop is cut when the limiter takes more than 0.1 dB from it. At the default, the limiter cuts 17 of the 192 pops, against 89 before.
 
+The pop limiter cuts fewer pops in each quieter variant, so variants B to D play the pop level and not the limiter. `just pop-level GAIN` measures each variant at its `[pops] gain` (section 1), with one kind at a time, on the same 192 lift-off pops:
+
+| Variant | Pops cut | Deepest cut | Highest median loss of an engine and kind |
+| --- | ---: | ---: | ---: |
+| Before this change | 89 of 192 | -12.6 dB | 2.2 dB |
+| A, -2 LU | 68 of 192 | -10.7 dB | 1.0 dB |
+| B, -6 LU (default) | 17 of 192 | -6.7 dB | 0 dB |
+| C, -10 LU | 5 of 192 | -2.7 dB | 0 dB |
+| D, -14 LU | 0 of 192 | 0 dB | 0 dB |
+
+In variant A, the limiter still cuts about a third of the pops, so A is up to 1 dB quieter than its level on some engines and kinds. The measure renders one kind at a time, and the variants file plays the profile mix of the kinds, so the counts of the file can differ a little.
+
 `TestPopLevelOverEngine` checks the same span loudness on 41 own pops and 61 requested pops of each kind on each profile at 48 kHz. At the default, every median is within 1.8 LU of its target (-3, -4, -6.7 and -12.2 LU for pop, boom, crackle and burble), inside the 3.5 LU bands.
 
 As a cross-check of the K-weighting, ffmpeg `ebur128` reads the v8-ls and v12-412 sections of variant D at -19.0 LUFS, and the whole file at -19.0 LUFS integrated. `analysis.IntegratedLoudness` set the engine gains to -19 LUFS with no pops, and the pops of variant D are 14 LU below the level before this change.
