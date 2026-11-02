@@ -180,11 +180,13 @@ pop_level_cases := "v8-ls=tools/crackle/lift.scn f4-ej25=tools/crackle/lift.scn 
 
 # Measure the loudness and the RMS level of each pop kind over the engine,
 # and the cuts of the pop limiter, on the lift-offs of the five engines
-# with the race pops (docs/research/pop-level.md). Writes out/pop-level.md.
-pop-level:
-    mkdir -p out
-    go run ./tools/crackle --pop-level {{ pop_level_cases }} > out/pop-level.md
-    cat out/pop-level.md
+# with the race pops at the profile pop gain gain, for example 1.585 for
+# variant A of just listen-pop-level (docs/research/pop-level.md).
+# Writes out.
+pop-level gain="1" out="out/pop-level.md":
+    mkdir -p "$(dirname "{{ out }}")"
+    go run ./tools/crackle --pop-level --pop-gain {{ gain }} {{ pop_level_cases }} > "{{ out }}"
+    cat "{{ out }}"
 
 # Make the listening file of the pop level in out: pop-level-variants.wav
 # with README.txt. It plays four variants of the pop loudness over the

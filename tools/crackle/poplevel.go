@@ -117,16 +117,17 @@ type popLevel struct {
 // not cut, because they are 40 dB down.
 const quietGain = 0.01
 
-// kindLevels renders the case with only the kind in use, with no pops and
-// with the pops at quietGain, and returns the level of each pop. The
-// quiet render less the render with no pops, over quietGain, is the pops
-// before the pop limiter: the pop gain sets no random draw.
-func kindLevels(c levelCase, kind int) ([]popLevel, error) {
+// kindLevels renders the case with only the kind in use at the profile
+// pop gain, with no pops and with the pops at quietGain, and returns the
+// level of each pop. The quiet render less the render with no pops, times
+// gain over quietGain, is the pops before the pop limiter: the pop gain
+// sets no random draw.
+func kindLevels(c levelCase, kind int, gain float64) ([]popLevel, error) {
 	sets := append([]string(nil), levelSets...)
 	for k, n := range popKindNames {
 		sets = append(sets, fmt.Sprintf("pops.weight_%s=%d", n, b2i(k == kind)))
 	}
-	a, starts, err := renderEngine(c, append(sets, "pops.gain=1"), false, levelRate)
+	a, starts, err := renderEngine(c, append(sets, fmt.Sprintf("pops.gain=%.6f", gain)), false, levelRate)
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +142,7 @@ func kindLevels(c levelCase, kind int) ([]popLevel, error) {
 	d, u := make([]float64, len(a)), make([]float64, len(a))
 	for i := range a {
 		d[i] = a[i] - b[i]
-		u[i] = (q[i] - b[i]) / quietGain
+		u[i] = (q[i] - b[i]) * gain / quietGain
 	}
 	kd, kb := analysis.KWeighted(d, levelRate), analysis.KWeighted(b, levelRate)
 	var out []popLevel
@@ -229,8 +230,9 @@ func b2i(b bool) int {
 }
 
 // popLevels writes to w the levels over the engine of each pop kind on
-// each case, as a Markdown table, with the race character.
-func popLevels(w io.Writer, args []string) error {
+// each case, as a Markdown table, with the race character and the pop
+// gain.
+func popLevels(w io.Writer, gain float64, args []string) error {
 	cs, err := parseCases(args)
 	if err != nil {
 		return err
@@ -252,7 +254,7 @@ func popLevels(w io.Writer, args []string) error {
 				sem <- struct{}{}
 				defer func() { <-sem }()
 				r := &res[i][k]
-				r.levels, r.err = kindLevels(c, k)
+				r.levels, r.err = kindLevels(c, k, gain)
 			})
 		}
 	}

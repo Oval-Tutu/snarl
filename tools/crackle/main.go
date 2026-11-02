@@ -33,7 +33,7 @@
 //	go run ./tools/crackle --model N [--params PARAMS.toml] [--render DIR] CLIP.wav...
 //	go run ./tools/crackle --listen DIR CLIP.wav...
 //	go run ./tools/crackle --join OUT.wav [--lufs L] RENDER.wav...
-//	go run ./tools/crackle --pop-level PROFILE=SCENARIO...
+//	go run ./tools/crackle --pop-level [--pop-gain G] PROFILE=SCENARIO...
 //	go run ./tools/crackle --pop-variants DIR PROFILE=SCENARIO...
 package main
 
@@ -72,6 +72,7 @@ func run(args []string, stdout io.Writer) error {
 	join := fs.String("join", "", "join the mono inputs, each at the loudness of --lufs, with 1 s of silence between them, to this WAV file")
 	lufs := fs.Float64("lufs", -16, "the integrated loudness in LUFS of each input of --join")
 	popLevel := fs.Bool("pop-level", false, "render the lift-offs of each PROFILE=SCENARIO with each pop kind and with no pops, and print the levels of the pops over the engine")
+	popGain := fs.Float64("pop-gain", 1, "the profile pop gain of --pop-level")
 	variantsDir := fs.String("pop-variants", "", "write the pop level variants of the lift-offs of each PROFILE=SCENARIO to this directory")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -81,7 +82,10 @@ func run(args []string, stdout io.Writer) error {
 		return errors.New("need one or more WAV files, a k of 0 or more and a split of 0 or more")
 	}
 	if *popLevel {
-		return popLevels(stdout, fs.Args())
+		if !(*popGain > 0) {
+			return errors.New("--pop-gain must be above 0")
+		}
+		return popLevels(stdout, *popGain, fs.Args())
 	}
 	if *variantsDir != "" {
 		return popVariants(*variantsDir, fs.Args())
