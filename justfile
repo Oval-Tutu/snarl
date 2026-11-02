@@ -493,9 +493,11 @@ ref-drive engine="": (_command "snarl-harness")
 # tools/scorecard --write-listen writes
 # scenarios/upstream/<engine>/listen-hold-70.scn and listen-hold-90.scn:
 # a full-throttle hold at the full-range RPM closest to 0.7 and 0.9 of the
-# redline, 0.5 s of settling and then 3 s. The renderer runs each file with
-# the settings of just ref-fullrange and the 3 s pre-roll into
-# out/reference/upstream/<engine>/, in parallel.
+# redline, 0.5 s of settling and then 3 s. The renderer runs each
+# listen-hold-*.scn file of the engine, these two and any other, as just
+# ref-fullrange does, at the 3 s pre-roll into
+# out/reference/upstream/<engine>/ and at a 3.5 s pre-roll into
+# out/reference/upstream/calib/<engine>/, in parallel.
 ref-listen engine="":
     #!/usr/bin/env bash
     set -euo pipefail
@@ -519,18 +521,26 @@ ref-listen engine="":
         fi
         script="$(tools/import/engine-sim-main.sh "${r}/share/engine-sim/engines/${scripts[${e}]}" "${tmp}")"
         go run ./tools/scorecard --write-listen --engines "${e}"
-        out="out/reference/upstream/${e}"
-        mkdir -p "${out}"
-        for f in scenarios/upstream/"${e}"/listen-hold-{70,90}.scn; do
+        for f in scenarios/upstream/"${e}"/listen-hold-*.scn; do
             name="$(basename "${f}" .scn)"
-            read -r kind a b c extra < <(grep -v '^#' "${f}")
-            if [[ "${kind}" != hold || -z "${c}" || -n "${extra}" ]]; then
-                echo "Error: ${f}: want one hold" >&2
+            segments=()
+            while IFS= read -r line; do
+                read -r kind a b c d extra <<< "${line%%#*}" || true
+                case "${kind:-}" in
+                    "") continue ;;
+                    hold) [[ -n "${c}" && -z "${d}" ]] && segments+=(--hold "${a}:${b}:${c}") && continue ;;
+                    sweep) [[ -n "${d}" && -z "${extra}" ]] && segments+=(--sweep "${a}:${b}:${c}:${d}") && continue ;;
+                esac
+                echo "Error: ${f}: bad segment '${line}'" >&2
                 exit 1
-            fi
-            "${r}/bin/engine-sim-render" --script "${script}" --hold "${a}:${b}:${c}" --volume 0.5 --settle 3 \
-                --out "${out}/${name}.wav" --csv "${out}/${name}.csv" --csv-every 100 > "${out}/${name}.log" 2>&1 &
-            pids+=($!)
+            done < "${f}"
+            for run in "out/reference/upstream/${e}:3" "out/reference/upstream/calib/${e}:3.5"; do
+                dir="${run%:*}"
+                mkdir -p "${dir}"
+                "${r}/bin/engine-sim-render" --script "${script}" "${segments[@]}" --volume 0.5 --settle "${run##*:}" \
+                    --out "${dir}/${name}.wav" --csv "${dir}/${name}.csv" --csv-every 100 > "${dir}/${name}.log" 2>&1 &
+                pids+=($!)
+            done
         done
     done
     for p in "${pids[@]}"; do

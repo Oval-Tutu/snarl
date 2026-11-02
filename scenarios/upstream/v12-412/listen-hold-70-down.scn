@@ -1,0 +1,5 @@
+# v12-412: the hold of listen-hold-70 at 12500 rpm, reached from a hold at 12750 rpm, another start of the
+# same 3 s hold (docs/research/fullrange-scorecard.md section 14).
+hold 12750 1 1.5
+sweep 12750 12500 1 0.25
+hold 12500 1 3.5

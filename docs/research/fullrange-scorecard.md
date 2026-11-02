@@ -542,3 +542,49 @@ The drive (`out/fix4/base/score.md` to `out/fix4/snap/score.md`), the worst band
 | `v12-merlin` | +10.7, +13.3, +10.9 | -6.0, -4.1, -2.5 | 4.6 |
 
 The windows of the drive beyond the self spread fall from 24 to 20. `v12-merlin` at 6.0 s (-6.0 dB) is now beyond the spread on the low side. The `i4-vtec` and `v8-ls` lifts stay at the edge of the spread, as before. The full-range scorecard has the same 867 passing holds of 919, and the default scenarios do not change (`out/fix4/full/score.md`, `out/fix4/default/score.md`).
+
+## 14. The 3 s hold of `v12-412` at 12500 rpm
+
+`just listen-ab` found one miss in the ten 3 s holds: `v12-412/hold-70`, full throttle at 12500 rpm, score 64.6 and +3.7 dB in the 1995 Hz band. Measured on `pop-model` at `0cf7ab4`, with the tables of section 13.
+
+### 14.1 Answer
+
+The miss is inside the variation of engine-sim against itself. Nothing in snarl changes. At 12500 rpm a cycle of `v12-412` has exactly 48 of the 5 kHz steps, so the steps fold harmonic 30 (3125 Hz) onto harmonic 18 at 1875 Hz. The two add with the phase of the crank against the steps, and the history of the render sets that phase. The same 3 s hold, reached on other paths, has a tone at 1800 to 1900 Hz from -38.1 to -31.0 dB of the hold power in engine-sim. snarl plays -31.0 dB, the phase of the grid render. Two engine-sim renders of the same scenario on different paths score 66.9 against each other with +5.4 dB at 1995 Hz, more than snarl misses by.
+
+### 14.2 Evidence
+
+The tone, power from 1800 to 1900 Hz relative to the power of the 12500 rpm hold (`tools/cycles wavspectrum`). The 1 Hz groups put all of it at 1874 to 1876 Hz.
+
+| Render | Path to 12500 rpm | Tone (dB) | snarl score of the hold |
+| --- | --- | --- | --- |
+| engine-sim `listen-hold-70`, 3 s and 3.5 s pre-roll | the start of the render | -35.8, -35.8 | 64.6 |
+| engine-sim `listen-hold-70-up` | from a hold at 12250 rpm | -38.1 | 68.9 |
+| engine-sim `listen-hold-70-down` | from a hold at 12750 rpm | -31.0 | 100.0 |
+| engine-sim `fullrange-t100` | full-range holds from idle | -31.4 | 100.0 |
+| engine-sim grid `t100`, the source of the tables | grid holds from idle | -31.4 | |
+| snarl and the tables through the exact port | any | -31.0 | |
+
+1. **engine-sim against itself.** The calibration pair, the same scenario at a 3.5 s pre-roll, scores 100 against the 3 s pre-roll and has the same tone to 0.1 dB. The pre-roll only starts the same simulation earlier, so the phase does not change. That pair does not test this variation. `listen-hold-70-up` and `listen-hold-70-down` have the same timeline, so `tools/scorecard --against` scores the second against the first: 66.9 at the 12500 rpm hold, +3.0 dB mean and +5.4 dB most in the 1995 Hz band. snarl against the first scores 68.9 and +2.3 dB. engine-sim renders at exactly 12500 rpm on the dynamometer, so the phase holds over the whole hold.
+2. **The other suspects.** The length: the tone of engine-sim is -35.8, -36.0 and -36.1 dB from 0.5, 1.5 and 2.5 s to the end of the hold, and the playback -31.0, -30.9 and -30.8 dB. No slow change. The aliased harmonics: tables built with `tools/cycles build --no-aliases` play the same -31.0 dB, as the fit has no separate harmonic 30 to find when it falls on harmonic 18. The residual model: `tools/cycles play --no-residual` plays -30.8 dB, so the tone is in the average cycle. The misfires: the other bands above 2 kHz are within 0.4 dB, and the tonality and gap distances are 0.0 and 0.2 dB.
+3. **The neighbouring grid points.** The 3 s holds at 12250 and 12750 rpm score 100, and so do their calibration renders. There, a cycle has 48.98 and 47.06 steps, so the folded harmonic 30 is 100 Hz from harmonic 18 (folded to 1937.5 and 1812.5 Hz, against harmonic 18 at 1837.5 and 1912.5 Hz) and adds no phase dependence.
+
+The same fold occurs at every RPM where a cycle has a whole number of steps: 15000 rpm (40 steps, section 12.2), 10000 rpm (60) and 7500 rpm (80). There the tables hold one phase of engine-sim, and engine-sim on another path can differ by several dB in one band. Do not fix the tables there: no phase is more correct than another.
+
+### 14.3 Reproduce
+
+`just ref-listen` now renders each `listen-hold-*.scn` file of an engine, with any segments, at the 3 s pre-roll and the 3.5 s pre-roll of the calibration. The new scenarios are `listen-hold-70-up`, `listen-hold-70-down`, `listen-hold-12250` and `listen-hold-12750` in `scenarios/upstream/v12-412/`. The outputs are in `out/fix5/`.
+
+```sh
+just ref-listen v12-412
+go run ./tools/scorecard --engines v12-412 --scenarios listen-hold-70,listen-hold-70-up,listen-hold-70-down,listen-hold-12250,listen-hold-12750 \
+  --dyno --no-pops --calib out/reference/upstream/calib --windows --summary out/fix5/listen --out out/fix5/listen > out/fix5/listen.md
+
+# engine-sim against itself: the render from 12750 rpm in the place of the render from 12250 rpm.
+mkdir -p out/fix5/es-down/v12-412
+ln -sf "${PWD}/out/reference/upstream/v12-412/listen-hold-70-down.wav" out/fix5/es-down/v12-412/listen-hold-70-up.wav
+go run ./tools/scorecard --engines v12-412 --scenarios listen-hold-70-up --dyno --no-pops --against out/fix5/es-down \
+  --windows --summary out/fix5/es-self --out out/fix5/es-self > out/fix5/es-self.md
+
+go run ./tools/cycles wavspectrum --scenario scenarios/upstream/v12-412/listen-hold-70-down.scn --rpm 12500 \
+  --from 1800 --to 1900 --groups 1 out/reference/upstream/v12-412/listen-hold-70-down.wav
+```
