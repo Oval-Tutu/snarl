@@ -6,8 +6,11 @@
 # clips, which this file does not use), partial (a
 # part of the sound is measured), derived (made from a measured part, but
 # no clip holds an example) or not-measured (the closest measured form,
-# because no clip holds an example of the kind). The level of each kind
-# over the engine is overDB in pops.go.
+# because no clip holds an example of the kind). The loudness of each kind
+# over the engine is overLU plus popOffsetLU in pops.go: K-weighted levels
+# (ITU-R BS.1770) that keep the relative levels of the RMS levels of the
+# pack kinds. The pack clips are peak-normalised and have no engine under
+# them, so popOffsetLU is a listening choice (docs/research/pop-level.md).
 
 [[source]]
 key = "crackle"

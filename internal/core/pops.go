@@ -55,12 +55,23 @@ const (
 	windChance   = 0.55 // Chance of a pop or a burble in each band.
 )
 
-// overDB holds the level of each pop kind in decibels over the engine: the
-// RMS level of the pop over the span from its start that holds 90 per cent
-// of its energy, against the RMS level of the engine with no pop over the
-// same span, both before the leveller. ownNorm brings the median level of
-// an own pop, 0.675, to 1, so that the median own pop has its target.
-var overDB = [numKinds]float64{kindPop: 4.8, kindBoom: 4.5, kindCrackle: 1.5, kindBurble: -4.3}
+// overLU holds the loudness of each pop kind in LU over the engine, before
+// popOffsetLU: the K-weighted level (ITU-R BS.1770) of the pop over the
+// span from its start that holds 90 per cent of its energy, against the
+// K-weighted level of the engine with no pop over the same span, both
+// before the leveller. The levels keep the relative loudness of the RMS
+// levels over the engine of the pack kinds, 4.8, 4.5, 1.5 and -4.3 dB
+// (docs/research/crackles.md, docs/research/pop-level.md). ownNorm brings
+// the median level of an own pop, 0.675, to 1, so that the median own pop
+// has its target.
+var overLU = [numKinds]float64{kindPop: 3, kindBoom: 2, kindCrackle: -0.7, kindBurble: -6.2}
+
+// popOffsetLU moves the loudness of every pop kind over the engine. At 0,
+// the pops have the level of the RMS calibration. The pack clips have no
+// engine under them, so the level is a listening choice among the
+// variants of just listen-pop-level, -2, -6, -10 and -14 LU. Until the
+// choice, it is the second-highest variant (docs/research/pop-level.md).
+const popOffsetLU = -6
 
 const ownNorm = 1 / 0.675
 

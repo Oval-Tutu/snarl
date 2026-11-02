@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/oval-tutu/snarl/internal/analysis"
 	"github.com/oval-tutu/snarl/internal/dsp"
 	"github.com/oval-tutu/snarl/internal/scenario"
 )
@@ -301,10 +302,10 @@ func (c *popSchedule) next(i int) (s Snapshot, full bool) {
 }
 
 // popOverEngine renders n pops of one kind on the profile and returns the
-// level of each in decibels over the engine: the RMS level of the pop
-// over the span from its start block that holds 90 per cent of its
-// energy, against the RMS level of the engine with no pop over the same
-// span. The pop is the difference from a twin engine with no pops, after
+// loudness of each in LU over the engine: the K-weighted level (ITU-R
+// BS.1770) of the pop over the span from its start block that holds 90
+// per cent of its energy, against the K-weighted level of the engine with
+// no pop over the same span. The pop is the difference from a twin engine with no pops, after
 // the leveller of both. Own pops come from lift-offs to closed throttle at
 // 0.85 times the redline, every 4.5 to 4.7 s after 1.5 s of full
 // throttle. Only the first pop of each lift plays, and the profile
@@ -354,6 +355,11 @@ func popOverEngine(t *testing.T, name string, kind PopKind, request bool, n int)
 			}
 		}
 	}
+	d, e := make([]float64, len(xa)), make([]float64, len(xa))
+	for i := range xa {
+		d[i], e[i] = float64(xa[i]-xb[i]), float64(xb[i])
+	}
+	kd, ke := analysis.KWeighted(d, testRate), analysis.KWeighted(e, testRate)
 	var out []float64
 	for j, st := range starts[:len(starts)-1] {
 		if levels[j] < 0 {
@@ -361,20 +367,19 @@ func popOverEngine(t *testing.T, name string, kind PopKind, request bool, n int)
 		}
 		end := min(starts[j+1], st+testRate)
 		var tot float64
-		for i := st; i < end; i++ {
-			d := float64(xa[i] - xb[i])
-			tot += d * d
+		for _, v := range d[st:end] {
+			tot += v * v
 		}
-		var ep, ee float64
+		var e9, kp, ks float64
 		for i := st; i < end; i++ {
-			d := float64(xa[i] - xb[i])
-			ep += d * d
-			ee += float64(xb[i]) * float64(xb[i])
-			if ep >= 0.9*tot && i >= st+testRate/100 {
+			e9 += d[i] * d[i]
+			kp += kd[i] * kd[i]
+			ks += ke[i] * ke[i]
+			if e9 >= 0.9*tot && i >= st+testRate/100 {
 				break
 			}
 		}
-		db := 10 * math.Log10(ep/ee)
+		db := 10 * math.Log10(kp/ks)
 		if !request {
 			db -= 20 * math.Log10(levels[j]/0.675)
 		}
@@ -386,18 +391,18 @@ func popOverEngine(t *testing.T, name string, kind PopKind, request bool, n int)
 	return out[:n]
 }
 
-// popBands are the bands of TestPopLevelOverEngine: 3.5 dB around the
-// levels over the engine of the pop kinds of the muffler crackle pack
-// (docs/research/crackles.md, overDB in internal/core/pops.go), 4.8, 4.5,
-// 1.5 and -4.3 dB. The calibration sets the levels on single pops with no
-// engine. In the engine, the pops of a kind vary in form, and an own pop
-// sounds over the falling engine of a lift-off.
-var popBands = map[PopKind][2]float64{KindPop: {1.3, 8.3}, KindBoom: {1, 8}, KindCrackle: {-2, 5}, KindBurble: {-7.8, -0.8}}
+// popBands are the bands of TestPopLevelOverEngine: 3.5 LU around the
+// loudness of the pop kinds over the engine, overLU plus popOffsetLU in
+// internal/core/pops.go, -3, -4, -6.7 and -12.2 LU. The calibration sets
+// the levels on single pops with no engine. In the engine, the pops of a
+// kind vary in form, and an own pop sounds over the falling engine of a
+// lift-off.
+var popBands = map[PopKind][2]float64{KindPop: {-6.5, 0.5}, KindBoom: {-7.5, -0.5}, KindCrackle: {-10.2, -3.2}, KindBurble: {-15.7, -8.7}}
 
-// TestPopLevelOverEngine checks the median level over the engine of each
+// TestPopLevelOverEngine checks the median loudness over the engine of each
 // pop kind on each profile, for 41 own pops on overrun and 61 requested
-// pops at full throttle, after the leveller: within 3.5 dB of the level of
-// the kind (popBands). No profile stands out: each median is within 3.5 dB
+// pops at full throttle, after the leveller: within 3.5 LU of the level of
+// the kind (popBands). No profile stands out: each median is within 3.5 LU
 // of the mean of the medians of the other profiles. It runs only outside
 // short mode.
 func TestPopLevelOverEngine(t *testing.T) {
@@ -420,7 +425,7 @@ func TestPopLevelOverEngine(t *testing.T) {
 						v := popOverEngine(t, name, k, request, n)
 						slices.Sort(v)
 						m, b := v[len(v)/2], popBands[k]
-						msg := fmt.Sprintf("%s, request %t, %s: median %.1f dB over the engine, want %.1f to %.1f", name, request, k, m, b[0], b[1])
+						msg := fmt.Sprintf("%s, request %t, %s: median %.1f LU over the engine, want %.1f to %.1f", name, request, k, m, b[0], b[1])
 						if m < b[0] || m > b[1] {
 							t.Error(msg)
 						} else {
@@ -445,7 +450,7 @@ func TestPopLevelOverEngine(t *testing.T) {
 			}
 			for _, m := range med[r][k] {
 				if d := m - (sum-m)/float64(len(names)-1); math.Abs(d) > 3.5 {
-					t.Errorf("request %t, %s: a median of %.1f dB is %.1f dB from the other profiles", r == 1, k, m, d)
+					t.Errorf("request %t, %s: a median of %.1f LU is %.1f LU from the other profiles", r == 1, k, m, d)
 				}
 			}
 		}

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"fmt"
 	"math"
 	"os"
 	"strings"
@@ -161,6 +162,46 @@ func TestPopModel(t *testing.T) {
 			if !(g > 0) || math.IsInf(float64(g), 0) {
 				t.Errorf("source row %d, kind %d: gain %g", r, k, g)
 			}
+		}
+	}
+}
+
+// rmsOverDB holds the RMS levels over the engine of the pack kinds, which
+// set the kind gains before the calibration by loudness.
+var rmsOverDB = [numKinds]float64{kindPop: 4.8, kindBoom: 4.5, kindCrackle: 1.5, kindBurble: -4.3}
+
+// TestKindLoudness checks that the loudness calibration keeps the
+// relative levels of the RMS calibration: the own gain of each kind is
+// popOffsetLU, within 0.1 dB, over the gain that puts the calibration
+// voices at rmsOverDB by their plain RMS level. overLU is rmsOverDB plus
+// the K-weighted over the plain level of the voices of the kind, less
+// engineKDB.
+func TestKindLoudness(t *testing.T) {
+	m, err := sharedModel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for kind := range numKinds {
+		sh := &shapes[kind]
+		var lr, lk float64
+		for d := range calDraws {
+			subs := sh.subs + int(float64(sh.subsRange+1)*(float64(d)+0.5)/calDraws)
+			x := crackle.Render(m.bank, uint32(d+1), voiceOptions(m.params, kind, subs))
+			n := spanLen(x, synthRate/100)
+			var e float64
+			for _, v := range x[:n] {
+				e += float64(v) * float64(v)
+			}
+			lr += 10 * math.Log10(e/float64(n)) / calDraws
+			lk += 20 * math.Log10(spanLoudness(x, synthRate/100)) / calDraws
+		}
+		rms := rmsOverDB[kind] + calTrimDB - lr
+		d := 20*math.Log10(float64(m.gain[0][kind])) - rms
+		msg := fmt.Sprintf("kind %d: the K-weighted level of the voices is %.2f dB over the plain level, the gain is %.2f dB over the RMS gain, want %d", kind, lk-lr, d, popOffsetLU)
+		if math.Abs(d-popOffsetLU) > 0.1 {
+			t.Error(msg)
+		} else {
+			t.Log(msg)
 		}
 	}
 }

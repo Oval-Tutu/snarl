@@ -4,6 +4,7 @@ import (
 	"math"
 	"sync"
 
+	"github.com/oval-tutu/snarl/internal/analysis"
 	"github.com/oval-tutu/snarl/internal/crackle"
 )
 
@@ -19,6 +20,14 @@ const (
 	bankSeed  = 1
 )
 
+// engineKDB is the K-weighted level over the plain RMS level of the engine
+// output, in dB: the mean over the five embedded profiles on the lift-offs
+// of tools/crackle, -0.4 to +0.7 dB on each (docs/research/pop-level.md).
+// The engine level of the pops is a plain RMS level, so the calibration
+// adds this offline correction to put the pops over the loudness of the
+// engine with no filter in the runtime.
+const engineKDB = -0.1
+
 // popModel is the crackle model of the pops at the synthesiser rate,
 // which every engine shares and only reads: the parameters, the bank of
 // the voices and the kind gains.
@@ -26,8 +35,9 @@ type popModel struct {
 	params *crackle.Params
 	bank   *crackle.Bank
 	// gain is the gain of each kind that puts a voice of unit scale on an
-	// engine of unit RMS level before the leveller at its overDB target,
-	// for an own pop or a bang and for a requested pop.
+	// engine of unit RMS level before the leveller at its loudness target,
+	// overLU plus popOffsetLU, for an own pop or a bang and for a
+	// requested pop.
 	gain [2][numKinds]float32
 }
 
@@ -47,15 +57,17 @@ func newPopModel(p *crackle.Params, err error) (*popModel, error) {
 	return m, nil
 }
 
-// calibrate measures the level of the voice of each kind and source: the
-// RMS level over the span from the start that holds 90 per cent of the
-// energy, for a voice at 0 dB. The gain of a kind is set from the mean
-// level in decibels, so that a voice of unit scale on an engine whose
-// output before the leveller has unit RMS level is at its overDB target.
-// The sub-event counts of the draws cover the range of the kind in even
-// steps, and each draw has its own seed. Only the requested crackle has
-// other options than its own kind (shortCrackle), so the other requested
-// kinds take the own gains. It allocates.
+// calibrate measures the loudness of the voice of each kind and source:
+// the K-weighted RMS level (ITU-R BS.1770) over the span from the start
+// that holds 90 per cent of the energy, for a voice at 0 dB. The gain of a
+// kind is set from the mean level in decibels, so that a voice of unit
+// scale on an engine whose output before the leveller has unit RMS level
+// is at overLU plus popOffsetLU over the loudness of the engine, which is
+// engineKDB over its RMS level. The sub-event counts of the draws cover
+// the range of the kind in even steps, and each draw has its own seed.
+// Only the requested crackle has other options than its own kind
+// (shortCrackle), so the other requested kinds take the own gains. It
+// allocates.
 func (m *popModel) calibrate() {
 	for r := range m.gain {
 		for kind := range numKinds {
@@ -71,31 +83,50 @@ func (m *popModel) calibrate() {
 					subs = min(subs, shortCrackle)
 				}
 				x := crackle.Render(m.bank, uint32(d+1), voiceOptions(m.params, kind, subs))
-				lg += math.Log10(math.Max(spanRMS(x, synthRate/100), 1e-12))
+				lg += math.Log10(math.Max(spanLoudness(x, synthRate/100), 1e-12))
 			}
-			m.gain[r][kind] = float32(math.Pow(10, (overDB[kind]+calTrimDB)/20-lg/calDraws))
+			db := overLU[kind] + popOffsetLU + engineKDB + calTrimDB
+			m.gain[r][kind] = float32(math.Pow(10, db/20-lg/calDraws))
 		}
 	}
 }
 
-// spanRMS returns the RMS level of x from its start to the sample at which
-// the energy reaches 90 per cent of the total, and over at least minN
-// samples.
-func spanRMS(x []float32, minN int) float64 {
+// spanLoudness returns the K-weighted RMS level of x at the synthesiser
+// rate over the span of spanLen.
+func spanLoudness(x []float32, minN int) float64 {
+	y := make([]float64, len(x))
+	for i, v := range x {
+		y[i] = float64(v)
+	}
+	n := spanLen(x, minN)
+	if n == 0 {
+		return 0
+	}
+	k := analysis.KWeighted(y, synthRate)
+	var e float64
+	for _, v := range k[:n] {
+		e += v * v
+	}
+	return math.Sqrt(e / float64(n))
+}
+
+// spanLen returns the number of samples of x from its start to the sample
+// at which the energy reaches 90 per cent of the total, and at least minN,
+// or 0 when x has no energy.
+func spanLen(x []float32, minN int) int {
 	var tot float64
 	for _, v := range x {
 		tot += float64(v) * float64(v)
+	}
+	if tot == 0 {
+		return 0
 	}
 	var e float64
 	for i, v := range x {
 		e += float64(v) * float64(v)
 		if e >= 0.9*tot {
-			n := min(len(x), max(i+1, minN))
-			for _, u := range x[i+1 : n] {
-				e += float64(u) * float64(u)
-			}
-			return math.Sqrt(e / float64(n))
+			return min(len(x), max(i+1, minN))
 		}
 	}
-	return 0
+	return len(x)
 }
