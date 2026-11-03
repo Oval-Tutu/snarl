@@ -26,6 +26,10 @@
 // --pop-variants it writes the listening file of just listen-pop-level:
 // the lift-offs of each engine at four pop levels (docs/research/pop-level.md).
 //
+// With --pop-tail it measures the decay after the strong shocks and at the
+// end of the clips, of the model voices, of the pops on the lift-offs and
+// of the engine-sim impulse responses (docs/research/pop-tail.md).
+//
 // Usage:
 //
 //	go run ./tools/crackle [--out DIR] [--k N] [--minus REF.wav] [--split S] [--floor DB] CLIP.wav...
@@ -35,6 +39,7 @@
 //	go run ./tools/crackle --join OUT.wav [--lufs L] RENDER.wav...
 //	go run ./tools/crackle --pop-level [--pop-gain G] PROFILE=SCENARIO...
 //	go run ./tools/crackle --pop-variants DIR PROFILE=SCENARIO...
+//	go run ./tools/crackle --pop-tail DIR [--profiles DIR] short=CLIP.wav... [long=CLIP.wav...] [PROFILE=SCENARIO...]
 package main
 
 import (
@@ -74,6 +79,8 @@ func run(args []string, stdout io.Writer) error {
 	popLevel := fs.Bool("pop-level", false, "render the lift-offs of each PROFILE=SCENARIO with each pop kind and with no pops, and print the levels of the pops over the engine")
 	popGain := fs.Float64("pop-gain", 1, "the profile pop gain of --pop-level")
 	variantsDir := fs.String("pop-variants", "", "write the pop level variants of the lift-offs of each PROFILE=SCENARIO to this directory")
+	tailDir := fs.String("pop-tail", "", "measure the decay after the pops of the short=CLIP.wav, long=CLIP.wav and PROFILE=SCENARIO arguments, print the summary and write events.csv to this directory")
+	profiles := fs.String("profiles", "profiles", "the profile directory of --pop-tail, with the impulse responses in ir")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -89,6 +96,9 @@ func run(args []string, stdout io.Writer) error {
 	}
 	if *variantsDir != "" {
 		return popVariants(*variantsDir, fs.Args())
+	}
+	if *tailDir != "" {
+		return popTail(stdout, *tailDir, *profiles, fs.Args())
 	}
 	if *join != "" {
 		return joinFiles(*join, *lufs, fs.Args())

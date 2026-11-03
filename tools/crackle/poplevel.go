@@ -123,36 +123,14 @@ const quietGain = 0.01
 // gain over quietGain, is the pops before the pop limiter: the pop gain
 // sets no random draw.
 func kindLevels(c levelCase, kind int, gain float64) ([]popLevel, error) {
-	sets := append([]string(nil), levelSets...)
-	for k, n := range popKindNames {
-		sets = append(sets, fmt.Sprintf("pops.weight_%s=%d", n, b2i(k == kind)))
-	}
-	a, starts, err := renderEngine(c, append(sets, fmt.Sprintf("pops.gain=%.6f", gain)), false, levelRate)
+	d, u, b, starts, err := kindRenders(c, kind, gain)
 	if err != nil {
 		return nil, err
-	}
-	b, _, err := renderEngine(c, sets, true, levelRate)
-	if err != nil {
-		return nil, err
-	}
-	q, _, err := renderEngine(c, append(sets, fmt.Sprintf("pops.gain=%g", quietGain)), false, levelRate)
-	if err != nil {
-		return nil, err
-	}
-	d, u := make([]float64, len(a)), make([]float64, len(a))
-	for i := range a {
-		d[i] = a[i] - b[i]
-		u[i] = (q[i] - b[i]) * gain / quietGain
 	}
 	kd, kb := analysis.KWeighted(d, levelRate), analysis.KWeighted(b, levelRate)
 	var out []popLevel
 	for j, s := range starts {
-		// A pop that starts on silence starts at its first sample.
-		if s == 0 || d[s-1] == 0 {
-			for s < min(len(d)-1, starts[j]+2*levelBlock) && d[s] == 0 {
-				s++
-			}
-		}
+		s = popStart(d, s)
 		end := min(len(d), s+popSpanS*levelRate)
 		if j+1 < len(starts) {
 			end = min(end, starts[j+1])
@@ -186,6 +164,48 @@ func kindLevels(c levelCase, kind int, gain float64) ([]popLevel, error) {
 		out = append(out, lv)
 	}
 	return out, nil
+}
+
+// kindRenders renders the case with only the kind in use at the pop gain,
+// with no pops and with the pops at quietGain. It returns the pops after
+// the pop limiter d, the pops before the pop limiter u, the render with
+// no pops b and the start sample of each pop.
+func kindRenders(c levelCase, kind int, gain float64) (d, u, b []float64, starts []int, err error) {
+	sets := append([]string(nil), levelSets...)
+	for k, n := range popKindNames {
+		sets = append(sets, fmt.Sprintf("pops.weight_%s=%d", n, b2i(k == kind)))
+	}
+	a, starts, err := renderEngine(c, append(sets, fmt.Sprintf("pops.gain=%.6f", gain)), false, levelRate)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	b, _, err = renderEngine(c, sets, true, levelRate)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	q, _, err := renderEngine(c, append(sets, fmt.Sprintf("pops.gain=%g", quietGain)), false, levelRate)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	d, u = make([]float64, len(a)), make([]float64, len(a))
+	for i := range a {
+		d[i] = a[i] - b[i]
+		u[i] = (q[i] - b[i]) * gain / quietGain
+	}
+	return d, u, b, starts, nil
+}
+
+// popStart returns the first sample of the pop that the engine reports at
+// the block start s: a pop that starts on silence starts at its first
+// sample.
+func popStart(d []float64, s int) int {
+	if s == 0 || d[s-1] == 0 {
+		limit := min(len(d)-1, s+2*levelBlock)
+		for s < limit && d[s] == 0 {
+			s++
+		}
+	}
+	return s
 }
 
 // span90 returns the samples from the start of x to the sample at which

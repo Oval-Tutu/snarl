@@ -62,6 +62,27 @@ crackle-measure dir=crackle_clips out="out/crackle":
     go run ./tools/crackle "${files[@]}" > "{{ out }}/summary-classes.md"
     echo "Wrote the crackle measures to {{ out }}"
 
+# The directory of the long exterior crackle clips of the muffler crackle
+# pack, crackle_long_1.wav to crackle_long_<crackle_count>.wav.
+crackle_long_clips := "out/pack/muffler/MufflerCrackleSounds/Unity Engine/Muffler Sound Pack/Assets/Audio/Muffler/Long_Cracles"
+
+# Measure the decay after the pops with tools/crackle --pop-tail
+# (docs/research/pop-tail.md): after the strong shocks and at the end of
+# the short clips, at the end of the long clips, of the crackle model
+# voices, of the snarl pops on the lift-offs of pop_level_cases, and of
+# the engine-sim impulse responses. Writes summary.md and events.csv to
+# out.
+pop-tail dir=crackle_clips long=crackle_long_clips out="out/pop-tail":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    args=()
+    for i in $(seq 1 {{ crackle_count }}); do
+        args+=("short={{ dir }}/crackle_${i}.wav" "long={{ long }}/crackle_long_${i}.wav")
+    done
+    mkdir -p "{{ out }}"
+    go run ./tools/crackle --pop-tail "{{ out }}" "${args[@]}" {{ pop_level_cases }} > "{{ out }}/summary.md"
+    echo "Wrote the decay measures to {{ out }}"
+
 # Fit the crackle model (internal/crackle) to the 30 short exterior crackle
 # clips with tools/crackle --fit (docs/research/crackle-model.md). Writes
 # the class-level parameters to internal/crackle/crackle.toml and their
