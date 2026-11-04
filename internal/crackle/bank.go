@@ -218,6 +218,14 @@ type Bank struct {
 	bed, ring, body []float32
 }
 
+// ShortTail returns a bank with the grains and the loops of b and the
+// parameters of b with the short tail (Params.ShortTail).
+func (b *Bank) ShortTail() *Bank {
+	c := *b
+	c.p = b.p.ShortTail()
+	return &c
+}
+
 // NewBank renders the sound of the model at the sample rate in hertz. The
 // seed sets the carriers and the noise of the grains and the loops.
 func NewBank(p *Params, rate float64, seed uint32) *Bank {

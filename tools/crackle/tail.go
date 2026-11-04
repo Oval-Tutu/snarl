@@ -278,8 +278,9 @@ const (
 )
 
 // endEvent returns the decay in each band after the end event, to the
-// end of the sound, and the cut kind of the end.
-func (s *tailSeg) endEvent(rate int) ([]decay, int) {
+// end of the sound, the index of the shock of the end event and the cut
+// kind of the end.
+func (s *tailSeg) endEvent(rate int) ([]decay, int, int) {
 	fr := float64(rate)
 	from := s.hi - int(endLastS*fr)
 	top := math.Inf(-1)
@@ -295,7 +296,7 @@ func (s *tailSeg) endEvent(rate int) ([]decay, int) {
 		}
 	}
 	if s.hi >= s.n-int(edgeS*fr) {
-		return nil, cutAtEnd
+		return nil, last, cutAtEnd
 	}
 	row := s.bands(rate, s.shocks[last].pk, s.end)
 	full := s.env[0]
@@ -305,15 +306,30 @@ func (s *tailSeg) endEvent(rate int) ([]decay, int) {
 		ref = max(ref, full[i])
 	}
 	if f := int(frameS * fr); s.hi >= f && math.Sqrt(meanSquare(full[s.hi-f:s.hi])) > ref*dbAmp(-cutDB) {
-		return nil, cutAbrupt
+		return nil, last, cutAbrupt
 	}
-	return row, uncut
+	return row, last, uncut
 }
 
-// tailRow is the decay in each band of one event.
+// holdShocks returns the shocks after shock k whose peak is at most holdMS
+// after its peak: the gap of each from the onset of the shock before in
+// milliseconds, and its level against the strongest shock in dB.
+func (s *tailSeg) holdShocks(rate, k int, holdMS float64) (gaps, levels []float64) {
+	fr := float64(rate) / 1000
+	for j := k + 1; j < len(s.shocks) && float64(s.shocks[j].pk-s.shocks[k].pk) <= holdMS*fr; j++ {
+		gaps = append(gaps, float64(s.shocks[j].at-s.shocks[j-1].at)/fr)
+		levels = append(levels, s.shocks[j].RelDB)
+	}
+	return gaps, levels
+}
+
+// tailRow is the decay in each band of one event. For an end event, gaps
+// and levels are the shocks in the hold, from the end event to the break
+// of the full band (holdShocks).
 type tailRow struct {
 	group, source, event string
 	bands                []decay
+	gaps, levels         []float64
 }
 
 // tailGroup is one set of events and its count of excluded cut ends.
@@ -349,17 +365,18 @@ func (t *tailCollector) add(name, source string, s *tailSeg, rate int, strong bo
 	if strong {
 		g := t.group(name, "strong shocks")
 		for _, r := range s.strong(rate) {
-			g.rows = append(g.rows, tailRow{name, source, g.event, r})
+			g.rows = append(g.rows, tailRow{group: name, source: source, event: g.event, bands: r})
 		}
 	}
 	g := t.group(name, "end")
-	switch r, cut := s.endEvent(rate); cut {
+	switch r, last, cut := s.endEvent(rate); cut {
 	case cutAtEnd:
 		g.atEnd++
 	case cutAbrupt:
 		g.abrupt++
 	default:
-		g.rows = append(g.rows, tailRow{name, source, g.event, r})
+		gaps, levels := s.holdShocks(rate, last, r[0].BreakMS)
+		g.rows = append(g.rows, tailRow{name, source, g.event, r, gaps, levels})
 	}
 }
 
@@ -444,9 +461,7 @@ func popTail(w io.Writer, dir, profiles string, args []string) error {
 		opt  func(i int) crackle.Options
 	}{
 		{"crackle", func(int) crackle.Options { return crackle.Options{} }},
-		// A boom has 1 + subs shocks, with 3 to 15 later sub-events, as
-		// the boom shape of internal/core/pops.go.
-		{"boom", func(i int) crackle.Options { return crackle.Options{Shocks: 4 + i%13, Short: true} }},
+		{"boom", modelBoom},
 		{"pop and burble", func(int) crackle.Options { return crackle.Options{Single: true} }},
 	} {
 		bank := crackle.NewBank(crackle.Default(), modelRate, checkSeed)
@@ -720,9 +735,35 @@ func writeTailSummary(w io.Writer, t *tailCollector, irs []irDecay) error {
 			b.WriteString("\n")
 		}
 	}
+	writeHoldShocks(&b, t)
 	writeTailDiff(&b, t)
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// holdStats returns the count of the shocks in the hold of each end event
+// of the rows, and the gaps and the levels of all of them, pooled.
+func holdStats(rows []tailRow) (counts, gaps, levels []float64) {
+	for _, r := range rows {
+		counts = append(counts, float64(len(r.gaps)))
+		gaps = append(gaps, r.gaps...)
+		levels = append(levels, r.levels...)
+	}
+	return counts, gaps, levels
+}
+
+// writeHoldShocks writes the shocks in the hold of the end events of each
+// group.
+func writeHoldShocks(b *strings.Builder, t *tailCollector) {
+	b.WriteString("\n## Shocks in the hold\n\nThe shocks after the end event whose peak is at most the full-band break after its peak. The count is per end event; the gap, from the onset of the shock before, and the level, against the strongest shock, are pooled.\n\n| Group | Ends | Shocks | Count | Gap, ms | Level, dB |\n| --- | ---: | ---: | --- | --- | --- |\n")
+	for _, key := range t.order {
+		g := t.groups[key]
+		if g.event != "end" || len(g.rows) == 0 {
+			continue
+		}
+		c, gp, l := holdStats(g.rows)
+		fmt.Fprintf(b, "| %s | %d | %d | %s | %s | %s |\n", g.name, len(g.rows), len(l), short(c, 0), short(gp, 1), short(l, 1))
+	}
 }
 
 // writeTailDiff writes the model and engine medians less the medians of

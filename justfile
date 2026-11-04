@@ -84,10 +84,12 @@ pop-tail dir=crackle_clips long=crackle_long_clips out="out/pop-tail":
     echo "Wrote the decay measures to {{ out }}"
 
 # Fit the crackle model (internal/crackle) to the 30 short exterior crackle
-# clips with tools/crackle --fit (docs/research/crackle-model.md). Writes
-# the class-level parameters to internal/crackle/crackle.toml and their
-# sources to internal/crackle/crackle.sources.toml, and the check of the
-# fit trains to out/crackle/fit.md.
+# clips with tools/crackle --fit (docs/research/crackle-model.md), then
+# set the keys of the tail from the ends of the clips with --fit-tail
+# (docs/research/pop-tail.md). Writes the class-level parameters to
+# internal/crackle/crackle.toml and their sources to
+# internal/crackle/crackle.sources.toml, and the check of the fit trains
+# to out/crackle/fit.md.
 crackle-fit dir=crackle_clips:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -97,7 +99,22 @@ crackle-fit dir=crackle_clips:
     done
     mkdir -p out/crackle
     go run ./tools/crackle --fit internal/crackle/crackle.toml "${files[@]}" > out/crackle/fit.md
+    just crackle-fit-tail "{{ dir }}"
     echo "Wrote internal/crackle/crackle.toml and the check of the fit to out/crackle/fit.md"
+
+# Set the keys of the tail of internal/crackle/crackle.toml from the ends
+# of the 30 short exterior crackle clips with tools/crackle --fit-tail
+# (docs/research/pop-tail.md), and write their sources to
+# internal/crackle/crackle.sources.toml. The other keys stay.
+crackle-fit-tail dir=crackle_clips:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    files=()
+    for i in $(seq 1 {{ crackle_count }}); do
+        files+=("{{ dir }}/crackle_${i}.wav")
+    done
+    go run ./tools/crackle --fit-tail internal/crackle/crackle.toml "${files[@]}"
+    echo "Wrote the tail of internal/crackle/crackle.toml"
 
 # Render model trains of the crackle model with the committed parameters
 # to out/crackle/model, with seeds other than those of the fit, and check
@@ -228,6 +245,28 @@ listen-pop-level out="out/listen-pop-level":
     len=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "${f}")
     lv=$(ffmpeg -nostdin -hide_banner -nostats -i "${f}" -af ebur128=peak=sample -f null - 2>&1 | grep -E '^ +(I|Peak):' | tr -s ' ' | tr '\n' ' ')
     echo "pop-level-variants.wav: ${len} s,${lv}" > "{{ out }}/levels.txt"
+    cat "{{ out }}/README.txt" "{{ out }}/levels.txt"
+    echo "Wrote the listening file to {{ out }}"
+
+# Make the listening file of the pop tail in out: pop-tail-old-then-new.wav
+# with README.txt. For each of the five engines, it plays two lift-offs
+# with the race pops at the default level and the old tail of the pops (no
+# hold and no trailing shocks), then the same two lift-offs with the new
+# tail, at 48 kHz (docs/research/pop-tail.md). Each engine has the gain
+# that puts it with no pops at -19 LUFS in both halves. Writes the length,
+# the integrated loudness and the sample peak of the file to levels.txt.
+listen-pop-tail out="out/listen-pop-tail":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v ffmpeg >/dev/null; then
+        echo "Error: ffmpeg is not on PATH. Run this recipe in nix develop." >&2
+        exit 1
+    fi
+    go run ./tools/crackle --pop-tail-listen "{{ out }}" {{ pop_level_cases }}
+    f="{{ out }}/pop-tail-old-then-new.wav"
+    len=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "${f}")
+    lv=$(ffmpeg -nostdin -hide_banner -nostats -i "${f}" -af ebur128=peak=sample -f null - 2>&1 | grep -E '^ +(I|Peak):' | tr -s ' ' | tr '\n' ' ')
+    echo "pop-tail-old-then-new.wav: ${len} s,${lv}" > "{{ out }}/levels.txt"
     cat "{{ out }}/README.txt" "{{ out }}/levels.txt"
     echo "Wrote the listening file to {{ out }}"
 

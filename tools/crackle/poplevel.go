@@ -104,14 +104,18 @@ func renderEngine(c levelCase, sets []string, noPops bool, rate int) ([]float64,
 // decibels, over the span from its start that holds 90 per cent of its
 // energy: rmsDB of the plain signals, spanLU of the K-weighted signals,
 // and popK and engK the K-weighted over the plain level of the pop and of
-// the engine. momLU is the K-weighted level over the momentary window
-// from the start. lossDB is the level that the pop limiter takes from the
-// pop up to the next pop, and minGain the lowest gain of the pop limiter
-// over the samples of the pop above a tenth of its peak.
+// the engine. headLU is the K-weighted level over the first headS from
+// the start, the bang, and momLU over the momentary window from the
+// start. lossDB is the level that the pop limiter takes from the pop up
+// to the next pop, and minGain the lowest gain of the pop limiter over the
+// samples of the pop above a tenth of its peak.
 type popLevel struct {
-	rmsDB, spanLU, momLU, popK, engK float64
-	lossDB, minGain                  float64
+	rmsDB, spanLU, headLU, momLU, popK, engK float64
+	lossDB, minGain                          float64
 }
+
+// headS is the window of the bang of a pop from its start.
+const headS = 0.05
 
 // quietGain is the pop gain of the render whose pops the pop limiter does
 // not cut, because they are 40 dB down.
@@ -161,6 +165,8 @@ func kindLevels(c levelCase, kind int, gain float64) ([]popLevel, error) {
 		lv.lossDB = powDB(sumSquares(u[s:end]) / sumSquares(d[s:end]))
 		m := min(len(d), s+int(momentaryS*levelRate))
 		lv.momLU = powDB(sumSquares(kd[s:m]) / sumSquares(kb[s:m]))
+		h := min(end, s+int(headS*levelRate))
+		lv.headLU = powDB(sumSquares(kd[s:h]) / sumSquares(kb[s:h]))
 		out = append(out, lv)
 	}
 	return out, nil
@@ -226,16 +232,16 @@ func span90(x []float64, minN int) int {
 	return len(x)
 }
 
-// medians returns the medians over the pops of rmsDB, spanLU, momLU, popK,
-// engK and lossDB.
-func medians(levels []popLevel) [6]float64 {
-	var cols [6][]float64
+// medians returns the medians over the pops of rmsDB, spanLU, headLU,
+// momLU, popK, engK and lossDB.
+func medians(levels []popLevel) [7]float64 {
+	var cols [7][]float64
 	for _, l := range levels {
-		for f, v := range [6]float64{l.rmsDB, l.spanLU, l.momLU, l.popK, l.engK, l.lossDB} {
+		for f, v := range [7]float64{l.rmsDB, l.spanLU, l.headLU, l.momLU, l.popK, l.engK, l.lossDB} {
 			cols[f] = append(cols[f], v)
 		}
 	}
-	var m [6]float64
+	var m [7]float64
 	for f := range cols {
 		m[f] = median(cols[f])
 	}
@@ -279,10 +285,10 @@ func popLevels(w io.Writer, gain float64, args []string) error {
 		}
 	}
 	wg.Wait()
-	fmt.Fprintln(w, "Levels over the engine with no pops, in dB, the medians over the pops, with the race character. RMS and span are over the span that holds 90 per cent of the energy of the pop; momentary is over the 400 ms from its start. Pop K and engine K are the K-weighted level over the plain level. Loss is the level that the pop limiter takes from the pop. Cut is the pops that lose more than 0.1 dB, and least gain the lowest gain of the pop limiter, in dB.")
+	fmt.Fprintln(w, "Levels over the engine with no pops, in dB, the medians over the pops, with the race character. RMS and span are over the span that holds 90 per cent of the energy of the pop; bang is over the 50 ms from its start, and momentary over the 400 ms from its start. Pop K and engine K are the K-weighted level over the plain level. Loss is the level that the pop limiter takes from the pop. Cut is the pops that lose more than 0.1 dB, and least gain the lowest gain of the pop limiter, in dB.")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "| Engine | Kind | Pops | RMS, dB | Span, LU | Momentary, LU | Pop K, dB | Engine K, dB | Loss, dB | Cut | Most loss, dB | Least gain, dB |")
-	fmt.Fprintln(w, "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+	fmt.Fprintln(w, "| Engine | Kind | Pops | RMS, dB | Span, LU | Bang, LU | Momentary, LU | Pop K, dB | Engine K, dB | Loss, dB | Cut | Most loss, dB | Least gain, dB |")
+	fmt.Fprintln(w, "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
 	for i, c := range cs {
 		for k, name := range popKindNames {
 			r := res[i][k]
@@ -304,10 +310,10 @@ func popLevels(w io.Writer, gain float64, args []string) error {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "The mean over the engines of the medians:")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "| Kind | RMS, dB | Span, LU | Momentary, LU | Pop K, dB | Engine K, dB | Loss, dB |")
-	fmt.Fprintln(w, "| --- | ---: | ---: | ---: | ---: | ---: | ---: |")
+	fmt.Fprintln(w, "| Kind | RMS, dB | Span, LU | Bang, LU | Momentary, LU | Pop K, dB | Engine K, dB | Loss, dB |")
+	fmt.Fprintln(w, "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
 	for k, name := range popKindNames {
-		var mean [6]float64
+		var mean [7]float64
 		for i := range cs {
 			for f, v := range medians(res[i][k].levels) {
 				mean[f] += v / float64(len(cs))

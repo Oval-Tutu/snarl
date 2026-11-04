@@ -156,6 +156,9 @@ func New(s *Spec, res Resources, rate int) (*Engine, error) {
 		return nil, fmt.Errorf("profile %s: %d channels, %d impulse responses and %d channels in the tables", s.Name, len(s.Channels), len(res.ImpulseResponses), len(t.Channels))
 	}
 	model, err := sharedModel()
+	if shortPopTail.Load() {
+		model, err = shortModel()
+	}
 	if err != nil {
 		return nil, err
 	}

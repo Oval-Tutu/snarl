@@ -175,18 +175,19 @@ var rmsOverDB = [numKinds]float64{kindPop: 4.8, kindBoom: 4.5, kindCrackle: 1.5,
 // popOffsetLU, within 0.1 dB, over the gain that puts the calibration
 // voices at rmsOverDB by their plain RMS level. overLU is rmsOverDB plus
 // the K-weighted over the plain level of the voices of the kind, less
-// engineKDB.
+// engineKDB. The voices have the short tail, as in calibrate.
 func TestKindLoudness(t *testing.T) {
 	m, err := sharedModel()
 	if err != nil {
 		t.Fatal(err)
 	}
+	bank := m.bank.ShortTail()
 	for kind := range numKinds {
 		sh := &shapes[kind]
 		var lr, lk float64
 		for d := range calDraws {
 			subs := sh.subs + int(float64(sh.subsRange+1)*(float64(d)+0.5)/calDraws)
-			x := crackle.Render(m.bank, uint32(d+1), voiceOptions(m.params, kind, subs))
+			x := crackle.Render(bank, uint32(d+1), voiceOptions(m.params, kind, subs))
 			n := spanLen(x, synthRate/100)
 			var e float64
 			for _, v := range x[:n] {

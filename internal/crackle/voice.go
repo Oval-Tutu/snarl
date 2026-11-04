@@ -15,6 +15,9 @@ const (
 	// releaseMS is the ramp from the last output of a train that a
 	// Trigger stops down to 0, so that the stop does not click.
 	releaseMS = 1.5
+	// strongDB is the range below the strongest shock of a strong shock, as
+	// the strong shocks of tools/crackle.
+	strongDB = 12
 )
 
 // Options set one train.
@@ -24,8 +27,9 @@ type Options struct {
 	// Shocks is the count of shocks, clamped to the measured range, or 0
 	// for a train of a length.
 	Shocks int
-	// Short lets Shocks go below the measured minimum, down to 1. A short
-	// train is derived, not measured: no clip holds one.
+	// Short lets Shocks go below the measured minimum, down to 1, with the
+	// bed and the body at ShortBodyDB. A short train is derived, not
+	// measured: no clip holds one.
 	Short bool
 	// LengthMS is the active length, clamped to the measured range, or 0
 	// to draw it from the measured distribution.
@@ -66,6 +70,8 @@ type Voice struct {
 	tailTurn       complex64
 	tailRe, tailIm float32
 	tailGain       float32
+	// bodyGain is the gain of the bed, the body and the tail.
+	bodyGain float32
 
 	active bool
 	single bool
@@ -74,12 +80,20 @@ type Voice struct {
 	left   int   // Shocks left, or -1 for a train of a length.
 	end    int64 // Last sample at which a shock of a train of a length can start.
 	fadeAt int64
-	count  int
-	total  float64 // Shocks or samples of the span, for the place offset.
-	gain   float32
-	z      float64 // Normal value of the level of the last shock.
-	fade   float32
-	in     float32
+	// strongAt is the onset of the last strong shock, a shock within
+	// strongDB of topDB, the strongest level of the train so far. trail is
+	// the count of trailing shocks left, and trailing is set after the last
+	// shock of the train.
+	strongAt int64
+	topDB    float64
+	trail    int
+	trailing bool
+	count    int
+	total    float64 // Shocks or samples of the span, for the place offset.
+	gain     float32
+	z        float64 // Normal value of the level of the last shock.
+	fade     float32
+	in       float32
 	// last is the last output sample. The release adds relStep times
 	// relLeft to each sample, while relLeft counts down to 0, over
 	// relLen samples.
@@ -180,6 +194,8 @@ func (v *Voice) Trigger(o Options) {
 	v.fadeAt = math.MaxInt64
 	v.fade, v.in = 1, min(1, v.fadeStep)
 	v.tailRe, v.tailIm = 0, 0
+	v.strongAt, v.topDB, v.trail, v.trailing = 0, math.Inf(-1), 0, false
+	v.bodyGain = 1
 	v.z = v.gauss()
 	v.gain = float32(dbAmp(p.OutDB + o.LevelDB))
 	switch {
@@ -189,6 +205,7 @@ func (v *Voice) Trigger(o Options) {
 		lo := p.ShocksMin
 		if o.Short {
 			lo = 1
+			v.bodyGain = float32(dbAmp(p.ShortBodyDB))
 		}
 		n := min(max(o.Shocks, lo), p.ShocksMax)
 		v.left, v.total = n, float64(n)
@@ -203,13 +220,26 @@ func (v *Voice) Trigger(o Options) {
 		v.end = max(1, v.samples(l-p.LengthOffsetMS))
 		v.total = float64(v.end)
 	}
+	if (o.Single || o.Short) && p.TrailShocks[Quantiles-1] > 0 {
+		v.trail = int(math.Round(v.drawMid(p.TrailShocks[:])))
+	}
 }
 
-// fire starts a shock and schedules the next one.
+// trailGap draws the gap to the next trailing shock in samples.
+func (v *Voice) trailGap() int64 { return max(1, v.samples(v.drawMid(v.p.TrailGapMS[:]))) }
+
+// fire starts a shock and schedules the next one. The fade starts
+// FadeDelayMS after the last shock of the train, and at least HoldMS after
+// the last strong shock. The trailing shocks follow the train until the
+// fade.
 func (v *Voice) fire() {
 	p := v.p
-	db := p.LevelDB[Quantiles-1]
-	if !v.single {
+	top := p.LevelDB[Quantiles-1]
+	db := top
+	switch {
+	case v.trailing:
+		db = v.topDB + v.drawMid(p.TrailLevelDB[:])
+	case !v.single:
 		var place float64
 		if v.left < 0 {
 			place = float64(v.t) / v.total
@@ -237,6 +267,16 @@ func (v *Voice) fire() {
 		lvl = -peak
 	}
 	v.plays[k] = play{g: v.b.grains[(n>>1)%grainCount], lvl: lvl}
+	v.next = -1
+	if v.trailing {
+		if v.trail--; v.trail > 0 {
+			v.trailNext()
+		}
+		return
+	}
+	if v.topDB = max(v.topDB, db); db >= v.topDB-strongDB {
+		v.strongAt = v.t
+	}
 	v.count++
 
 	if v.left > 0 {
@@ -244,11 +284,22 @@ func (v *Voice) fire() {
 	}
 	gap := v.gap()
 	if v.left == 0 || (v.left < 0 && v.t+gap > v.end) {
-		v.next = -1
-		v.fadeAt = v.t + v.samples(p.FadeDelayMS)
+		v.fadeAt = max(v.t+v.samples(p.FadeDelayMS), v.strongAt+v.samples(p.HoldMS))
+		if v.trail > 0 {
+			v.trailing = true
+			v.trailNext()
+		}
 		return
 	}
 	v.next = v.t + max(1, gap)
+}
+
+// trailNext schedules the next trailing shock when it starts before the
+// fade.
+func (v *Voice) trailNext() {
+	if t := v.t + v.trailGap(); t < v.fadeAt {
+		v.next = t
+	}
 }
 
 // Process adds the train to out, one sample per value. It does not
@@ -273,14 +324,14 @@ func (v *Voice) Process(out []float32) {
 			}
 			k++
 		}
-		y += b.bed[v.at] + v.actGain*v.act*b.ring[v.at] + b.body[v.at]
+		y += v.bodyGain*b.bed[v.at] + v.actGain*v.act*b.ring[v.at] + v.bodyGain*b.body[v.at]
 		v.act *= v.actDecay
 		if v.at++; v.at == len(b.bed) {
 			v.at = 0
 		}
 		if v.t >= v.fadeAt {
 			if v.t == v.fadeAt {
-				v.tailRe = v.tailGain
+				v.tailRe = v.tailGain * v.bodyGain
 			}
 			if v.fade *= v.fadeCoef; v.fade < voiceEnd {
 				v.active = false

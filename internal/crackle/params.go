@@ -85,6 +85,28 @@ type Params struct {
 	TailHz, TailDecayMS, TailGainDB float64
 	// OutDB is the output gain at level 0 dB.
 	OutDB float64
+	// HoldMS is the least time from the onset of the last strong shock, a
+	// shock within strongDB of the strongest shock of the train before it,
+	// to the start of the fade.
+	HoldMS float64
+	// A single shock and a short train end with trailing shocks: a count
+	// from TrailShocks, each at a gap from TrailGapMS after the shock
+	// before and at a level from TrailLevelDB over the strongest shock of
+	// the train, until the fade. Each is a quantile table.
+	TrailShocks, TrailGapMS, TrailLevelDB [Quantiles]float64
+	// ShortBodyDB is the gain of the bed, the body and the tail of a short
+	// train against its shocks.
+	ShortBodyDB float64
+}
+
+// ShortTail returns a copy of p with no hold, no trailing shocks and no
+// gain of the body of a short train, so that the fade starts
+// FadeDelayMS after the last shock of every train.
+func (p *Params) ShortTail() *Params {
+	c := *p
+	c.HoldMS, c.ShortBodyDB = 0, 0
+	c.TrailShocks, c.TrailGapMS, c.TrailLevelDB = [Quantiles]float64{}, [Quantiles]float64{}, [Quantiles]float64{}
+	return &c
 }
 
 // key is one key of the parameter file and the values that it sets. An
@@ -120,6 +142,8 @@ func (p *Params) keys(shocks *[2]float64) []key {
 		one("fade_in_ms", &p.FadeInMS), one("act_ms", &p.ActMS), one("act_db", &p.ActDB),
 		one("tail_hz", &p.TailHz), one("tail_decay_ms", &p.TailDecayMS), one("tail_gain_db", &p.TailGainDB),
 		one("out_db", &p.OutDB),
+		one("hold_ms", &p.HoldMS), array("trail_shocks", p.TrailShocks[:]), array("trail_gap_ms", p.TrailGapMS[:]),
+		array("trail_level_db", p.TrailLevelDB[:]), one("short_body_db", &p.ShortBodyDB),
 	}
 }
 
@@ -226,13 +250,15 @@ func (p *Params) check() error {
 		return errors.New("gap_scale, level_scale, attack_ms, decay_ms, ring_ms and fade_db_per_ms must be above 0")
 	case p.BodyHz <= 0 || p.BodyQ <= 0 || p.TopHz <= 0 || p.TailHz <= 0 || p.TailDecayMS <= 0 || p.ActMS <= 0:
 		return errors.New("body_hz, body_q, top_hz, tail_hz, tail_decay_ms and act_ms must be above 0")
-	case p.FadeDelayMS < 0 || p.FadeInMS < 0:
-		return errors.New("fade_delay_ms and fade_in_ms must not be negative")
+	case p.FadeDelayMS < 0 || p.FadeInMS < 0 || p.HoldMS < 0:
+		return errors.New("fade_delay_ms, fade_in_ms and hold_ms must not be negative")
+	case p.TrailShocks[0] < 0 || p.TrailGapMS[0] < 0:
+		return errors.New("trail_shocks and trail_gap_ms must not be negative")
 	}
-	for _, t := range [][]float64{p.LengthMS[:], p.GapMS[:], p.LevelDB[:]} {
+	for _, t := range [][]float64{p.LengthMS[:], p.GapMS[:], p.LevelDB[:], p.TrailShocks[:], p.TrailGapMS[:], p.TrailLevelDB[:]} {
 		for i := 1; i < len(t); i++ {
 			if t[i] < t[i-1] {
-				return errors.New("length_ms, gap_ms and level_db must be in order")
+				return errors.New("length_ms, gap_ms, level_db and the trail tables must be in order")
 			}
 		}
 	}

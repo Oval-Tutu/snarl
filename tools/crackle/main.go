@@ -14,7 +14,9 @@
 // With --fit it fits the class-level parameters of the crackle model
 // (internal/crackle) to the clips and writes them with their sources, and
 // with --model it renders model trains and checks them against the clips
-// with the same measures (docs/research/crackle-model.md).
+// with the same measures (docs/research/crackle-model.md). With --fit-tail
+// it sets the keys of the tail of a parameter file from the ends of the
+// clips (docs/research/pop-tail.md).
 //
 // With --listen it writes the listening files of just listen-pops-model:
 // clips against model trains at one RMS level, and a blind test. With
@@ -28,18 +30,24 @@
 //
 // With --pop-tail it measures the decay after the strong shocks and at the
 // end of the clips, of the model voices, of the pops on the lift-offs and
-// of the engine-sim impulse responses (docs/research/pop-tail.md).
+// of the engine-sim impulse responses (docs/research/pop-tail.md). With
+// --short-tail the engine pops have the short tail of the crackle model,
+// and --pop-tail-listen writes the listening file of just
+// listen-pop-tail: the lift-offs of each engine with the short tail, then
+// the default tail.
 //
 // Usage:
 //
 //	go run ./tools/crackle [--out DIR] [--k N] [--minus REF.wav] [--split S] [--floor DB] CLIP.wav...
 //	go run ./tools/crackle --fit PARAMS.toml CLIP.wav...
+//	go run ./tools/crackle --fit-tail PARAMS.toml CLIP.wav...
 //	go run ./tools/crackle --model N [--params PARAMS.toml] [--render DIR] CLIP.wav...
 //	go run ./tools/crackle --listen DIR CLIP.wav...
 //	go run ./tools/crackle --join OUT.wav [--lufs L] RENDER.wav...
 //	go run ./tools/crackle --pop-level [--pop-gain G] PROFILE=SCENARIO...
 //	go run ./tools/crackle --pop-variants DIR PROFILE=SCENARIO...
 //	go run ./tools/crackle --pop-tail DIR [--profiles DIR] short=CLIP.wav... [long=CLIP.wav...] [PROFILE=SCENARIO...]
+//	go run ./tools/crackle --pop-tail-listen DIR PROFILE=SCENARIO...
 package main
 
 import (
@@ -51,6 +59,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/oval-tutu/snarl/internal/core"
 	"github.com/oval-tutu/snarl/internal/crackle"
 	"github.com/oval-tutu/snarl/internal/wav"
 )
@@ -70,6 +79,7 @@ func run(args []string, stdout io.Writer) error {
 	split := fs.Float64("split", 0, "cut each input into events at quiet spans of at least this many seconds (0: one clip per file)")
 	floorDB := fs.Float64("floor", defaultFloorDB, "level in dBFS at or below which a sample is quiet")
 	fitPath := fs.String("fit", "", "fit the crackle model to the clips, write the parameters to this file and the sources beside it, and print the check of the fit trains")
+	fitTailPath := fs.String("fit-tail", "", "set the keys of the tail of this parameter file from the ends of the clips, and write their sources beside it")
 	trains := fs.Int("model", 0, "render this many model trains, measure them and print the check against the clips")
 	params := fs.String("params", "", "the parameter file of the model trains (default: the embedded internal/crackle/crackle.toml)")
 	render := fs.String("render", "", "write the model trains to this directory as crackle_N.wav")
@@ -81,9 +91,12 @@ func run(args []string, stdout io.Writer) error {
 	variantsDir := fs.String("pop-variants", "", "write the pop level variants of the lift-offs of each PROFILE=SCENARIO to this directory")
 	tailDir := fs.String("pop-tail", "", "measure the decay after the pops of the short=CLIP.wav, long=CLIP.wav and PROFILE=SCENARIO arguments, print the summary and write events.csv to this directory")
 	profiles := fs.String("profiles", "profiles", "the profile directory of --pop-tail, with the impulse responses in ir")
+	tailListen := fs.String("pop-tail-listen", "", "write the lift-offs of each PROFILE=SCENARIO with the old tail of the pops, then the new tail, to this directory")
+	shortTail := fs.Bool("short-tail", false, "render the engine pops of --pop-level and --pop-tail with the short tail of the crackle model, with no hold and no trailing shocks")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	core.UseShortPopTail(*shortTail)
 	if fs.NArg() == 0 || *k < 0 || *split < 0 || *trains < 0 {
 		fs.Usage()
 		return errors.New("need one or more WAV files, a k of 0 or more and a split of 0 or more")
@@ -99,6 +112,12 @@ func run(args []string, stdout io.Writer) error {
 	}
 	if *tailDir != "" {
 		return popTail(stdout, *tailDir, *profiles, fs.Args())
+	}
+	if *tailListen != "" {
+		return popTailListen(*tailListen, fs.Args())
+	}
+	if *fitTailPath != "" {
+		return fitTail(*fitTailPath, fs.Args())
 	}
 	if *join != "" {
 		return joinFiles(*join, *lufs, fs.Args())

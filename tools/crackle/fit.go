@@ -5,7 +5,6 @@ import (
 	"io"
 	"math"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -668,17 +667,24 @@ func (f *fitResult) sources() []source {
 	}
 }
 
-// writeFit writes the parameter file and the sources file beside it.
+// paramsHeader is the header of the parameter file, and sourcesHeader that
+// of the sources file.
+const (
+	paramsHeader  = "Class-level parameters of the crackle model (internal/crackle), written by\njust crackle-fit (tools/crackle --fit, then --fit-tail) from the 30 short\nexterior crackle clips. Do not edit by hand. crackle.sources.toml gives the\nsource of each key, and docs/research/crackle-model.md and\ndocs/research/pop-tail.md the model and the check."
+	sourcesHeader = "# Sources of the keys of crackle.toml, written by just crackle-fit.\n# kind: measured (a statistic of the 30 clips by tools/crackle), fitted (a\n# deterministic fit by tools/crackle --fit of model trains to a statistic\n# of the clips), derived (a fit of model trains of a form that no clip\n# holds to a statistic of the clips) or snarl (a snarl default where the\n# clips cannot measure the value).\n"
+)
+
+// writeFit writes the parameter file and the sources file beside it. The
+// keys of the tail are 0, the tail of the fit trains, until --fit-tail
+// sets them.
 func writeFit(path string, f *fitResult) error {
-	header := "Class-level parameters of the crackle model (internal/crackle), written by\njust crackle-fit (tools/crackle --fit) from the 30 short exterior crackle\nclips. Do not edit by hand. crackle.sources.toml gives the source of each\nkey, and docs/research/crackle-model.md the model and the check."
-	if err := os.WriteFile(path, f.p.Marshal(header), 0o600); err != nil {
+	if err := os.WriteFile(path, f.p.Marshal(paramsHeader), 0o600); err != nil {
 		return err
 	}
 	var b strings.Builder
-	b.WriteString("# Sources of the keys of crackle.toml, written by just crackle-fit.\n# kind: measured (a statistic of the 30 clips by tools/crackle), fitted (a\n# deterministic fit by tools/crackle --fit of model trains to a statistic\n# of the clips) or snarl (a snarl default where the clips cannot measure\n# the value).\n")
+	b.WriteString(sourcesHeader)
 	for _, s := range f.sources() {
 		fmt.Fprintf(&b, "\n[[source]]\nkey = %q\nkind = %q\nfrom = %q\n", s.key, s.kind, s.from)
 	}
-	dir, name := filepath.Split(path)
-	return os.WriteFile(filepath.Join(dir, strings.TrimSuffix(name, filepath.Ext(name))+".sources.toml"), []byte(b.String()), 0o600)
+	return os.WriteFile(sourcesPath(path), []byte(b.String()), 0o600)
 }

@@ -50,7 +50,7 @@ func TestSources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	kinds := map[string]bool{"measured": true, "fitted": true, "snarl": true}
+	kinds := map[string]bool{"measured": true, "fitted": true, "derived": true, "snarl": true}
 	seen := map[string]int{}
 	var key string
 	for _, line := range strings.Split(string(data), "\n") {
@@ -195,6 +195,32 @@ func TestLengthControl(t *testing.T) {
 		lo, hi := p.LengthMS[0], p.LengthMS[4]
 		if got > hi-p.LengthOffsetMS+fade || (l > hi && got < lo) {
 			t.Errorf("length %g ms gives %.0f ms, want inside the range %g to %g ms and the fade", l, got, lo, hi)
+		}
+	}
+}
+
+// TestHold checks that a single shock and a short train sound for the
+// hold and with trailing shocks, and that the short tail ends them
+// sooner.
+func TestHold(t *testing.T) {
+	p := Default()
+	k := NewBank(p, rate, 1)
+	s := k.ShortTail()
+	for _, o := range []Options{{Single: true}, {Shocks: 4, Short: true}} {
+		a, b := Render(k, 7, o), Render(s, 7, o)
+		if d := float64(len(a)-len(b)) / rate * 1000; d < p.HoldMS-p.FadeDelayMS-20 {
+			t.Errorf("%+v: the hold lengthens the voice by %.0f ms, want about %.0f ms", o, d, p.HoldMS-p.FadeDelayMS)
+		}
+		v := New(k, 7)
+		v.Trigger(o)
+		buf := make([]float32, 256)
+		var trailed bool
+		for v.Active() {
+			v.Process(buf)
+			trailed = trailed || v.trailing
+		}
+		if !trailed {
+			t.Errorf("%+v: no trailing shock", o)
 		}
 	}
 }

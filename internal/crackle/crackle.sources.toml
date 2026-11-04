@@ -1,8 +1,9 @@
 # Sources of the keys of crackle.toml, written by just crackle-fit.
 # kind: measured (a statistic of the 30 clips by tools/crackle), fitted (a
 # deterministic fit by tools/crackle --fit of model trains to a statistic
-# of the clips) or snarl (a snarl default where the clips cannot measure
-# the value).
+# of the clips), derived (a fit of model trains of a form that no clip
+# holds to a statistic of the clips) or snarl (a snarl default where the
+# clips cannot measure the value).
 
 [[source]]
 key = "length_ms"
@@ -148,3 +149,28 @@ from = "fitted by the two searches of tools/crackle --fit (just crackle-fit): th
 key = "out_db"
 kind = "fitted"
 from = "the gain that brings the median sample peak of the 96 fit trains, 4.57 dBFS, to the median sample peak of the clips, -0.41 dBFS"
+
+[[source]]
+key = "hold_ms"
+kind = "measured"
+from = "the median break of the two lines through the full-band envelope after the end event, the last strong shock, of the 23 uncut ends of the 30 short clips (tools/crackle --pop-tail, docs/research/pop-tail.md)"
+
+[[source]]
+key = "trail_shocks"
+kind = "measured"
+from = "the quantiles at the probabilities (i + 0.5) / 21 of the count of the shocks in the hold after the end event, from the end event to the break, of the 23 uncut ends of the 30 short clips (tools/crackle --pop-tail, docs/research/pop-tail.md)"
+
+[[source]]
+key = "trail_gap_ms"
+kind = "measured"
+from = "the quantiles at the probabilities (i + 0.5) / 21 of the gaps from the onset of the shock before of the 206 shocks in the hold of the 23 uncut ends of the 30 short clips (tools/crackle --pop-tail, docs/research/pop-tail.md), pooled"
+
+[[source]]
+key = "trail_level_db"
+kind = "measured"
+from = "the quantiles at the probabilities (i + 0.5) / 21 of the level against the strongest shock of the clip of the 206 shocks in the hold of the 23 uncut ends of the 30 short clips (tools/crackle --pop-tail, docs/research/pop-tail.md), pooled"
+
+[[source]]
+key = "short_body_db"
+kind = "derived"
+from = "the level of the loudest 5 ms frame of 60 model booms (4 to 16 shocks, Options.Short), median, -7.3 dB, less that of 60 model trains, -5.9 dB, whose bed and body the fit sets against the loudest frame of the clips (bed_db, body_gain_db), so that a boom has the bed and the body of the clips against its loudest frame; no clip holds a short train"

@@ -3,6 +3,7 @@ package core
 import (
 	"math"
 	"sync"
+	"sync/atomic"
 
 	"github.com/oval-tutu/snarl/internal/analysis"
 	"github.com/oval-tutu/snarl/internal/crackle"
@@ -46,6 +47,24 @@ type popModel struct {
 // calibrates the kind gains.
 var sharedModel = sync.OnceValues(func() (*popModel, error) { return newPopModel(crackle.Fitted()) })
 
+// shortModel is the pop model of the crackle model with the short tail
+// (crackle.Params.ShortTail), which New uses after UseShortPopTail.
+var shortModel = sync.OnceValues(func() (*popModel, error) {
+	p, err := crackle.Fitted()
+	if err != nil {
+		return nil, err
+	}
+	return newPopModel(p.ShortTail(), nil)
+})
+
+var shortPopTail atomic.Bool
+
+// UseShortPopTail makes the engines that New returns after it play the
+// pops with the short tail of the crackle model, with no hold and no
+// trailing shocks, when on is true. It is for the measures and the
+// listening files of tools/crackle, which compare the two tails.
+func UseShortPopTail(on bool) { shortPopTail.Store(on) }
+
 // newPopModel returns the pop model of the parameters p, or err when it is
 // not nil.
 func newPopModel(p *crackle.Params, err error) (*popModel, error) {
@@ -63,12 +82,16 @@ func newPopModel(p *crackle.Params, err error) (*popModel, error) {
 // kind is set from the mean level in decibels, so that a voice of unit
 // scale on an engine whose output before the leveller has unit RMS level
 // is at overLU plus popOffsetLU over the loudness of the engine, which is
-// engineKDB over its RMS level. The sub-event counts of the draws cover
-// the range of the kind in even steps, and each draw has its own seed.
-// Only the requested crackle has other options than its own kind
-// (shortCrackle), so the other requested kinds take the own gains. It
-// allocates.
+// engineKDB over its RMS level. The voices have the short tail of the
+// model (crackle.Params.ShortTail), so that the hold and the trailing
+// shocks, which lengthen the span, do not move the gain and the loudness
+// of the bang (docs/research/pop-tail.md). The sub-event counts of the
+// draws cover the range of the kind in even steps, and each draw has its
+// own seed. Only the requested crackle has other options than its own
+// kind (shortCrackle), so the other requested kinds take the own gains.
+// It allocates.
 func (m *popModel) calibrate() {
+	bank := m.bank.ShortTail()
 	for r := range m.gain {
 		for kind := range numKinds {
 			if r == 1 && kind != kindCrackle {
@@ -82,7 +105,7 @@ func (m *popModel) calibrate() {
 				if r == 1 {
 					subs = min(subs, shortCrackle)
 				}
-				x := crackle.Render(m.bank, uint32(d+1), voiceOptions(m.params, kind, subs))
+				x := crackle.Render(bank, uint32(d+1), voiceOptions(m.params, kind, subs))
 				lg += math.Log10(math.Max(spanLoudness(x, synthRate/100), 1e-12))
 			}
 			db := overLU[kind] + popOffsetLU + engineKDB + calTrimDB
