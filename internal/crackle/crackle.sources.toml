@@ -171,6 +171,11 @@ kind = "measured"
 from = "the quantiles at the probabilities (i + 0.5) / 21 of the level against the strongest shock of the clip of the 206 shocks in the hold of the 23 uncut ends of the 30 short clips (tools/crackle --pop-tail, docs/research/pop-tail.md), pooled"
 
 [[source]]
+key = "hold_tail_db"
+kind = "derived"
+from = "set by bisection from -60 to 0 dB so that the median time to -20 dB below 200 Hz after the end event of 60 model single shocks is 137.4 ms, the median of the 23 uncut ends of the 30 short clips (tools/crackle --pop-tail, docs/research/pop-tail.md), against 165.6 ms at 0 dB; the damped sine of the tail starts from rest at the fade, and its sound from 0 to 27 Hz holds the band below 200 Hz up after the fade"
+
+[[source]]
 key = "short_body_db"
 kind = "derived"
-from = "the level of the loudest 5 ms frame of 60 model booms (4 to 16 shocks, Options.Short), median, -6.8 dB, less that of 60 model trains, -5.9 dB, whose bed and body the fit sets against the loudest frame of the clips (bed_db, body_gain_db), so that a boom has the bed and the body of the clips against its loudest frame; no clip holds a short train"
+from = "the level of the loudest 5 ms frame of 60 model booms (4 to 16 shocks, Options.Short), median, -7.0 dB, less that of 60 model trains, -5.9 dB, whose bed and body the fit sets against the loudest frame of the clips (bed_db, body_gain_db), so that a boom has the bed and the body of the clips against its loudest frame; no clip holds a short train"

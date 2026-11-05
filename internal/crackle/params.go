@@ -97,17 +97,21 @@ type Params struct {
 	// ShortBodyDB is the gain of the bed, the body and the tail of a short
 	// train against its shocks.
 	ShortBodyDB float64
+	// HoldTailDB is the gain of the tail of a single shock and a short
+	// train over TailGainDB.
+	HoldTailDB float64
 	// drawnLevels keeps the levels of a short train as drawn, with no move
 	// to its strongest shock (Options.Short).
 	drawnLevels bool
 }
 
 // ShortTail returns a copy of p with no hold, no trailing shocks, no gain
-// of the body of a short train and the levels of a short train as drawn,
-// so that the fade starts FadeDelayMS after the last shock of every train.
+// of the body of a short train, no gain of the tail of a single shock and
+// a short train, and the levels of a short train as drawn, so that the
+// fade starts FadeDelayMS after the last shock of every train.
 func (p *Params) ShortTail() *Params {
 	c := *p
-	c.HoldMS, c.ShortBodyDB, c.drawnLevels = 0, 0, true
+	c.HoldMS, c.ShortBodyDB, c.HoldTailDB, c.drawnLevels = 0, 0, 0, true
 	c.TrailShocks, c.TrailGapMS, c.TrailLevelDB = [Quantiles]float64{}, [Quantiles]float64{}, [Quantiles]float64{}
 	return &c
 }
@@ -146,7 +150,7 @@ func (p *Params) keys(shocks *[2]float64) []key {
 		one("tail_hz", &p.TailHz), one("tail_decay_ms", &p.TailDecayMS), one("tail_gain_db", &p.TailGainDB),
 		one("out_db", &p.OutDB),
 		one("hold_ms", &p.HoldMS), array("trail_shocks", p.TrailShocks[:]), array("trail_gap_ms", p.TrailGapMS[:]),
-		array("trail_level_db", p.TrailLevelDB[:]), one("short_body_db", &p.ShortBodyDB),
+		array("trail_level_db", p.TrailLevelDB[:]), one("short_body_db", &p.ShortBodyDB), one("hold_tail_db", &p.HoldTailDB),
 	}
 }
 

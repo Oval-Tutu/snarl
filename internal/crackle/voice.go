@@ -75,6 +75,8 @@ type Voice struct {
 	tailTurn       complex64
 	tailRe, tailIm float32
 	tailGain       float32
+	// tailAmp is the start of the tail of the train.
+	tailAmp float32
 	// bodyGain is the gain of the bed, the body and the tail.
 	bodyGain float32
 
@@ -234,6 +236,10 @@ func (v *Voice) Trigger(o Options) {
 	if o.Short && o.Shocks > 0 && !p.drawnLevels {
 		v.shift = v.shortShift()
 	}
+	v.tailAmp = v.tailGain * v.bodyGain
+	if o.Single || o.Short {
+		v.tailAmp *= float32(dbAmp(p.HoldTailDB))
+	}
 }
 
 // shortShift returns the move of the levels of a short train that puts its
@@ -358,7 +364,7 @@ func (v *Voice) Process(out []float32) {
 		}
 		if v.t >= v.fadeAt {
 			if v.t == v.fadeAt {
-				v.tailRe = v.tailGain * v.bodyGain
+				v.tailRe = v.tailAmp
 			}
 			if v.fade *= v.fadeCoef; v.fade < voiceEnd {
 				v.active = false
