@@ -175,7 +175,8 @@ var rmsOverDB = [numKinds]float64{kindPop: 4.8, kindBoom: 4.5, kindCrackle: 1.5,
 // popOffsetLU, within 0.1 dB, over the gain that puts the calibration
 // voices at rmsOverDB by their plain RMS level. overLU is rmsOverDB plus
 // the K-weighted over the plain level of the voices of the kind, less
-// engineKDB. The voices have the short tail, as in calibrate.
+// engineKDB. The voices have the short tail, as in calibrate, and the RMS
+// gain of a short train takes out the move of its bang with the long tail.
 func TestKindLoudness(t *testing.T) {
 	m, err := sharedModel()
 	if err != nil {
@@ -184,10 +185,16 @@ func TestKindLoudness(t *testing.T) {
 	bank := m.bank.ShortTail()
 	for kind := range numKinds {
 		sh := &shapes[kind]
-		var lr, lk float64
+		var lr, lk, lb float64
 		for d := range calDraws {
 			subs := sh.subs + int(float64(sh.subsRange+1)*(float64(d)+0.5)/calDraws)
-			x := crackle.Render(bank, uint32(d+1), voiceOptions(m.params, kind, subs))
+			o := voiceOptions(m.params, kind, subs)
+			if o.Short {
+				y := crackle.Render(m.bank, uint32(d+1), o)
+				z := crackle.Render(m.bank.DrawnLevels(), uint32(d+1), o)
+				lb += 20 * math.Log10(kLoudness(y, calBangN)/kLoudness(z, calBangN)) / calDraws
+			}
+			x := crackle.Render(bank, uint32(d+1), o)
 			n := spanLen(x, synthRate/100)
 			var e float64
 			for _, v := range x[:n] {
@@ -196,7 +203,7 @@ func TestKindLoudness(t *testing.T) {
 			lr += 10 * math.Log10(e/float64(n)) / calDraws
 			lk += 20 * math.Log10(spanLoudness(x, synthRate/100)) / calDraws
 		}
-		rms := rmsOverDB[kind] + calTrimDB - lr
+		rms := rmsOverDB[kind] + calTrimDB - lr - lb
 		d := 20*math.Log10(float64(m.gain[0][kind])) - rms
 		msg := fmt.Sprintf("kind %d: the K-weighted level of the voices is %.2f dB over the plain level, the gain is %.2f dB over the RMS gain, want %d", kind, lk-lr, d, popOffsetLU)
 		if math.Abs(d-popOffsetLU) > 0.1 {

@@ -173,4 +173,4 @@ from = "the quantiles at the probabilities (i + 0.5) / 21 of the level against t
 [[source]]
 key = "short_body_db"
 kind = "derived"
-from = "the level of the loudest 5 ms frame of 60 model booms (4 to 16 shocks, Options.Short), median, -7.3 dB, less that of 60 model trains, -5.9 dB, whose bed and body the fit sets against the loudest frame of the clips (bed_db, body_gain_db), so that a boom has the bed and the body of the clips against its loudest frame; no clip holds a short train"
+from = "the level of the loudest 5 ms frame of 60 model booms (4 to 16 shocks, Options.Short), median, -6.8 dB, less that of 60 model trains, -5.9 dB, whose bed and body the fit sets against the loudest frame of the clips (bed_db, body_gain_db), so that a boom has the bed and the body of the clips against its loudest frame; no clip holds a short train"

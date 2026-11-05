@@ -97,14 +97,17 @@ type Params struct {
 	// ShortBodyDB is the gain of the bed, the body and the tail of a short
 	// train against its shocks.
 	ShortBodyDB float64
+	// drawnLevels keeps the levels of a short train as drawn, with no move
+	// to its strongest shock (Options.Short).
+	drawnLevels bool
 }
 
-// ShortTail returns a copy of p with no hold, no trailing shocks and no
-// gain of the body of a short train, so that the fade starts
-// FadeDelayMS after the last shock of every train.
+// ShortTail returns a copy of p with no hold, no trailing shocks, no gain
+// of the body of a short train and the levels of a short train as drawn,
+// so that the fade starts FadeDelayMS after the last shock of every train.
 func (p *Params) ShortTail() *Params {
 	c := *p
-	c.HoldMS, c.ShortBodyDB = 0, 0
+	c.HoldMS, c.ShortBodyDB, c.drawnLevels = 0, 0, true
 	c.TrailShocks, c.TrailGapMS, c.TrailLevelDB = [Quantiles]float64{}, [Quantiles]float64{}, [Quantiles]float64{}
 	return &c
 }

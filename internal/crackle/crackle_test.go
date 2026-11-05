@@ -225,6 +225,32 @@ func TestHold(t *testing.T) {
 	}
 }
 
+// TestShortTop checks that the strongest shock of a short train is at the
+// top of the level table, and that the levels as drawn give the same
+// train with no move.
+func TestShortTop(t *testing.T) {
+	p := Default()
+	k := NewBank(p, rate, 1)
+	top := p.LevelDB[Quantiles-1]
+	for seed := range uint32(20) {
+		o := Options{Shocks: 4 + int(seed)%13, Short: true}
+		a, b := New(k, seed), New(k.DrawnLevels(), seed)
+		a.Trigger(o)
+		b.Trigger(o)
+		buf := make([]float32, 256)
+		for a.Active() && !a.trailing {
+			a.Process(buf)
+			b.Process(buf)
+		}
+		if math.Abs(a.topDB-top) > 1e-9 {
+			t.Errorf("seed %d: the strongest shock is at %.3f dB, want %.3f dB", seed, a.topDB, top)
+		}
+		if d := a.topDB - b.topDB; math.Abs(d-a.shift) > 1e-9 {
+			t.Errorf("seed %d: the move is %.3f dB against the drawn levels, want %.3f dB", seed, d, a.shift)
+		}
+	}
+}
+
 func TestLevel(t *testing.T) {
 	p := Default()
 	k := NewBank(p, rate, 1)

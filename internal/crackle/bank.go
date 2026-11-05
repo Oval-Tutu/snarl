@@ -226,6 +226,16 @@ func (b *Bank) ShortTail() *Bank {
 	return &c
 }
 
+// DrawnLevels returns a bank with the grains and the loops of b and the
+// parameters of b with the levels of a short train as drawn, with no move
+// to its strongest shock (Options.Short).
+func (b *Bank) DrawnLevels() *Bank {
+	c, p := *b, *b.p
+	p.drawnLevels = true
+	c.p = &p
+	return &c
+}
+
 // NewBank renders the sound of the model at the sample rate in hertz. The
 // seed sets the carriers and the noise of the grains and the loops.
 func NewBank(p *Params, rate float64, seed uint32) *Bank {

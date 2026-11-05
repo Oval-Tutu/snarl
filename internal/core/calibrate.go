@@ -19,6 +19,9 @@ const (
 	calDraws  = 32
 	calTrimDB = 0.1
 	bankSeed  = 1
+	// calBangN is the span of the bang of a voice in samples, 50 ms, as
+	// the bang of tools/crackle --pop-level.
+	calBangN = synthRate / 20
 )
 
 // engineKDB is the K-weighted level over the plain RMS level of the engine
@@ -91,7 +94,7 @@ func newPopModel(p *crackle.Params, err error) (*popModel, error) {
 // kind (shortCrackle), so the other requested kinds take the own gains.
 // It allocates.
 func (m *popModel) calibrate() {
-	bank := m.bank.ShortTail()
+	bank, drawn := m.bank.ShortTail(), m.bank.DrawnLevels()
 	for r := range m.gain {
 		for kind := range numKinds {
 			if r == 1 && kind != kindCrackle {
@@ -105,8 +108,18 @@ func (m *popModel) calibrate() {
 				if r == 1 {
 					subs = min(subs, shortCrackle)
 				}
-				x := crackle.Render(bank, uint32(d+1), voiceOptions(m.params, kind, subs))
+				o := voiceOptions(m.params, kind, subs)
+				x := crackle.Render(bank, uint32(d+1), o)
 				lg += math.Log10(math.Max(spanLoudness(x, synthRate/100), 1e-12))
+				if o.Short {
+					// The levels of a short train move to its strongest
+					// shock only with the long tail, so the gain takes
+					// out the move of the loudness of its bang against
+					// the same voice with the levels as drawn.
+					y := crackle.Render(m.bank, uint32(d+1), o)
+					z := crackle.Render(drawn, uint32(d+1), o)
+					lg += math.Log10(math.Max(kLoudness(y, calBangN), 1e-12) / math.Max(kLoudness(z, calBangN), 1e-12))
+				}
 			}
 			db := overLU[kind] + popOffsetLU + engineKDB + calTrimDB
 			m.gain[r][kind] = float32(math.Pow(10, db/20-lg/calDraws))
@@ -116,12 +129,16 @@ func (m *popModel) calibrate() {
 
 // spanLoudness returns the K-weighted RMS level of x at the synthesiser
 // rate over the span of spanLen.
-func spanLoudness(x []float32, minN int) float64 {
+func spanLoudness(x []float32, minN int) float64 { return kLoudness(x, spanLen(x, minN)) }
+
+// kLoudness returns the K-weighted RMS level of x at the synthesiser rate
+// over its first n samples, or over all of x when it is shorter.
+func kLoudness(x []float32, n int) float64 {
 	y := make([]float64, len(x))
 	for i, v := range x {
 		y[i] = float64(v)
 	}
-	n := spanLen(x, minN)
+	n = min(n, len(x))
 	if n == 0 {
 		return 0
 	}

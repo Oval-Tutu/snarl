@@ -28,8 +28,13 @@ type Options struct {
 	// for a train of a length.
 	Shocks int
 	// Short lets Shocks go below the measured minimum, down to 1, with the
-	// bed and the body at ShortBodyDB. A short train is derived, not
-	// measured: no clip holds one.
+	// bed and the body at ShortBodyDB. The levels of a short train move
+	// together so that its strongest shock is at the top of LevelDB, as
+	// the strongest shock of each clip is: the table holds the levels
+	// against the strongest shock of the clip, and a train of a few shocks
+	// seldom draws one near the top. The short tail (Params.ShortTail)
+	// does not move them. A short train is derived, not measured: no clip
+	// holds one.
 	Short bool
 	// LengthMS is the active length, clamped to the measured range, or 0
 	// to draw it from the measured distribution.
@@ -92,8 +97,10 @@ type Voice struct {
 	total    float64 // Shocks or samples of the span, for the place offset.
 	gain     float32
 	z        float64 // Normal value of the level of the last shock.
-	fade     float32
-	in       float32
+	// shift is the move of the levels of a short train in dB.
+	shift float64
+	fade  float32
+	in    float32
 	// last is the last output sample. The release adds relStep times
 	// relLeft to each sample, while relLeft counts down to 0, over
 	// relLen samples.
@@ -196,6 +203,7 @@ func (v *Voice) Trigger(o Options) {
 	v.tailRe, v.tailIm = 0, 0
 	v.strongAt, v.topDB, v.trail, v.trailing = 0, math.Inf(-1), 0, false
 	v.bodyGain = 1
+	v.shift = 0
 	v.z = v.gauss()
 	v.gain = float32(dbAmp(p.OutDB + o.LevelDB))
 	switch {
@@ -223,6 +231,25 @@ func (v *Voice) Trigger(o Options) {
 	if (o.Single || o.Short) && p.TrailShocks[Quantiles-1] > 0 {
 		v.trail = int(math.Round(v.drawMid(p.TrailShocks[:])))
 	}
+	if o.Short && o.Shocks > 0 && !p.drawnLevels {
+		v.shift = v.shortShift()
+	}
+}
+
+// shortShift returns the move of the levels of a short train that puts its
+// strongest shock at the top of LevelDB. It draws the levels of the train
+// ahead, as fire does with the same draws in between, on a copy of the
+// noise and the level state, so that the train keeps its drawn levels.
+func (v *Voice) shortShift() float64 {
+	rng, z := v.rng, v.z
+	hi := math.Inf(-1)
+	for k := range v.left {
+		hi = max(hi, v.level(v.p.PlaceDB[min(9, int(float64(k)/v.total*10))]))
+		v.rng.Next()
+		v.gap()
+	}
+	v.rng, v.z = rng, z
+	return v.p.LevelDB[Quantiles-1] - hi
 }
 
 // trailGap draws the gap to the next trailing shock in samples.
@@ -246,7 +273,7 @@ func (v *Voice) fire() {
 		} else {
 			place = float64(v.count) / v.total
 		}
-		db = v.level(p.PlaceDB[min(9, int(place*10))])
+		db = v.level(p.PlaceDB[min(9, int(place*10))]) + v.shift
 	}
 	peak := float32(dbAmp(db))
 	v.act += peak
