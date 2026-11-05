@@ -1,6 +1,6 @@
 # The decay after the pops
 
-Status: measured 2026-11-03. Recommendations 1 and 2 implemented 2026-11-04 (section 8). Branch `pop-model`. This report measures the sound after the pops in the muffler crackle clips, in the crackle model voices and in the snarl pops on the lift-offs, and the start of the engine-sim exhaust impulse responses. No audio and no measure of a single clip is in the repository. The values are statistics of the whole set.
+Status: measured 2026-11-03. Recommendations 1 and 2 implemented 2026-11-04 (section 8). The boom and the band below 200 Hz fixed 2026-11-05 (section 9). Branch `pop-model`. This report measures the sound after the pops in the muffler crackle clips, in the crackle model voices and in the snarl pops on the lift-offs, and the start of the engine-sim exhaust impulse responses. No audio and no measure of a single clip is in the repository. The values are statistics of the whole set.
 
 ## 1. Answer
 
@@ -193,3 +193,74 @@ just listen-pop-tail
 ```
 
 `out/listen-pop-tail/pop-tail-old-then-new.wav` (137 s, -19.0 LUFS) plays for each of the five engines 2 lift-offs with the old tail, then the same 2 lift-offs with the new tail. `out/listen-pop-tail/README.txt` gives the start of each part. `tools/crackle --pop-tail-listen` renders the old tail with `core.UseShortPopTail`, so the recipe needs no old commit.
+
+## 9. The boom and the band below 200 Hz
+
+Date: 2026-11-05. Every boom now holds as the clips do, and the band below 200 Hz of a pop, a burble and a boom falls to -20 dB at the clip time. At -40 dB below 200 Hz, these kinds still last 30 to 51 ms longer than the clip median. The bang keeps its loudness within 0.3 LU, and the model check does not change.
+
+### 9.1 The causes
+
+- **The boom.** The ring of the shock activity is not the cause. With the ring held at its level from the last shock to the fade, the model booms stay bimodal: 28 of 60 reach -20 dB within 50 ms, against 25 before. The renders of a short boom and of a held boom both hold for about 140 ms. The cause is the level of the strongest shock. The level table holds the levels against the strongest shock of each clip, so a train of 28 to 61 shocks draws a shock near its top. A boom of 4 to 16 shocks seldom does, so its strongest shock is only a few dB over the peaks of the bed. Those peaks then count as strong shocks (within 12 dB of the strongest) up to the start of the fade, and the decay from the last of them is the fade alone, 20 dB in about 25 ms. In the clips, the shocks in the hold are 22.8 dB (25.5 to 19.5) below the strongest shock.
+- **The band below 200 Hz.** The body, the bed and the hold are not the cause. It is the tail, the damped sine at 27.3 Hz that starts from rest at the fade. It falls 20 dB in 22 ms, so its spectrum is flat from 0 to 27 Hz, and that sound holds up the 10 Hz edge of the band of the measure for about 160 ms after the fade. The hold moved the fade, and with it the tail, 70 ms later. The model single shocks give these times below 200 Hz, -20 dB / -40 dB: 165.6 / 271.7 ms with the tail, 130.8 / 164.3 ms with no tail, 148.2 / 217.2 ms with the tail 10 dB lower, and 174.7 / 229.9 ms with the tail through a 15.6 Hz high pass. The clips give 137.4 / 161.2 ms. With no tail, the full band and the band above 2 kHz stay inside the clip p25 to p75.
+
+The two clip statistics disagree on the tail. The trains of a length in the model check match the clip tail measures (27 Hz, 3 half cycles, 22 ms to -20 dB) only with the tail at its full level. A tail that starts 40.6 ms after the last shock, in the hold, gives 135.2 / 199.0 ms below 200 Hz, and the model check passes 171 measures instead of 175, with three tail measures that fail.
+
+### 9.2 The change
+
+- **Boom** (commit 7a4985a). The levels of a short train (`Options.Short`) move together so that its strongest shock is at the top of `level_db`, as the strongest shock of each clip is. The voice draws the levels of the train ahead at the trigger, on a copy of its noise and of the level state, so that the train keeps the draws of the levels as drawn: only the move is new. The short tail (`Params.ShortTail`) keeps the levels as drawn. The calibration in `internal/core/calibrate.go` renders each boom of the calibration also with the long tail and with the levels as drawn, and takes the mean move of the K-weighted loudness of the first 50 ms out of the boom gain, so that the bang keeps its loudness. `just crackle-fit-tail` sets `short_body_db` again from the new booms: -1.15 dB, against -1.38 dB before.
+- **Band below 200 Hz** (commit b936996). `hold_tail_db` (-11.35 dB) is the gain of the tail of a single shock and a short train over `tail_gain_db`. `tools/crackle --fit-tail` sets it by bisection from -60 to 0 dB, so that the median time to -20 dB below 200 Hz after the end event of 60 model single shocks is the median of the 23 uncut clip ends, 137.4 ms. Its source is derived. The trains of a length keep the tail, so the `crackle` kind keeps its long band below 200 Hz, and the model check does not change. The short tail has no such gain.
+
+The voice adds no work per sample. At each trigger of a boom, it draws the levels of the train twice.
+
+### 9.3 The decay, before and after
+
+The end event of the engine pops on the lift-offs, after the pop limiter, from `just pop-tail`. Median (p25 to p75). Before is commit 1f271ef (section 8.2), after is commit b936996.
+
+| Measure | Clips | Pop, before | Pop, after | Burble, before | Burble, after | Boom, before | Boom, after | Crackle, before and after |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Full band, -20 dB, ms | 128.2 (97.3 to 142.0) | 123.7 (120.1 to 132.7) | 120.6 (113.0 to 125.1) | 123.4 (119.7 to 132.7) | 120.3 (109.4 to 125.1) | 46.2 (21.6 to 126.7) | 119.3 (117.0 to 125.7) | 132.5 (126.5 to 140.5) |
+| Full band, -40 dB, ms | 146.7 (117.5 to 161.6) | 152.6 (140.8 to 156.8) | 140.2 (131.2 to 145.5) | 153.0 (141.5 to 156.5) | 139.1 (131.2 to 145.5) | 72.1 (43.7 to 152.5) | 143.4 (135.3 to 150.1) | 157.1 (150.9 to 169.1) |
+| Full band, 20 to 100 ms, dB | -5.0 (-6.1 to -4.4) | -3.8 (-6.0 to -0.7) | -4.1 (-8.4 to -0.6) | -3.4 (-6.0 to -0.7) | -3.7 (-8.1 to -0.6) | -16.1 (-32.1 to -2.4) | -3.4 (-6.3 to -1.7) | -3.9 (-6.1 to -0.4) |
+| Above 2 kHz, 20 to 100 ms, dB | -19.9 (-21.4 to -15.5) | -21.2 (-22.8 to -19.5) | -21.2 (-22.8 to -19.4) | -20.9 (-22.6 to -19.3) | -20.7 (-22.6 to -19.1) | -26.5 (-30.9 to -18.9) | -19.4 (-21.7 to -15.5) | -19.0 (-23.0 to -14.8) |
+| Below 200 Hz, -20 dB, ms | 137.4 (108.8 to 152.1) | 164.6 (157.9 to 167.7) | 131.5 (121.4 to 154.7) | 164.6 (157.8 to 167.4) | 131.4 (121.3 to 152.4) | 80.6 (53.4 to 163.7) | 132.8 (128.8 to 151.5) | 166.8 (155.3 to 173.9) |
+| Below 200 Hz, -40 dB, ms | 161.2 (132.2 to 177.0) | 269.1 (231.4 to 274.0) | 212.1 (177.2 to 223.7) | 269.0 (229.7 to 273.9) | 208.4 (172.0 to 223.3) | 169.0 (121.8 to 264.4) | 191.1 (168.2 to 223.5) | 268.8 (228.8 to 275.7) |
+
+- Every measure of section 8 that was inside the clip p25 to p75 stays inside: the pop and the burble at -20 dB, at -40 dB and above 2 kHz, and the crackle, which does not change.
+- The boom is now inside the clip p25 to p75 at -20 dB, at -40 dB and above 2 kHz. Its 20 to 100 ms level in the full band is 1.0 dB above the clip p75, as that of the pop is.
+- Below 200 Hz, the pop, the burble and the boom are inside the clips at -20 dB. At -40 dB they are 14 to 35 ms above the clip p75. The `crackle` kind keeps its long band below 200 Hz.
+
+### 9.4 The level of the bang
+
+The mean over the five engines of the medians over the pops, in LU over the engine with no pops, from `just pop-level`.
+
+| Kind | Bang, before | Bang, after | Span, before | Span, after | Momentary, before | Momentary, after |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| pop | -3.9 | -3.9 | -4.9 | -4.8 | -8.5 | -8.6 |
+| boom | -6.6 | -6.3 | -6.7 | -7.5 | -8.9 | -10.7 |
+| crackle | -7.5 | -7.5 | -7.1 | -7.1 | -6.5 | -6.5 |
+| burble | -13.1 | -13.1 | -14.1 | -14.0 | -17.6 | -17.7 |
+
+The bang moves by 0.3 LU at most. The boom is 1.8 LU lower over 400 ms, because its bed and body are lower against its bang. `TestPopLevelOverEngine` passes with its bands unchanged.
+
+The level of the boom bang is sensitive to the draws. With the levels of a short train drawn at the trigger in another order and no move, the boom bang over the engine moves by 1.2 LU. So the voice draws the levels ahead on a copy of its noise, and the train keeps the draws of commit 1f271ef.
+
+### 9.5 The model check and the cost
+
+`just crackle-model` gives the same result before and after: 175 measures pass, and no measure changes. The change touches only the single shock and the short train, and the check renders trains of a length.
+
+`BenchmarkPops` and `BenchmarkRender` on an AMD Ryzen 9 7940HS, 8 runs each, compared by benchstat. The first pair of runs, before then after, showed +14 to +33 per cent on both benchmarks, also on `BenchmarkRender`, which plays no pops and whose output does not change. The load average of the PC was 4 to 6 during the runs. The pair below alternates the two test binaries in 4 rounds of 2 runs each.
+
+| Benchmark | Before, µs per block | After, µs per block | Change |
+| --- | ---: | ---: | ---: |
+| `BenchmarkPops`, five profiles | 113.8 to 168.9 | 115.2 to 167.1 | no significant change, geomean -0.3 per cent over both |
+| `BenchmarkRender`, five profiles | 94.1 to 168.3 | 93.2 to 169.6 | no significant change |
+
+With the pops off, the engine output is byte-identical to commit 1f271ef on the lift-offs of the five engines.
+
+### 9.6 Listen
+
+```sh
+just listen-pop-tail-fixed out/listen-pop-tail-2/current out/listen-pop-tail-2
+```
+
+`out/listen-pop-tail-2/pop-tail-current-then-fixed.wav` (207 s, -19.1 LUFS) plays for each of the five engines 2 lift-offs with the tail of commit 1f271ef, then the same 2 lift-offs with the fixed tail. The boom is rare in the lift-offs: 2 in 5 first pops of a lift-off run and 1 in 5 later pops. So each engine then plays a boom part: the first lift-off with only the boom in use, with the current tail, then with the fixed tail. `out/listen-pop-tail-2/README.txt` gives the start of each part. The silence detection of ffmpeg finds the same starts in the file. `tools/crackle --pop-tail-fixed` cannot render an earlier tail, so the cuts of the current tail in `out/listen-pop-tail-2/current/cuts` came from the same recipe at commit 005af2a, before the fixes.
