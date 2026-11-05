@@ -92,6 +92,8 @@ func run(args []string, stdout io.Writer) error {
 	tailDir := fs.String("pop-tail", "", "measure the decay after the pops of the short=CLIP.wav, long=CLIP.wav and PROFILE=SCENARIO arguments, print the summary and write events.csv to this directory")
 	profiles := fs.String("profiles", "profiles", "the profile directory of --pop-tail, with the impulse responses in ir")
 	tailListen := fs.String("pop-tail-listen", "", "write the lift-offs of each PROFILE=SCENARIO with the old tail of the pops, then the new tail, to this directory")
+	tailFixed := fs.String("pop-tail-fixed", "", "write the lift-offs of each PROFILE=SCENARIO with the pops of the default tail to the cuts of this directory, and with --before, join them after the cuts of the earlier tail")
+	before := fs.String("before", "", "the directory of the cuts of the earlier tail of --pop-tail-fixed")
 	shortTail := fs.Bool("short-tail", false, "render the engine pops of --pop-level and --pop-tail with the short tail of the crackle model, with no hold and no trailing shocks")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -115,6 +117,9 @@ func run(args []string, stdout io.Writer) error {
 	}
 	if *tailListen != "" {
 		return popTailListen(*tailListen, fs.Args())
+	}
+	if *tailFixed != "" {
+		return popTailFixed(*tailFixed, *before, fs.Args())
 	}
 	if *fitTailPath != "" {
 		return fitTail(*fitTailPath, fs.Args())

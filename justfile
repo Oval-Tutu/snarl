@@ -270,6 +270,34 @@ listen-pop-tail out="out/listen-pop-tail":
     cat "{{ out }}/README.txt" "{{ out }}/levels.txt"
     echo "Wrote the listening file to {{ out }}"
 
+# Render the lift-offs of the five engines with the race pops at the
+# default level and the current tail of the pops, and a boom part with only
+# the boom in use, to the cuts of out, at 48 kHz (docs/research/pop-tail.md
+# section 9). With before, the cuts of an earlier tail from this recipe at
+# an earlier commit, also make pop-tail-current-then-fixed.wav with
+# README.txt: for each engine, the cuts of before, then the same cuts of
+# out. Each engine has the gain that puts it with no pops at -19 LUFS in
+# every part. Writes the length, the integrated loudness and the sample
+# peak of the file to levels.txt.
+listen-pop-tail-fixed before="" out="out/listen-pop-tail-2":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v ffmpeg >/dev/null; then
+        echo "Error: ffmpeg is not on PATH. Run this recipe in nix develop." >&2
+        exit 1
+    fi
+    go run ./tools/crackle --pop-tail-fixed "{{ out }}" --before "{{ before }}" {{ pop_level_cases }}
+    if [ -z "{{ before }}" ]; then
+        echo "Wrote the cuts to {{ out }}/cuts"
+        exit 0
+    fi
+    f="{{ out }}/pop-tail-current-then-fixed.wav"
+    len=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "${f}")
+    lv=$(ffmpeg -nostdin -hide_banner -nostats -i "${f}" -af ebur128=peak=sample -f null - 2>&1 | grep -E '^ +(I|Peak):' | tr -s ' ' | tr '\n' ' ')
+    echo "pop-tail-current-then-fixed.wav: ${len} s,${lv}" > "{{ out }}/levels.txt"
+    cat "{{ out }}/README.txt" "{{ out }}/levels.txt"
+    echo "Wrote the listening file to {{ out }}"
+
 # Compare two renders and write metrics and spectrograms.
 compare a b *args: (_command "snarl-compare")
     go run ./cmd/snarl-compare {{ args }} "{{ a }}" "{{ b }}"
