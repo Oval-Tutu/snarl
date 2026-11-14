@@ -1,10 +1,10 @@
-# Handover: the `pop-model` branch
+# Handover: the pop model and engine tone work
 
-Status on 14 November 2026: the pop work is complete, and the user approved the sound. The branch `pop-model` is not merged and not pushed. The repository has no Git remote. Three items stand before the merge to `main`: two user answers and the final checks.
+Status on 14 November 2026: the pop work is complete, and the user approved the sound. At the user's request, the branch `pop-model` is merged to `main` as a fast-forward. The repository has no Git remote. Two user answers and the final checks are still open.
 
 ## 1. Where the work is
 
-- Branch `pop-model`, 51 commits on top of `main` (51f94ef), from c40b58f to the commit of this file.
+- `main`, 52 commits on top of 51f94ef, from c40b58f to the commit that merged this file. Do new work on `main`, or on a branch from it if the user asks for one.
 - The tree is clean. `go vet ./...`, `go test ./...` and `go test -race -short ./...` pass.
 - Run all tools through the dev shell: `nix develop --command just <recipe>` or `nix develop --command go ...`.
 - `just lint` fails on a known mismatch between golangci-lint (go1.26) and Go 1.27.2. The user said to ignore it for now.
@@ -37,15 +37,14 @@ Restate each question in full when you ask it. The user does not accept a refere
 2. Make the gear-up pops from the answers.
 3. Rebuild the 20 blind-test trials from the current model (`just listen-pops-model`), if the user still wants the test. The old trials are from the model before the level and tail changes.
 4. Measure the cost on the phone again (section 6).
-5. Bring `docs/research/pop-model-overnight.md` up to date, delete this file, and prepare the merge of `pop-model` to `main`.
+5. Bring `docs/research/pop-model-overnight.md` up to date with the level and tail changes. Delete this file when the open items are done.
 
-After the merge: the 4-cylinder phone cost, which is above 5% (the engine, not the pops), the catalogue rebuild with tables (`profiles/catalogue/README.md` still lists the removed keys `body_hz` and `jump_ms`), the flat-6, the lint toolchain, GO-2026-6809, and the FiveHorizons integration.
+Later: the 4-cylinder phone cost, which is above 5% (the engine, not the pops), the catalogue rebuild with tables (`profiles/catalogue/README.md` still lists the removed keys `body_hz` and `jump_ms`), the flat-6, the lint toolchain, GO-2026-6809, and the FiveHorizons integration.
 
 ## 5. Rules from the user
 
 - The goal: at least 90% of engine-sim quality at about 5% of one core on the weakest target. Upstream profiles only. Nothing fabricated, and nothing tuned by ear.
 - Run the full-range and drive scorecards, and tune as close as performance allows, before you offer the user an A/B test.
-- Stay on `pop-model` for this work. Do not make a new branch.
 - No pushes, no history rewrites without consent, and no agent attribution in commits.
 - No ad-hoc or generated scripts, no sed or heredoc edits, and no inline shell loops. Use the file edit tools. Every analysis tool is reviewed Go code in the repository.
 - The pack WAVs never enter the repository, only class-level statistics. No machine learning on the pack. The model trains on the 30 short exterior clips only.
